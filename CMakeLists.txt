@@ -40,6 +40,35 @@ set_target_properties(atlas_domain PROPERTIES CXX_EXTENSIONS OFF)
 atlas_set_project_warnings(atlas_domain)
 atlas_enable_sanitizers(atlas_domain)
 
+add_library(atlas_core)
+add_library(AtlasLOB::core ALIAS atlas_core)
+
+set(
+  ATLAS_CORE_SOURCES
+  src/core/checked_arithmetic.hpp
+  src/core/order_node.hpp
+  src/core/order_storage.cpp
+  src/core/order_storage.hpp
+  src/core/price_level.cpp
+  src/core/price_level.hpp
+)
+
+function(atlas_configure_core target_name)
+  target_sources(${target_name} PRIVATE ${ATLAS_CORE_SOURCES})
+  target_link_libraries(${target_name} PUBLIC AtlasLOB::domain)
+  target_include_directories(${target_name} PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src/core")
+  target_compile_features(${target_name} PUBLIC cxx_std_20)
+  target_compile_definitions(
+    ${target_name}
+    PUBLIC ATLAS_ENABLE_INVARIANTS=$<BOOL:${ATLAS_ENABLE_INVARIANTS}>
+  )
+  set_target_properties(${target_name} PROPERTIES CXX_EXTENSIONS OFF)
+  atlas_set_project_warnings(${target_name})
+  atlas_enable_sanitizers(${target_name})
+endfunction()
+
+atlas_configure_core(atlas_core)
+
 add_library(
   atlas_cli_support
   src/cli/domain_fixture.cpp
@@ -67,6 +96,10 @@ if(BUILD_TESTING)
   include(AtlasDependencies)
   atlas_setup_test_dependencies()
   include(GoogleTest)
+
+  add_library(atlas_core_testable)
+  atlas_configure_core(atlas_core_testable)
+  target_compile_definitions(atlas_core_testable PUBLIC ATLAS_ENABLE_TEST_ACCESS=1)
 
   file(
     GLOB ATLAS_DOMAIN_TEST_SOURCES
@@ -105,6 +138,54 @@ if(BUILD_TESTING)
     atlas_fixture_tests
     TEST_PREFIX "integration."
     PROPERTIES LABELS "integration"
+  )
+
+  file(
+    GLOB ATLAS_CORE_TEST_SOURCES
+    CONFIGURE_DEPENDS
+    "${CMAKE_CURRENT_SOURCE_DIR}/tests/unit/core_*_test.cpp"
+  )
+  add_executable(atlas_core_tests ${ATLAS_CORE_TEST_SOURCES})
+  target_link_libraries(atlas_core_tests PRIVATE atlas_core_testable GTest::gtest_main)
+  target_include_directories(
+    atlas_core_tests
+    PRIVATE
+      "${CMAKE_CURRENT_SOURCE_DIR}/src/core"
+      "${CMAKE_CURRENT_SOURCE_DIR}/tests/support"
+  )
+  target_compile_features(atlas_core_tests PRIVATE cxx_std_20)
+  set_target_properties(atlas_core_tests PROPERTIES CXX_EXTENSIONS OFF)
+  atlas_set_project_warnings(atlas_core_tests)
+  atlas_enable_sanitizers(atlas_core_tests)
+
+  gtest_discover_tests(
+    atlas_core_tests
+    TEST_PREFIX "core."
+    PROPERTIES LABELS "core"
+  )
+
+  file(
+    GLOB ATLAS_STRESS_TEST_SOURCES
+    CONFIGURE_DEPENDS
+    "${CMAKE_CURRENT_SOURCE_DIR}/tests/stress/*_stress_test.cpp"
+  )
+  add_executable(atlas_stress_tests ${ATLAS_STRESS_TEST_SOURCES})
+  target_link_libraries(atlas_stress_tests PRIVATE AtlasLOB::core GTest::gtest_main)
+  target_include_directories(
+    atlas_stress_tests
+    PRIVATE
+      "${CMAKE_CURRENT_SOURCE_DIR}/src/core"
+      "${CMAKE_CURRENT_SOURCE_DIR}/tests/support"
+  )
+  target_compile_features(atlas_stress_tests PRIVATE cxx_std_20)
+  set_target_properties(atlas_stress_tests PROPERTIES CXX_EXTENSIONS OFF)
+  atlas_set_project_warnings(atlas_stress_tests)
+  atlas_enable_sanitizers(atlas_stress_tests)
+
+  gtest_discover_tests(
+    atlas_stress_tests
+    TEST_PREFIX "stress."
+    PROPERTIES LABELS "stress"
   )
 
   add_test(NAME cli.validation_demo COMMAND atlas_cli validate-demo)
