@@ -1,0 +1,6 @@
+# Enum tokens are case-sensitive; output uses the domain's normalized spelling.
+
+NEW 11 1001 7 BUY LIMIT GTC 10250 25
+NEW 11 1002 7 SELL MARKET IOC - 10 # trailing comments are ignored
+CANCEL 11 1001 7
+REPLACE 11 1001 1003 7 10260 20

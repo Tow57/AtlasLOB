@@ -88,6 +88,7 @@ jobs:
         run: >-
           cmake --preset dev-clang
           -DCLANG_FORMAT_EXECUTABLE="$RUNNER_TEMP/atlas-format/bin/clang-format"
+          -DBUILD_TESTING=OFF
 
       - name: Check formatting
         run: cmake --build --preset dev-clang --target format-check

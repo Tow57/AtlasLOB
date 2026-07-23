@@ -6,19 +6,26 @@ AtlasLOB is a deterministic, in-memory limit order book and matching engine buil
 C++20, with Python reserved for independent validation, workload generation, bindings, and
 benchmark analysis.
 
+AtlasLOB is an educational portfolio project. It is not affiliated with Hudson River Trading and
+does not connect to a real exchange.
+
 The project is being developed as a sequence of evidence-backed releases. Correctness,
 reproducibility, and clear engineering tradeoffs take priority over feature count or unsupported
 latency claims.
 
 ## Current status
 
-**Phase 0: executable foundation**
+**Phase 1 in progress: domain contract complete; mutable book storage next**
 
 | Capability | Status | Evidence |
 | --- | --- | --- |
 | Target-based C++20 build | Complete | `CMakeLists.txt`, named presets |
 | Strong order and instrument values | Complete | Compile-time separation in unit tests |
-| Deterministic new-order validation | Complete | `domain.validation` test |
+| New/cancel/replace vocabulary | Complete | `atlas_domain_tests` |
+| Deterministic pure validation | Complete | GoogleTest domain cases |
+| Normalized event schema | Complete | Event payload and discriminator tests |
+| Command sequencing and ID policy | Complete | ADR 0002 and semantic contract |
+| Canonical domain fixture | Complete | `atlas_cli domain-fixture` integration tests |
 | GCC and Clang CI | Passing | `.github/workflows/ci.yml` |
 | ASan and UBSan CI | Passing | `asan-ubsan` preset and CI job |
 | Pinned clang-format gate | Passing | `format-check` CI job |
@@ -31,7 +38,11 @@ Requirements:
 
 - CMake 3.25 or newer
 - Ninja
+- Git, used by CMake to fetch the pinned test-only GoogleTest dependency
 - A C++20 compiler: GCC 13+ or Clang 17+
+
+The first testing-enabled configure downloads GoogleTest 1.17.0 at an immutable commit. Production
+library builds configured with `BUILD_TESTING=OFF` do not fetch or link GoogleTest.
 
 Configure, build, and test with GCC:
 
@@ -48,6 +59,12 @@ Run the deterministic validation demonstration:
 ```
 
 On Windows, run `build/dev-gcc/atlas_cli.exe validate-demo` instead.
+
+Validate a canonical development fixture:
+
+```sh
+./build/dev-gcc/atlas_cli domain-fixture examples/domain-valid.commands
+```
 
 ## Supported environments
 
@@ -66,7 +83,8 @@ developed with MinGW GCC on Windows, but Linux CI is the support authority.
   non-mutating liquidity preflight exists.
 
 See [the semantic contract](docs/semantics.md) and
-[ADR 0001](docs/decisions/0001-core-semantics.md) for the current rules.
+[ADR 0001](docs/decisions/0001-core-semantics.md) plus
+[ADR 0002](docs/decisions/0002-command-sequencing-and-identity.md) for the current rules.
 
 ## Roadmap
 

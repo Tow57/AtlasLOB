@@ -14,7 +14,7 @@ satisfied.
 
 ## Phase 1 - Domain model and resting book
 
-- [ ] Complete command, event, and rejection vocabulary.
+- [x] Complete command, event, and rejection vocabulary.
 - [ ] Stable owning storage for order nodes.
 - [ ] FIFO price levels with aggregate quantity and order count.
 - [ ] Ordered bid and ask sides with best-price access.

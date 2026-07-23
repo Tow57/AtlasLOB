@@ -1,0 +1,14 @@
+line=2 PARSE_ERROR reason=invalid_client_id
+line=3 PARSE_ERROR reason=invalid_side
+line=4 PARSE_ERROR reason=CANCEL_expected_4_fields
+line=5 REPLACE client_id=11 old_order_id=3002 new_order_id=3003 instrument_id=7 new_price_ticks=10410 new_quantity=0 validation=invalid reason=invalid_quantity
+line=6 PARSE_ERROR reason=unknown_command
+line=7 PARSE_ERROR reason=invalid_side
+line=8 PARSE_ERROR reason=invalid_order_type
+line=9 PARSE_ERROR reason=invalid_time_in_force
+line=10 NEW client_id=11 order_id=3007 instrument_id=7 side=sell type=market time_in_force=ioc price_ticks=- quantity=3 validation=valid reason=none
+line=11 PARSE_ERROR reason=invalid_client_id
+line=12 PARSE_ERROR reason=invalid_quantity
+line=13 PARSE_ERROR reason=NEW_expected_9_fields
+line=14 PARSE_ERROR reason=invalid_price
+line=15 PARSE_ERROR reason=invalid_price

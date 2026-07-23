@@ -1,0 +1,4 @@
+line=3 NEW client_id=11 order_id=1001 instrument_id=7 side=buy type=limit time_in_force=gtc price_ticks=10250 quantity=25 validation=valid reason=none
+line=4 NEW client_id=11 order_id=1002 instrument_id=7 side=sell type=market time_in_force=ioc price_ticks=- quantity=10 validation=valid reason=none
+line=5 CANCEL client_id=11 order_id=1001 instrument_id=7 validation=valid reason=none
+line=6 REPLACE client_id=11 old_order_id=1001 new_order_id=1003 instrument_id=7 new_price_ticks=10260 new_quantity=20 validation=valid reason=none

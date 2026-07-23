@@ -1,0 +1,7 @@
+line=2 NEW client_id=0 order_id=2001 instrument_id=7 side=buy type=limit time_in_force=gtc price_ticks=10300 quantity=5 validation=invalid reason=invalid_client_id
+line=3 CANCEL client_id=11 order_id=0 instrument_id=7 validation=invalid reason=invalid_order_id
+line=4 REPLACE client_id=11 old_order_id=2001 new_order_id=2002 instrument_id=7 new_price_ticks=0 new_quantity=5 validation=invalid reason=invalid_price
+line=5 NEW client_id=11 order_id=2003 instrument_id=7 side=buy type=limit time_in_force=gtc price_ticks=- quantity=5 validation=invalid reason=missing_limit_price
+line=6 NEW client_id=11 order_id=2004 instrument_id=7 side=buy type=market time_in_force=ioc price_ticks=10300 quantity=5 validation=invalid reason=unexpected_limit_price
+line=7 NEW client_id=11 order_id=2005 instrument_id=7 side=sell type=market time_in_force=gtc price_ticks=- quantity=5 validation=invalid reason=invalid_order_type_time_in_force
+line=8 NEW client_id=11 order_id=2006 instrument_id=7 side=sell type=limit time_in_force=fok price_ticks=10300 quantity=5 validation=invalid reason=unsupported_time_in_force
