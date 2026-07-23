@@ -42,7 +42,9 @@ returns a nonzero exit code.
 
 The first hosted GCC, Clang, and sanitizer jobs passed. The formatter job exposed output drift
 between formatter packages, so the workflow now provisions clang-format 18.1.8 in an isolated
-environment and passes its exact path into CMake. A fully green run remains the release gate.
+environment and passes its exact path into CMake. The corrected
+[CI run](https://github.com/Tow57/AtlasLOB/actions/runs/29971633884) passed GCC, Clang, ASan/UBSan,
+and formatting on Ubuntu 24.04.
 
 ## What surprised me
 

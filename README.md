@@ -19,8 +19,9 @@ latency claims.
 | Target-based C++20 build | Complete | `CMakeLists.txt`, named presets |
 | Strong order and instrument values | Complete | Compile-time separation in unit tests |
 | Deterministic new-order validation | Complete | `domain.validation` test |
-| GCC and Clang CI | Configured; first run pending | `.github/workflows/ci.yml` |
-| ASan and UBSan CI | Configured; first run pending | `asan-ubsan` preset and CI job |
+| GCC and Clang CI | Passing | `.github/workflows/ci.yml` |
+| ASan and UBSan CI | Passing | `asan-ubsan` preset and CI job |
+| Pinned clang-format gate | Passing | `format-check` CI job |
 | Resting book and matching | Planned | Phase 1 and Phase 2 |
 | Replay, Python bindings, benchmarks, gateway | Planned | Later gated phases |
 
