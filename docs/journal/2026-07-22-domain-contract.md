@@ -30,8 +30,8 @@ cmake --build --preset release
 ctest --preset release
 ```
 
-The hosted GCC, Clang, ASan/UBSan, and pinned formatting jobs must also pass. Exact run links are
-added after the branch is published.
+Hosted GCC, Clang, ASan/UBSan, and pinned formatting all passed for commit `6a77200` in
+[GitHub Actions run 29978052527](https://github.com/Tow57/AtlasLOB/actions/runs/29978052527).
 
 ## Next decision
 
