@@ -11,5 +11,7 @@ struct ValidationResult final {
 };
 
 [[nodiscard]] ValidationResult validate(const NewOrder& order) noexcept;
+[[nodiscard]] ValidationResult validate(const CancelOrder& order) noexcept;
+[[nodiscard]] ValidationResult validate(const ReplaceOrder& order) noexcept;
 
 }  // namespace atlaslob::domain

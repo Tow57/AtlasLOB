@@ -4,9 +4,11 @@
 #include <string_view>
 
 #include "atlaslob/domain/validation.hpp"
+#include "domain_fixture.hpp"
 
 namespace {
 
+using atlaslob::domain::ClientId;
 using atlaslob::domain::InstrumentId;
 using atlaslob::domain::NewOrder;
 using atlaslob::domain::OrderId;
@@ -17,11 +19,14 @@ using atlaslob::domain::Side;
 using atlaslob::domain::TimeInForce;
 
 void print_usage(std::string_view program) {
-  std::cerr << "Usage: " << program << " validate-demo\n";
+  std::cerr << "Usage:\n"
+            << "  " << program << " validate-demo\n"
+            << "  " << program << " domain-fixture <path>\n";
 }
 
 int run_validation_demo() {
   const NewOrder order{
+      .client_id = ClientId{1U},
       .order_id = OrderId{1001U},
       .instrument_id = InstrumentId{1U},
       .side = Side::buy,
@@ -51,9 +56,14 @@ int run_validation_demo() {
 }  // namespace
 
 int main(int argc, char* argv[]) {
-  if (argc != 2 || std::string_view{argv[1]} != "validate-demo") {
-    print_usage(argv[0]);
-    return EXIT_FAILURE;
+  if (argc == 2 && std::string_view{argv[1]} == "validate-demo") {
+    return run_validation_demo();
   }
-  return run_validation_demo();
+
+  if (argc == 3 && std::string_view{argv[1]} == "domain-fixture") {
+    return atlaslob::cli::run_domain_fixture_file(argv[2], std::cout);
+  }
+
+  print_usage(argv[0]);
+  return EXIT_FAILURE;
 }

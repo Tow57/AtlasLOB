@@ -3,6 +3,9 @@
 namespace atlaslob::domain {
 
 ValidationResult validate(const NewOrder& order) noexcept {
+  if (order.client_id.value() == 0U) {
+    return {RejectReason::invalid_client_id};
+  }
   if (order.order_id.value() == 0U) {
     return {RejectReason::invalid_order_id};
   }
@@ -47,6 +50,44 @@ ValidationResult validate(const NewOrder& order) noexcept {
       return {};
   }
   return {RejectReason::invalid_order_type};
+}
+
+ValidationResult validate(const CancelOrder& order) noexcept {
+  if (order.client_id.value() == 0U) {
+    return {RejectReason::invalid_client_id};
+  }
+  if (order.order_id.value() == 0U) {
+    return {RejectReason::invalid_order_id};
+  }
+  if (order.instrument_id.value() == 0U) {
+    return {RejectReason::invalid_instrument_id};
+  }
+  return {};
+}
+
+ValidationResult validate(const ReplaceOrder& order) noexcept {
+  if (order.client_id.value() == 0U) {
+    return {RejectReason::invalid_client_id};
+  }
+  if (order.old_order_id.value() == 0U) {
+    return {RejectReason::invalid_order_id};
+  }
+  if (order.new_order_id.value() == 0U) {
+    return {RejectReason::invalid_order_id};
+  }
+  if (order.old_order_id == order.new_order_id) {
+    return {RejectReason::invalid_replacement_id};
+  }
+  if (order.instrument_id.value() == 0U) {
+    return {RejectReason::invalid_instrument_id};
+  }
+  if (order.new_quantity.value() == 0U) {
+    return {RejectReason::invalid_quantity};
+  }
+  if (order.new_limit_price.value() <= 0) {
+    return {RejectReason::invalid_price};
+  }
+  return {};
 }
 
 }  // namespace atlaslob::domain

@@ -30,6 +30,7 @@ target_sources(
     BASE_DIRS include
     FILES
       include/atlaslob/domain/commands.hpp
+      include/atlaslob/domain/events.hpp
       include/atlaslob/domain/types.hpp
       include/atlaslob/domain/validation.hpp
 )
@@ -39,23 +40,72 @@ set_target_properties(atlas_domain PROPERTIES CXX_EXTENSIONS OFF)
 atlas_set_project_warnings(atlas_domain)
 atlas_enable_sanitizers(atlas_domain)
 
+add_library(
+  atlas_cli_support
+  src/cli/domain_fixture.cpp
+  src/cli/domain_fixture.hpp
+  src/cli/domain_fixture_formatter.cpp
+  src/cli/domain_fixture_formatter.hpp
+  src/cli/domain_fixture_parser.cpp
+  src/cli/domain_fixture_parser.hpp
+)
+target_link_libraries(atlas_cli_support PUBLIC AtlasLOB::domain)
+target_include_directories(atlas_cli_support PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/src/cli")
+target_compile_features(atlas_cli_support PUBLIC cxx_std_20)
+set_target_properties(atlas_cli_support PROPERTIES CXX_EXTENSIONS OFF)
+atlas_set_project_warnings(atlas_cli_support)
+atlas_enable_sanitizers(atlas_cli_support)
+
 add_executable(atlas_cli src/cli/main.cpp)
-target_link_libraries(atlas_cli PRIVATE AtlasLOB::domain)
+target_link_libraries(atlas_cli PRIVATE AtlasLOB::domain atlas_cli_support)
 target_compile_features(atlas_cli PRIVATE cxx_std_20)
 set_target_properties(atlas_cli PROPERTIES CXX_EXTENSIONS OFF)
 atlas_set_project_warnings(atlas_cli)
 atlas_enable_sanitizers(atlas_cli)
 
 if(BUILD_TESTING)
-  add_executable(atlas_domain_tests tests/unit/domain_validation_test.cpp)
-  target_link_libraries(atlas_domain_tests PRIVATE AtlasLOB::domain)
+  include(AtlasDependencies)
+  atlas_setup_test_dependencies()
+  include(GoogleTest)
+
+  file(
+    GLOB ATLAS_DOMAIN_TEST_SOURCES
+    CONFIGURE_DEPENDS
+    "${CMAKE_CURRENT_SOURCE_DIR}/tests/unit/domain_*_test.cpp"
+  )
+  add_executable(atlas_domain_tests ${ATLAS_DOMAIN_TEST_SOURCES})
+  target_link_libraries(atlas_domain_tests PRIVATE AtlasLOB::domain GTest::gtest_main)
   target_compile_features(atlas_domain_tests PRIVATE cxx_std_20)
   set_target_properties(atlas_domain_tests PROPERTIES CXX_EXTENSIONS OFF)
   atlas_set_project_warnings(atlas_domain_tests)
   atlas_enable_sanitizers(atlas_domain_tests)
 
-  add_test(NAME domain.validation COMMAND atlas_domain_tests)
-  set_tests_properties(domain.validation PROPERTIES LABELS "unit")
+  gtest_discover_tests(
+    atlas_domain_tests
+    TEST_PREFIX "domain."
+    PROPERTIES LABELS "domain"
+  )
+
+  file(
+    GLOB ATLAS_FIXTURE_TEST_SOURCES
+    CONFIGURE_DEPENDS
+    "${CMAKE_CURRENT_SOURCE_DIR}/tests/integration/domain_fixture*_test.cpp"
+  )
+  add_executable(atlas_fixture_tests ${ATLAS_FIXTURE_TEST_SOURCES})
+  target_link_libraries(
+    atlas_fixture_tests
+    PRIVATE atlas_cli_support GTest::gtest_main
+  )
+  target_compile_features(atlas_fixture_tests PRIVATE cxx_std_20)
+  set_target_properties(atlas_fixture_tests PROPERTIES CXX_EXTENSIONS OFF)
+  atlas_set_project_warnings(atlas_fixture_tests)
+  atlas_enable_sanitizers(atlas_fixture_tests)
+
+  gtest_discover_tests(
+    atlas_fixture_tests
+    TEST_PREFIX "integration."
+    PROPERTIES LABELS "integration"
+  )
 
   add_test(NAME cli.validation_demo COMMAND atlas_cli validate-demo)
   set_tests_properties(
@@ -64,6 +114,46 @@ if(BUILD_TESTING)
       LABELS "integration"
       PASS_REGULAR_EXPRESSION
         "accepted order_id=1001 instrument_id=1 side=buy type=limit time_in_force=gtc price_ticks=10125 quantity=10"
+  )
+
+  add_test(
+    NAME cli.domain_fixture_valid
+    COMMAND
+      atlas_cli domain-fixture
+      "${CMAKE_CURRENT_SOURCE_DIR}/examples/domain-valid.commands"
+  )
+  set_tests_properties(
+    cli.domain_fixture_valid
+    PROPERTIES
+      LABELS "integration"
+      PASS_REGULAR_EXPRESSION
+        "line=6 REPLACE client_id=11 old_order_id=1001 new_order_id=1003 instrument_id=7 new_price_ticks=10260 new_quantity=20 validation=valid reason=none"
+  )
+
+  add_test(
+    NAME cli.domain_fixture_invalid
+    COMMAND
+      atlas_cli domain-fixture
+      "${CMAKE_CURRENT_SOURCE_DIR}/tests/integration/fixtures/domain_invalid.commands"
+  )
+  set_tests_properties(
+    cli.domain_fixture_invalid
+    PROPERTIES
+      LABELS "integration"
+      WILL_FAIL TRUE
+  )
+
+  add_test(
+    NAME cli.domain_fixture_parse_error
+    COMMAND
+      atlas_cli domain-fixture
+      "${CMAKE_CURRENT_SOURCE_DIR}/tests/integration/fixtures/parse_error.commands"
+  )
+  set_tests_properties(
+    cli.domain_fixture_parse_error
+    PROPERTIES
+      LABELS "integration"
+      WILL_FAIL TRUE
   )
 
   add_test(NAME cli.invalid_usage COMMAND atlas_cli unknown-command)
@@ -75,14 +165,15 @@ if(BUILD_TESTING)
   )
 endif()
 
-set(
-  ATLAS_FORMAT_FILES
-  "${CMAKE_CURRENT_SOURCE_DIR}/include/atlaslob/domain/commands.hpp"
-  "${CMAKE_CURRENT_SOURCE_DIR}/include/atlaslob/domain/types.hpp"
-  "${CMAKE_CURRENT_SOURCE_DIR}/include/atlaslob/domain/validation.hpp"
-  "${CMAKE_CURRENT_SOURCE_DIR}/src/cli/main.cpp"
-  "${CMAKE_CURRENT_SOURCE_DIR}/src/domain/validation.cpp"
-  "${CMAKE_CURRENT_SOURCE_DIR}/tests/unit/domain_validation_test.cpp"
+file(
+  GLOB_RECURSE ATLAS_FORMAT_FILES
+  CONFIGURE_DEPENDS
+  "${CMAKE_CURRENT_SOURCE_DIR}/include/*.hpp"
+  "${CMAKE_CURRENT_SOURCE_DIR}/include/*.cpp"
+  "${CMAKE_CURRENT_SOURCE_DIR}/src/*.hpp"
+  "${CMAKE_CURRENT_SOURCE_DIR}/src/*.cpp"
+  "${CMAKE_CURRENT_SOURCE_DIR}/tests/*.hpp"
+  "${CMAKE_CURRENT_SOURCE_DIR}/tests/*.cpp"
 )
 
 find_program(CLANG_FORMAT_EXECUTABLE NAMES clang-format)

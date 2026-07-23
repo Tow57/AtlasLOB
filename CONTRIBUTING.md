@@ -12,6 +12,9 @@ repository history remains useful engineering evidence.
 
 ## Local checks
 
+The first testing-enabled configure fetches the immutable GoogleTest revision recorded in
+`THIRD_PARTY_NOTICES.md`. Third-party targets must not inherit AtlasLOB's warning policy.
+
 ```sh
 cmake --preset dev-gcc
 cmake --build --preset dev-gcc
