@@ -67,13 +67,11 @@ int main() {
 
   order = valid_limit_order();
   order.quantity = Quantity{0U};
-  expect(validate(order).reason == RejectReason::invalid_quantity,
-         "zero quantity is rejected");
+  expect(validate(order).reason == RejectReason::invalid_quantity, "zero quantity is rejected");
 
   order = valid_limit_order();
   order.side = static_cast<Side>(255U);
-  expect(validate(order).reason == RejectReason::invalid_side,
-         "unknown side values are rejected");
+  expect(validate(order).reason == RejectReason::invalid_side, "unknown side values are rejected");
 
   order = valid_limit_order();
   order.order_type = static_cast<OrderType>(255U);
