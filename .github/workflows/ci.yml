@@ -77,13 +77,17 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Install clang-format
+      - name: Install compiler and pinned formatter
         run: |
           sudo apt-get update
-          sudo apt-get install --yes clang clang-format ninja-build
+          sudo apt-get install --yes clang ninja-build python3-venv
+          python3 -m venv "$RUNNER_TEMP/atlas-format"
+          "$RUNNER_TEMP/atlas-format/bin/pip" install "clang-format==18.1.8"
 
       - name: Configure
-        run: cmake --preset dev-clang
+        run: >-
+          cmake --preset dev-clang
+          -DCLANG_FORMAT_EXECUTABLE="$RUNNER_TEMP/atlas-format/bin/clang-format"
 
       - name: Check formatting
         run: cmake --build --preset dev-clang --target format-check

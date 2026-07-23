@@ -18,8 +18,9 @@ cmake --build --preset dev-gcc
 ctest --preset dev-gcc
 ```
 
-When Clang is available, also run the `dev-clang` and `asan-ubsan` presets. Run `format-check`
-before submitting C++ changes.
+When Clang is available, also run the `dev-clang` and `asan-ubsan` presets. The formatting gate is
+pinned to clang-format 18.1.8; use that version when running `format-check` before submitting C++
+changes.
 
 ## Pull requests
 

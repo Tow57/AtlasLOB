@@ -40,8 +40,9 @@ Both configurations now pass three tests: `domain.validation`, `cli.validation_d
 `cli.invalid_usage`. The negative-path test confirms that invalid CLI usage prints a diagnostic and
 returns a nonzero exit code.
 
-The first hosted Clang and sanitizer results remain pending until the repository is pushed. This
-entry does not claim those jobs have passed.
+The first hosted GCC, Clang, and sanitizer jobs passed. The formatter job exposed output drift
+between formatter packages, so the workflow now provisions clang-format 18.1.8 in an isolated
+environment and passes its exact path into CMake. A fully green run remains the release gate.
 
 ## What surprised me
 
