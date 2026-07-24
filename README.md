@@ -15,9 +15,9 @@ latency claims.
 
 ## Current status
 
-**Phase 2 matching commands complete locally on the current development branch: price-time New,
-Cancel, and atomic Replace execution plus a public single-instrument engine are implemented;
-canonical digests, command-stream stress, and hosted PR gates remain**
+**Phase 2 matching MVP complete locally on the current development branch: price-time New,
+Cancel, and atomic Replace execution, a public single-instrument engine, canonical state/event
+digests, and independent command-stream comparison are implemented; hosted PR gates remain**
 
 | Capability | Status | Evidence |
 | --- | --- | --- |
@@ -39,11 +39,14 @@ canonical digests, command-stream stress, and hosted PR gates remain**
 | Sequenced Cancel execution and normalized events | Complete locally; hosted gates pending | `core.CommandExecutorCancel*`, ADR 0007 |
 | Atomic Replace with priority reset | Complete locally; hosted gates pending | `core.CommandExecutorReplace*`, ADR 0008 |
 | Public single-instrument matching facade | Complete locally; hosted gates pending | `atlaslob::MatchingEngine`, ADR 0008 |
+| Canonical snapshots and state/event digests | Complete locally; hosted gates pending | `core.Canonical*`, ADR 0009 |
+| Executable matching fixture | Complete locally; hosted gates pending | `atlas_cli engine-fixture`, golden integration fixtures |
+| Independent command-stream comparison | Complete locally; hosted gates pending | 10,000 mixed commands plus deterministic rerun |
 | GCC and Clang CI | Passing on `main`; required per PR | `.github/workflows/ci.yml` |
 | ASan and UBSan CI | Passing on `main`; required per PR | `asan-ubsan` preset and CI job |
 | Pinned clang-format gate | Passing on `main`; required per PR | `format-check` CI job |
 | Resting book structure | Complete locally; hosted gates pending | `stress.InstrumentBookStress*` |
-| Matching and normalized command execution | New/Cancel/Replace complete; digests pending | Phase 2 |
+| Matching and normalized command execution | Complete locally; hosted gates pending | Phase 2 |
 | Replay, Python bindings, benchmarks, gateway | Planned | Later gated phases |
 
 ## Quick start
@@ -80,6 +83,14 @@ Validate a canonical development fixture:
 ./build/dev-gcc/atlas_cli domain-fixture examples/domain-valid.commands
 ```
 
+Execute a deterministic matching fixture with per-command event and state hashes:
+
+```sh
+./build/dev-gcc/atlas_cli engine-fixture 7 examples/engine-demo.commands
+```
+
+On Windows, use `build/dev-gcc/atlas_cli.exe` for either fixture command.
+
 ## Supported environments
 
 Ubuntu 24.04 is the primary supported environment because later gateway and profiling work will
@@ -107,6 +118,8 @@ developed with MinGW GCC on Windows, but Linux CI is the support authority.
   Cancel through one all-preflight mutation boundary.
 - ADR 0008 treats Replace as one atomic old-removal/passive-fill/residual transaction and keeps
   mutable implementation details behind the public `MatchingEngine` PImpl.
+- ADR 0009 freezes exact best-price/FIFO snapshots and versioned big-endian state/event digest
+  encodings, then verifies complete command streams against a separate map/deque reference model.
 
 See [the semantic contract](docs/semantics.md) and
 [ADR 0001](docs/decisions/0001-core-semantics.md) plus
@@ -116,12 +129,14 @@ See [the semantic contract](docs/semantics.md) and
 [ADR 0005](docs/decisions/0005-indexed-order-book-and-cancellation.md) plus
 [ADR 0006](docs/decisions/0006-command-admission-and-execution-preparation.md) plus
 [ADR 0007](docs/decisions/0007-atomic-new-and-cancel-execution.md) plus
-[ADR 0008](docs/decisions/0008-atomic-replace-and-public-engine.md) for accepted rules.
+[ADR 0008](docs/decisions/0008-atomic-replace-and-public-engine.md) plus
+[ADR 0009](docs/decisions/0009-canonical-deterministic-evidence.md) for accepted rules.
 
 ## Roadmap
 
 1. Ordered book sides, a global active-order index, direct cancellation, and full book invariants.
-2. Limit/market matching, GTC/IOC residuals, replace, and normalized event digests.
+2. Limit/market matching, GTC/IOC residuals, replace, canonical digests, and deterministic
+   command-stream evidence.
 3. Independent Python reference model, differential generation, shrinking, and fuzzing.
 4. Command logging, deterministic replay, Python batch bindings, and analysis tooling.
 5. Reproducible benchmarks and a profile-supported optimization study.

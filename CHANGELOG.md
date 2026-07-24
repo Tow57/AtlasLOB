@@ -44,8 +44,15 @@ The format is based on Keep a Changelog, and public releases will follow semanti
   relief and exact exception rollback.
 - Public non-owning-detail-free `MatchingEngine` PImpl with typed/variant command execution,
   policy configuration, sequence observers, active count, and top-of-book values.
+- Exact value-only book snapshots in canonical best-price/FIFO order.
+- Versioned, fixed-width, big-endian state and event encodings with domain-separated SHA-256
+  digests and independently generated golden values.
+- Deterministic `engine-fixture` execution with per-command event/state digests, outcome summaries,
+  strict instrument parsing, and explicit exit-code precedence.
+- Independent map/deque matching model coverage for 10,000 mixed commands plus a 2,500-command
+  deterministic transcript rerun.
 - ADR 0003 documenting node ownership, pointer invalidation, and internal error boundaries.
-- ADRs 0004 through 0008 documenting ordered-side, indexed-book, admission, planning,
+- ADRs 0004 through 0009 documenting ordered-side, indexed-book, admission, planning,
   execution-preparation, atomic New/Cancel, atomic Replace, and public API boundaries.
 - GCC, Clang, formatting, ASan, and UBSan workflow definitions.
 - Initial semantic contract, roadmap, and architecture decision record.

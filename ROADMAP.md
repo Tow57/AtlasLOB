@@ -42,7 +42,9 @@ index removal, empty-level cleanup, and storage destruction.
 - [x] Sweep multiple orders and price levels.
 - [x] Support market IOC and limit IOC residual behavior.
 - [x] Replace with cancel-and-new priority reset.
-- [ ] Produce normalized event and state digests.
+- [x] Produce normalized event and state digests.
+- [x] Add a deterministic engine fixture with per-command evidence.
+- [x] Compare mixed command streams against an independent map/deque reference model.
 
 ADR 0006 fixes the Phase 2 failure boundary: admission consumes the command sequence, match plans
 contain values rather than pointers, event capacity and a possible resting residual are allocated
@@ -62,8 +64,15 @@ ADR 0008 completes command execution with atomic Replace. The old order, passive
 optional new residual commit through one replacement-specific all-preflight boundary; same-price
 replacement receives new FIFO priority and credits the old aggregate before checked addition.
 The public `MatchingEngine` PImpl now exposes value-only commands, events, top of book, active
-count, and sequence state without exposing mutable book internals. Canonical digests and
-command-stream model stress remain the final Phase 2 evidence slice.
+count, and sequence state without exposing mutable book internals.
+
+ADR 0009 closes Phase 2 with exact best-price/FIFO snapshots, versioned fixed-width state and
+event digests, committed/rejected/malformed golden engine fixtures, and a structurally independent
+map/deque reference model. Four fixed seeds compare 10,000 mixed commands after every transition;
+a further 2,500-command rerun verifies the complete digest transcript, and 66 directed commands
+prove exact-capacity rejection and terminal execution. Local Debug and Release suites pass
+254/254 tests and the production-only build passes. Hosted compiler and sanitizer evidence remains
+a pull-request gate.
 
 ## Phase 3 - Independent correctness evidence
 

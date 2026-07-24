@@ -1,0 +1,6 @@
+# Run with: atlas_cli engine-fixture 7 examples/engine-demo.commands
+NEW 10 1 7 BUY LIMIT GTC 100 5
+NEW 11 2 7 SELL LIMIT GTC 101 3
+NEW 12 3 7 BUY LIMIT IOC 101 2
+REPLACE 11 2 4 7 100 2
+CANCEL 10 1 7

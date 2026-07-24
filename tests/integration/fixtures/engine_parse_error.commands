@@ -1,0 +1,6 @@
+# Parse errors occur before submission and therefore consume no sequence.
+NEW 10 3001 7 BUY LIMIT GTC 100 5
+NOT_A_COMMAND 10 3002 7
+NEW 10 3002 8 BUY LIMIT GTC 99 1
+CANCEL 10 3001 7
+NEW 10 bad-id 7 BUY LIMIT GTC 100 1

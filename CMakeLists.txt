@@ -50,6 +50,8 @@ set(
   src/core/active_order_index.hpp
   src/core/book_side.cpp
   src/core/book_side.hpp
+  src/core/canonical_digest.cpp
+  src/core/canonical_digest.hpp
   src/core/checked_arithmetic.hpp
   src/core/command_admission.cpp
   src/core/command_admission.hpp
@@ -71,6 +73,7 @@ set(
   src/core/order_storage.hpp
   src/core/price_level.cpp
   src/core/price_level.hpp
+  src/core/snapshot_sequence.hpp
   src/core/state_validation.cpp
   src/core/state_validation.hpp
   src/core/top_of_book.hpp
@@ -83,7 +86,10 @@ function(atlas_configure_core target_name)
     PUBLIC
       FILE_SET HEADERS
       BASE_DIRS include
-      FILES include/atlaslob/matching_engine.hpp
+      FILES
+        include/atlaslob/book_snapshot.hpp
+        include/atlaslob/digest.hpp
+        include/atlaslob/matching_engine.hpp
   )
   target_link_libraries(${target_name} PUBLIC AtlasLOB::domain)
   target_include_directories(${target_name} PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src/core")
@@ -107,8 +113,11 @@ add_library(
   src/cli/domain_fixture_formatter.hpp
   src/cli/domain_fixture_parser.cpp
   src/cli/domain_fixture_parser.hpp
+  src/cli/engine_fixture.cpp
+  src/cli/engine_fixture.hpp
 )
 target_link_libraries(atlas_cli_support PUBLIC AtlasLOB::domain)
+target_link_libraries(atlas_cli_support PRIVATE AtlasLOB::core)
 target_include_directories(atlas_cli_support PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/src/cli")
 target_compile_features(atlas_cli_support PUBLIC cxx_std_20)
 set_target_properties(atlas_cli_support PROPERTIES CXX_EXTENSIONS OFF)
@@ -152,12 +161,12 @@ if(BUILD_TESTING)
   file(
     GLOB ATLAS_FIXTURE_TEST_SOURCES
     CONFIGURE_DEPENDS
-    "${CMAKE_CURRENT_SOURCE_DIR}/tests/integration/domain_fixture*_test.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/tests/integration/*fixture*_test.cpp"
   )
   add_executable(atlas_fixture_tests ${ATLAS_FIXTURE_TEST_SOURCES})
   target_link_libraries(
     atlas_fixture_tests
-    PRIVATE atlas_cli_support GTest::gtest_main
+    PRIVATE AtlasLOB::core atlas_cli_support GTest::gtest_main
   )
   target_compile_features(atlas_fixture_tests PRIVATE cxx_std_20)
   set_target_properties(atlas_fixture_tests PROPERTIES CXX_EXTENSIONS OFF)
@@ -265,6 +274,20 @@ if(BUILD_TESTING)
     PROPERTIES
       LABELS "integration"
       WILL_FAIL TRUE
+  )
+
+  add_test(
+    NAME cli.engine_fixture_valid
+    COMMAND
+      atlas_cli engine-fixture 7
+      "${CMAKE_CURRENT_SOURCE_DIR}/examples/engine-demo.commands"
+  )
+  set_tests_properties(
+    cli.engine_fixture_valid
+    PROPERTIES
+      LABELS "integration"
+      PASS_REGULAR_EXPRESSION
+        "summary commands=5 committed=5 rejected=0 parse_errors=0 engine_errors=0 last_sequence=5 state_digest=[0-9a-f]+"
   )
 
   add_test(NAME cli.invalid_usage COMMAND atlas_cli unknown-command)

@@ -16,19 +16,7 @@ void write_validation(std::ostream& output, const domain::ValidationResult& resu
 }
 
 [[nodiscard]] bool write_new(std::ostream& output, std::size_t line_number,
-                             const ParsedNewOrder& parsed) {
-  const domain::NewOrder order{
-      .client_id = domain::ClientId{parsed.client_id},
-      .order_id = domain::OrderId{parsed.order_id},
-      .instrument_id = domain::InstrumentId{parsed.instrument_id},
-      .side = parsed.side,
-      .order_type = parsed.order_type,
-      .time_in_force = parsed.time_in_force,
-      .limit_price = parsed.limit_price.has_value()
-                         ? std::optional{domain::PriceTicks{*parsed.limit_price}}
-                         : std::nullopt,
-      .quantity = domain::Quantity{parsed.quantity},
-  };
+                             const domain::NewOrder& order) {
   const auto validation = domain::validate(order);
 
   output << "line=" << line_number << " NEW"
@@ -48,12 +36,7 @@ void write_validation(std::ostream& output, const domain::ValidationResult& resu
 }
 
 [[nodiscard]] bool write_cancel(std::ostream& output, std::size_t line_number,
-                                const ParsedCancelOrder& parsed) {
-  const domain::CancelOrder order{
-      .client_id = domain::ClientId{parsed.client_id},
-      .order_id = domain::OrderId{parsed.order_id},
-      .instrument_id = domain::InstrumentId{parsed.instrument_id},
-  };
+                                const domain::CancelOrder& order) {
   const auto validation = domain::validate(order);
 
   output << "line=" << line_number << " CANCEL"
@@ -64,15 +47,7 @@ void write_validation(std::ostream& output, const domain::ValidationResult& resu
 }
 
 [[nodiscard]] bool write_replace(std::ostream& output, std::size_t line_number,
-                                 const ParsedReplaceOrder& parsed) {
-  const domain::ReplaceOrder order{
-      .client_id = domain::ClientId{parsed.client_id},
-      .old_order_id = domain::OrderId{parsed.old_order_id},
-      .new_order_id = domain::OrderId{parsed.new_order_id},
-      .instrument_id = domain::InstrumentId{parsed.instrument_id},
-      .new_limit_price = domain::PriceTicks{parsed.new_limit_price},
-      .new_quantity = domain::Quantity{parsed.new_quantity},
-  };
+                                 const domain::ReplaceOrder& order) {
   const auto validation = domain::validate(order);
 
   output << "line=" << line_number << " REPLACE"
@@ -94,19 +69,20 @@ void write_parse_error(std::ostream& output, std::size_t line_number, const Pars
 
 bool write_validated_command(std::ostream& output, std::size_t line_number,
                              const ParsedCommand& command) {
+  const auto normalized = to_domain_command(command);
   return std::visit(
-      [&output, line_number](const auto& parsed) {
-        using Parsed = std::remove_cvref_t<decltype(parsed)>;
-        if constexpr (std::is_same_v<Parsed, ParsedNewOrder>) {
-          return write_new(output, line_number, parsed);
-        } else if constexpr (std::is_same_v<Parsed, ParsedCancelOrder>) {
-          return write_cancel(output, line_number, parsed);
+      [&output, line_number](const auto& order) {
+        using Order = std::remove_cvref_t<decltype(order)>;
+        if constexpr (std::is_same_v<Order, domain::NewOrder>) {
+          return write_new(output, line_number, order);
+        } else if constexpr (std::is_same_v<Order, domain::CancelOrder>) {
+          return write_cancel(output, line_number, order);
         } else {
-          static_assert(std::is_same_v<Parsed, ParsedReplaceOrder>);
-          return write_replace(output, line_number, parsed);
+          static_assert(std::is_same_v<Order, domain::ReplaceOrder>);
+          return write_replace(output, line_number, order);
         }
       },
-      command);
+      normalized);
 }
 
 }  // namespace atlaslob::cli::detail

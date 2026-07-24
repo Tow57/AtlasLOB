@@ -8,6 +8,8 @@
 #include <string_view>
 #include <utility>
 
+#include "atlaslob/book_snapshot.hpp"
+#include "atlaslob/digest.hpp"
 #include "atlaslob/domain/commands.hpp"
 #include "atlaslob/domain/event_batch.hpp"
 #include "atlaslob/domain/events.hpp"
@@ -107,6 +109,8 @@ class MatchingEngine final {
   [[nodiscard]] std::size_t active_order_count() const noexcept;
   [[nodiscard]] bool empty() const noexcept;
   [[nodiscard]] BookTop top() const noexcept;
+  [[nodiscard]] BookSnapshot snapshot() const;
+  [[nodiscard]] Digest256 state_digest() const;
   [[nodiscard]] domain::Sequence next_sequence() const noexcept;
   [[nodiscard]] bool sequence_exhausted() const noexcept;
 

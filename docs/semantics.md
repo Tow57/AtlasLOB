@@ -3,7 +3,7 @@
 This document defines AtlasLOB's implemented command vocabulary, pure validation behavior, stable
 order-node ownership, ordered resting book, direct cancellation, command admission, value-only
 event batches, read-only matching plans, atomic New/Cancel/Replace execution, and public
-single-instrument engine boundary.
+single-instrument engine boundary with canonical deterministic evidence.
 
 ## Values and enumerations
 
@@ -243,3 +243,43 @@ bid/ask price and aggregate, next sequence, and sticky sequence exhaustion. Node
 levels, indexes, planners, prepared transactions, and detailed internal component errors are not
 public API. Allocation failure propagates. Multi-instrument routing and durable replay remain
 future infrastructure.
+
+## Canonical snapshots and digests
+
+`MatchingEngine::snapshot()` returns the complete visible resting state as values. It records
+semantic version, instrument, last issued sequence, exhaustion, active count, bids in descending
+price order, asks in ascending price order, and each level's orders in FIFO order. Every order
+includes identity, side, price, remaining quantity, and priority sequence. A fresh engine reports
+last sequence zero. Snapshot observation requires a valid book with no pending preparation.
+
+State and event digests hash explicitly encoded bytes rather than native C++ object
+representations. The state domain begins with ASCII `ATLSST01`; the event domain begins with ASCII
+`ATLSEV01`. Integers are fixed-width and big-endian, signed price ticks use their two's-complement
+64-bit representation, collection counts precede elements, and optional values encode an explicit
+presence byte plus fixed-width payload or zero placeholders. SHA-256 results render as 64
+lowercase hexadecimal characters.
+
+The state encoding includes every snapshot field, level aggregate, and FIFO order field. The event
+encoding includes semantic version, batch identity, ordered variant tags, every header, every
+payload, and optional ID/top-of-book presence. The complete byte layout is frozen in ADR 0009.
+These values support deterministic comparison and replay evidence; they are not authentication,
+a persistence format, or a performance protocol.
+
+## Deterministic engine fixture
+
+`atlas_cli engine-fixture <instrument_id> <path>` executes the canonical text command grammar
+against one matching engine. Each submitted command prints its source line, authoritative
+sequence, committed/rejected classification, ordered event types, event digest, and resulting
+state digest. The summary reports counts, last sequence, and final state digest.
+
+Malformed syntax and conversion failures remain adapter errors and consume no sequence. Domain
+and state rejections consume a sequence and produce a digestible rejection batch. Exit code `0`
+means all commands committed, `1` means at least one domain rejection, `2` means an input/parse
+error occurred, and `3` means an engine failure occurred; higher-severity categories take
+precedence.
+
+A test-only reference engine uses ordered maps, FIFO deques, linear identity searches, and
+separately implemented validation, matching, mutation, and event construction. Fixed-seed
+command streams compare exact batches, snapshots, observers, and digests after every command.
+This is Phase 2 regression evidence, not a substitute for the separately packaged Python oracle,
+shrinking, long campaigns, and fuzzing planned for Phase 3.
