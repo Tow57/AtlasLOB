@@ -31,7 +31,9 @@ empty-level cleanup in a book, matching, replay, Python, and benchmarks remain d
 
 ## Evidence status
 
-The following gates must be recorded as passing only after they run against the final commit:
+The following gates passed against merged implementation commit
+`fdfe578e810020ad3e5de5f352feb8e168d4a046`. The authoritative post-merge evidence is
+[CI run 30056082897](https://github.com/Tow57/AtlasLOB/actions/runs/30056082897).
 
 | Gate | Status |
 | --- | --- |
@@ -39,17 +41,17 @@ The following gates must be recorded as passing only after they run against the 
 | Release GCC configure, build, and full CTest suite | Passed: 63/63 tests |
 | `BUILD_TESTING=OFF` production build | Passed |
 | Fixed-seed storage/level stress test | Passed: 10,000 mutations |
-| ASan and UBSan stress suite | Pending hosted Linux CI |
+| ASan and UBSan stress suite | Passed: hosted Linux CI |
 | Pinned clang-format 18.1.8 check | Passed |
 | `git diff --check` and source-tree path/secret audit | Passed |
-| Clean-worktree audit | Passed after local commit |
-| Hosted GCC build and tests | Pending |
-| Hosted Clang build and tests | Pending |
-| Hosted ASan/UBSan job | Pending |
-| Hosted formatting job | Pending |
+| Clean-worktree audit | Passed before publication and after merge |
+| Hosted GCC build and tests | Passed |
+| Hosted Clang build and tests | Passed |
+| Hosted ASan/UBSan job | Passed |
+| Hosted formatting job | Passed |
 
 The local MinGW toolchain does not include its AddressSanitizer or UndefinedBehaviorSanitizer
-runtime libraries, so the pinned hosted Linux sanitizer job remains the authority for that gate.
+runtime libraries, so the passing pinned hosted Linux sanitizer job is the authority for that gate.
 
 No latency, throughput, allocation-rate, or scalability claim is made by this slice.
 
