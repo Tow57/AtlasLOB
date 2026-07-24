@@ -165,7 +165,9 @@ class PriceLevel final {
   [[nodiscard]] domain::PriceTicks price() const noexcept { return price_; }
   [[nodiscard]] domain::Quantity aggregate_quantity() const noexcept { return aggregate_quantity_; }
   [[nodiscard]] std::size_t order_count() const noexcept { return order_count_; }
+  [[nodiscard]] OrderNode* head() noexcept { return head_; }
   [[nodiscard]] const OrderNode* head() const noexcept { return head_; }
+  [[nodiscard]] OrderNode* tail() noexcept { return tail_; }
   [[nodiscard]] const OrderNode* tail() const noexcept { return tail_; }
   [[nodiscard]] bool empty() const noexcept { return order_count_ == 0; }
 

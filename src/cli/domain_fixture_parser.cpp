@@ -6,6 +6,7 @@
 #include <span>
 #include <string_view>
 #include <system_error>
+#include <type_traits>
 #include <vector>
 
 namespace atlaslob::cli::detail {
@@ -216,6 +217,44 @@ ParsedLine parse_fixture_line(std::string_view line) {
     return parse_replace(tokens);
   }
   return ParseError{.reason = "unknown_command"};
+}
+
+domain::Command to_domain_command(const ParsedCommand& command) {
+  return std::visit(
+      [](const auto& parsed) -> domain::Command {
+        using Parsed = std::remove_cvref_t<decltype(parsed)>;
+        if constexpr (std::is_same_v<Parsed, ParsedNewOrder>) {
+          return domain::NewOrder{
+              .client_id = domain::ClientId{parsed.client_id},
+              .order_id = domain::OrderId{parsed.order_id},
+              .instrument_id = domain::InstrumentId{parsed.instrument_id},
+              .side = parsed.side,
+              .order_type = parsed.order_type,
+              .time_in_force = parsed.time_in_force,
+              .limit_price = parsed.limit_price.has_value()
+                                 ? std::optional{domain::PriceTicks{*parsed.limit_price}}
+                                 : std::nullopt,
+              .quantity = domain::Quantity{parsed.quantity},
+          };
+        } else if constexpr (std::is_same_v<Parsed, ParsedCancelOrder>) {
+          return domain::CancelOrder{
+              .client_id = domain::ClientId{parsed.client_id},
+              .order_id = domain::OrderId{parsed.order_id},
+              .instrument_id = domain::InstrumentId{parsed.instrument_id},
+          };
+        } else {
+          static_assert(std::is_same_v<Parsed, ParsedReplaceOrder>);
+          return domain::ReplaceOrder{
+              .client_id = domain::ClientId{parsed.client_id},
+              .old_order_id = domain::OrderId{parsed.old_order_id},
+              .new_order_id = domain::OrderId{parsed.new_order_id},
+              .instrument_id = domain::InstrumentId{parsed.instrument_id},
+              .new_limit_price = domain::PriceTicks{parsed.new_limit_price},
+              .new_quantity = domain::Quantity{parsed.new_quantity},
+          };
+        }
+      },
+      command);
 }
 
 }  // namespace atlaslob::cli::detail

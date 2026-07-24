@@ -5,6 +5,7 @@
 
 #include "atlaslob/domain/validation.hpp"
 #include "domain_fixture.hpp"
+#include "engine_fixture.hpp"
 
 namespace {
 
@@ -21,7 +22,8 @@ using atlaslob::domain::TimeInForce;
 void print_usage(std::string_view program) {
   std::cerr << "Usage:\n"
             << "  " << program << " validate-demo\n"
-            << "  " << program << " domain-fixture <path>\n";
+            << "  " << program << " domain-fixture <path>\n"
+            << "  " << program << " engine-fixture <instrument_id> <path>\n";
 }
 
 int run_validation_demo() {
@@ -62,6 +64,14 @@ int main(int argc, char* argv[]) {
 
   if (argc == 3 && std::string_view{argv[1]} == "domain-fixture") {
     return atlaslob::cli::run_domain_fixture_file(argv[2], std::cout);
+  }
+
+  if (argc >= 2 && std::string_view{argv[1]} == "engine-fixture") {
+    if (argc != 4) {
+      print_usage(argv[0]);
+      return atlaslob::cli::engine_fixture_input_error_exit_code;
+    }
+    return atlaslob::cli::run_engine_fixture_file(argv[2], argv[3], std::cout);
   }
 
   print_usage(argv[0]);

@@ -7,7 +7,7 @@
 #include <string_view>
 #include <variant>
 
-#include "atlaslob/domain/types.hpp"
+#include "atlaslob/domain/commands.hpp"
 
 namespace atlaslob::cli::detail {
 
@@ -48,5 +48,10 @@ struct ParseError final {
 using ParsedLine = std::variant<IgnoredLine, ParsedCommand, ParseError>;
 
 [[nodiscard]] ParsedLine parse_fixture_line(std::string_view line);
+
+// Parsed values deliberately remain adapter primitives until syntax and
+// conversion have succeeded. Both fixture modes use this single normalization
+// boundary so their domain commands cannot drift.
+[[nodiscard]] domain::Command to_domain_command(const ParsedCommand& command);
 
 }  // namespace atlaslob::cli::detail
