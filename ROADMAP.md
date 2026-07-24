@@ -15,11 +15,15 @@ satisfied.
 ## Phase 1 - Domain model and resting book
 
 - [x] Complete command, event, and rejection vocabulary.
-- [ ] Stable owning storage for order nodes.
-- [ ] FIFO price levels with aggregate quantity and order count.
+- [x] Stable owning storage for order nodes.
+- [x] FIFO price levels with aggregate quantity and order count.
 - [ ] Ordered bid and ask sides with best-price access.
 - [ ] Direct indexed cancellation without level scans.
 - [ ] Full structural invariants and sanitizer stress tests.
+
+Stable storage and one-price FIFO mutation are the stopping point of this slice. Book sides, the
+global active-order index, executable cancellation, whole-book invariants, and matching remain
+deferred.
 
 ## Phase 2 - Matching MVP
 

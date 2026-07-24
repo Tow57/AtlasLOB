@@ -15,7 +15,7 @@ latency claims.
 
 ## Current status
 
-**Phase 1 in progress: domain contract complete; mutable book storage next**
+**Phase 1 in progress: stable storage and FIFO price levels complete; book sides and index next**
 
 | Capability | Status | Evidence |
 | --- | --- | --- |
@@ -26,9 +26,11 @@ latency claims.
 | Normalized event schema | Complete | Event payload and discriminator tests |
 | Command sequencing and ID policy | Complete | ADR 0002 and semantic contract |
 | Canonical domain fixture | Complete | `atlas_cli domain-fixture` integration tests |
-| GCC and Clang CI | Passing | `.github/workflows/ci.yml` |
-| ASan and UBSan CI | Passing | `asan-ubsan` preset and CI job |
-| Pinned clang-format gate | Passing | `format-check` CI job |
+| Stable owning order-node storage | Complete | `atlas_core_tests`, ADR 0003 |
+| Checked intrusive FIFO price levels | Complete | Core mutation, invariant, and stress tests |
+| GCC and Clang CI | Passing on `main`; required per PR | `.github/workflows/ci.yml` |
+| ASan and UBSan CI | Passing on `main`; required per PR | `asan-ubsan` preset and CI job |
+| Pinned clang-format gate | Passing on `main`; required per PR | `format-check` CI job |
 | Resting book and matching | Planned | Phase 1 and Phase 2 |
 | Replay, Python bindings, benchmarks, gateway | Planned | Later gated phases |
 
@@ -81,14 +83,17 @@ developed with MinGW GCC on Windows, but Linux CI is the support authority.
 - Market orders are IOC and never rest. Market GTC is rejected before mutation.
 - FOK exists in the versioned vocabulary but is explicitly unsupported until a verified
   non-mutating liquidity preflight exists.
+- Baseline order storage owns nodes through `unique_ptr`; price levels hold non-owning intrusive
+  links and never control node lifetime.
 
 See [the semantic contract](docs/semantics.md) and
 [ADR 0001](docs/decisions/0001-core-semantics.md) plus
-[ADR 0002](docs/decisions/0002-command-sequencing-and-identity.md) for the current rules.
+[ADR 0002](docs/decisions/0002-command-sequencing-and-identity.md) plus
+[ADR 0003](docs/decisions/0003-stable-order-storage-and-price-levels.md) for the current rules.
 
 ## Roadmap
 
-1. Stable order storage, FIFO price levels, book sides, cancellation, and full invariants.
+1. Ordered book sides, a global active-order index, direct cancellation, and full book invariants.
 2. Limit/market matching, GTC/IOC residuals, replace, and normalized event digests.
 3. Independent Python reference model, differential generation, shrinking, and fuzzing.
 4. Command logging, deterministic replay, Python batch bindings, and analysis tooling.

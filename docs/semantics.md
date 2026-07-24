@@ -1,8 +1,8 @@
-# Semantic Contract v0.2
+# Semantic Contract v0.3
 
-This document defines AtlasLOB's implemented command vocabulary and pure validation behavior. It
-also freezes sequencing, identity, event, and future matching rules before mutable order-book state
-is introduced.
+This document defines AtlasLOB's implemented command vocabulary, pure validation behavior, stable
+order-node ownership, and one-price FIFO mutation. It also freezes sequencing, identity, event, and
+future matching rules before book sides and execution are introduced.
 
 ## Values and enumerations
 
@@ -84,11 +84,61 @@ Reserved event order:
 Event generation begins with the matching-engine phase. This release freezes the schema and
 ordering contract without claiming execution support.
 
+## Stable order storage and FIFO price levels
+
+`HeapOrderStorage` is the sole baseline owner of every `OrderNode`. It stores `std::unique_ptr`
+values with a storage-only deleter in an order-ID hash table. Rehashing may reorganize the owning
+pointers but does not move their pointees, so a node address remains stable until explicit storage
+destruction.
+
+All queue pointers are non-owning. A node's `previous`, `next`, and `PriceLevel` backlink are null
+while it is not resting. A `PriceLevel` owns no nodes; it records only its price, aggregate
+remaining quantity, order count, and non-owning head/tail pointers. Nodes, levels, and storage
+implementations are non-copyable and non-movable.
+
+Storage creation and destruction are checked:
+
+- Duplicate creation fails without changing storage.
+- A fresh node starts with null queue links and no level backlink.
+- Destruction requires the exact owned node and requires that node to be unlinked. Borrowers
+  cannot invoke `OrderNode` destruction or construct its owning deleter.
+- Allocation failure propagates as a resource failure rather than becoming a client rejection.
+
+Price-level mutation is checked before changing quantities or links:
+
+- Append requires a positive remaining quantity, matching price, an unlinked node, and a priority
+  sequence strictly greater than the current tail's sequence.
+- Aggregate overflow and every structural precondition fail without mutation.
+- Erase directly handles a known singleton, head, middle, or tail member, updates aggregate and
+  count, and clears every queue link on the removed node.
+- Partial reduction requires `0 < reduction < remaining`. Full removal uses `erase`.
+
+Explicit invariant validation uses cycle-safe traversal and verifies empty-state boundaries,
+head/tail termination, reciprocal links, level backlinks, price equality, positive quantities,
+strictly increasing priority, order count, and recomputed aggregate quantity.
+Storage and level teardown enforce the unlinked/empty lifetime boundary in every build; the
+configurable full traversal checks are additional mutation-time diagnostics.
+Deliberate-corruption access is compiled only into a separate test core; the production
+`atlas_core` class definitions contain no test friendship.
+
+The required future terminal-removal order is:
+
+1. Unlink the node from its price level.
+2. Remove its pointer from the global active-order index.
+3. Remove the price level if it is empty.
+4. Destroy the node through owning storage.
+
+No step may destroy an object while a later step can still dereference it. Ordered bid/ask sides,
+the active-order index, executable cancellation and replacement, empty-level cleanup, and matching
+remain outside this slice.
+
 ## Error boundaries
 
 - Parse errors describe malformed adapter input and are not domain rejections.
 - Domain rejections describe expected invalid command values or state.
-- Storage/price-level errors describe internal component precondition or capacity failures.
+- Storage/price-level errors describe internal component precondition or arithmetic failures and
+  are never converted into public `RejectReason` values.
+- Allocation failure is a propagated resource failure, not ordinary command rejection.
 - Invariant failures indicate implementation bugs and are not converted into client rejections.
 
 ## Matching rules reserved for later phases
