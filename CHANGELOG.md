@@ -15,6 +15,8 @@ The format is based on Keep a Changelog, and public releases will follow semanti
 - Successful `BookSide::PreparedLevel` commit now invalidates its guard completely.
 - Kept the expensive invariant toggle private to the core build instead of exporting it to
   consumers.
+- Replaced two tautological canonical-digest assertions with an independently reproduced Python
+  rejection hash and the existing cross-instance/snapshot comparisons.
 
 ### Added
 
@@ -68,3 +70,16 @@ The format is based on Keep a Changelog, and public releases will follow semanti
   execution-preparation, atomic New/Cancel, atomic Replace, and public API boundaries.
 - GCC, Clang, formatting, ASan, and UBSan workflow definitions.
 - Initial semantic contract, roadmap, and architecture decision record.
+- A non-installed `atlas_diff_native` adapter with strict numeric input, exact/compact JSONL
+  evidence, complete event serialization, checkpoint snapshots, and fatal harness boundaries.
+- A typed Python 3.11+ `atlaslob` correctness package with no runtime dependencies.
+- Independent ADR 0009 state/event encoders that reproduce the frozen C++ golden hashes.
+- A plain dictionary/deque Python matching oracle with validation, sequencing, New/Cancel/Replace,
+  invariants, capacity/overflow checks, and fatal poisoning after internal exceptions.
+- Strict native JSONL decoding that revalidates canonical digests, snapshot aggregates, ordering,
+  active identities/priorities, instrument consistency, top of book, sequence observers, and the
+  adapter error-code vocabulary.
+- Named exact cross-language scenarios comparing every command result, event, snapshot, observer,
+  and digest.
+- Pinned pytest, Hypothesis, Ruff, and mypy development tooling plus Python 3.11/3.12 CI.
+- ADR 0010 and a versioned differential-interface reference.

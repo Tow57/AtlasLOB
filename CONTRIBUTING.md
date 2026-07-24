@@ -25,6 +25,21 @@ When Clang is available, also run the `dev-clang` and `asan-ubsan` presets. The 
 pinned to clang-format 18.1.8; use that version when running `format-check` before submitting C++
 changes.
 
+Phase 3 Python evidence requires Python 3.11 or newer. The runtime package uses only the standard
+library; its pinned optional development tools are installed with:
+
+```sh
+python -m venv .venv
+python -m pip install -e ".[dev]"
+python -m ruff format --check python
+python -m ruff check python
+python -m mypy
+python -m pytest
+```
+
+Build `atlas_diff_native` before parity tests. The normal `build/dev-gcc` location is discovered
+automatically; otherwise set `ATLAS_DIFF_NATIVE` to the executable's absolute path.
+
 ## Pull requests
 
 Keep changes small enough to review. Describe behavior before and after, commands run, evidence,

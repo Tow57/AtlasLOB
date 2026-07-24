@@ -78,11 +78,24 @@ to 264 tests; that follow-up must rerun the same hosted gates before merge.
 
 ## Phase 3 - Independent correctness evidence
 
-- [ ] Straightforward Python reference model.
+- [x] Versioned, test-only native evidence adapter over the public engine API.
+- [x] Independent canonical state/event encoders with frozen cross-language hash vectors.
+- [x] Straightforward Python reference model.
+- [x] Named per-command differential comparison with exact events and snapshots.
 - [ ] Seeded valid and invalid command generation.
-- [ ] Per-command differential comparison.
 - [ ] Failure persistence and shrinking.
 - [ ] Fixed CI corpus, long campaigns, and fuzzing.
+
+ADR 0010 fixes the independence boundary: the Python model uses ordinary dictionaries, deques,
+and sorted prices; it has no binding or access to C++ transition helpers; and native execution is
+observed only through a versioned test process. The first slice compares complete event payloads,
+headers, canonical snapshots, top/count/sequence observers, and both digests after every command
+in 13 named scenarios. Independent golden encoders reproduce the ADR 0009 empty, representative,
+signed-price, all-event, and rejection hashes.
+
+The next slice adds deterministic valid/invalid command generation, a fixed seed corpus, and
+failure artifacts. Shrinking and long/fuzz campaigns remain separate reviewable slices rather
+than being hidden inside the initial oracle change.
 
 ## Phase 4 - Deterministic infrastructure and Python
 

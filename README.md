@@ -15,11 +15,10 @@ latency claims.
 
 ## Current status
 
-**Phase 2 matching MVP complete on the current development branch: price-time New, Cancel, and
-atomic Replace execution, a public single-instrument engine, canonical state/event digests, and
-independent command-stream comparison are implemented. The published Phase 2 head passed GCC,
-Clang, ASan/UBSan, and pinned-formatting CI; every follow-up commit must pass the same gates before
-merge.**
+**Phase 2 matching MVP is complete on `main`. The first Phase 3 slice now adds a test-only native
+evidence adapter, a standard-library-only independent Python matching oracle, independently
+encoded canonical digests, and named command-by-command cross-language parity scenarios. Seeded
+generation, persistence, shrinking, and long fuzz campaigns remain the next Phase 3 slices.**
 
 | Capability | Status | Evidence |
 | --- | --- | --- |
@@ -44,6 +43,11 @@ merge.**
 | Canonical snapshots and state/event digests | Complete | `core.Canonical*`, ADR 0009 |
 | Executable matching fixture | Complete | `atlas_cli engine-fixture`, golden integration fixtures |
 | Independent command-stream comparison | Complete | 10,000 mixed commands plus deterministic rerun |
+| Versioned native differential adapter | Complete | `atlas_diff_native`, strict JSONL integration tests |
+| Independent Python domain and digest model | Complete | Python golden-vector and strict typing tests |
+| Independent Python matching oracle | Complete | `dict`/`deque` model, named transition tests |
+| Named cross-language parity | Complete | Exact per-command events, snapshots, observers, and digests |
+| Seeded generation, shrinking, and fuzzing | Planned | Later Phase 3 slices |
 | GCC and Clang CI | Passing on `main` and published Phase 2 head; required per PR | `.github/workflows/ci.yml` |
 | ASan and UBSan CI | Passing on `main` and published Phase 2 head; required per PR | `asan-ubsan` preset and CI job |
 | Pinned clang-format gate | Passing on `main` and published Phase 2 head; required per PR | `format-check` CI job |
@@ -93,6 +97,22 @@ Execute a deterministic matching fixture with per-command event and state hashes
 
 On Windows, use `build/dev-gcc/atlas_cli.exe` for either fixture command.
 
+Build and run the independent Python evidence suite:
+
+```sh
+python -m venv .venv
+python -m pip install -e ".[dev]"
+cmake --preset dev-gcc
+cmake --build --preset dev-gcc --target atlas_diff_native
+python -m ruff format --check python
+python -m ruff check python
+python -m mypy
+python -m pytest
+```
+
+The parity tests discover the normal `build/dev-gcc` adapter path. A different build can be
+selected with `ATLAS_DIFF_NATIVE=/absolute/path/to/atlas_diff_native`.
+
 ## Supported environments
 
 Ubuntu 24.04 is the primary supported environment because later gateway and profiling work will
@@ -122,6 +142,8 @@ developed with MinGW GCC on Windows, but Linux CI is the support authority.
   mutable implementation details behind the public `MatchingEngine` PImpl.
 - ADR 0009 freezes exact best-price/FIFO snapshots and versioned big-endian state/event digest
   encodings, then verifies complete command streams against a separate map/deque reference model.
+- ADR 0010 keeps the Python oracle in a separate process with no bindings or private C++ access
+  and defines fatal adapter/resource boundaries for cross-language evidence.
 
 See [the semantic contract](docs/semantics.md) and
 [ADR 0001](docs/decisions/0001-core-semantics.md) plus
@@ -132,7 +154,10 @@ See [the semantic contract](docs/semantics.md) and
 [ADR 0006](docs/decisions/0006-command-admission-and-execution-preparation.md) plus
 [ADR 0007](docs/decisions/0007-atomic-new-and-cancel-execution.md) plus
 [ADR 0008](docs/decisions/0008-atomic-replace-and-public-engine.md) plus
-[ADR 0009](docs/decisions/0009-canonical-deterministic-evidence.md) for accepted rules.
+[ADR 0009](docs/decisions/0009-canonical-deterministic-evidence.md) plus
+[ADR 0010](docs/decisions/0010-independent-python-oracle-boundary.md) for accepted rules. The
+test-only process schema is documented in
+[Differential testing interface](docs/differential-testing.md).
 
 ## Roadmap
 
