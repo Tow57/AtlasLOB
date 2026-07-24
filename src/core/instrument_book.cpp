@@ -3,6 +3,7 @@
 #include <exception>
 #include <limits>
 #include <stdexcept>
+#include <utility>
 
 namespace atlaslob::core {
 namespace {
@@ -65,6 +66,45 @@ namespace {
   return {};
 }
 
+[[nodiscard]] bool would_cross(const OrderNodeSpec& spec, const BidBookSide& bids,
+                               const AskBookSide& asks) noexcept {
+  if (spec.side == domain::Side::buy) {
+    const auto* const best_ask = asks.best_level();
+    return best_ask != nullptr && spec.price >= best_ask->price();
+  }
+  const auto* const best_bid = bids.best_level();
+  return best_bid != nullptr && spec.price <= best_bid->price();
+}
+
+[[nodiscard]] InstrumentBookStatus validate_append_target(const PriceLevel& target,
+                                                          const OrderNode& node) noexcept {
+  if (!target.validate_invariants()) {
+    return make_status(InstrumentBookError::book_invariant_violation);
+  }
+  if (target.price() != node.price()) {
+    return make_status(InstrumentBookError::price_level_failure, StorageError::none,
+                       ActiveOrderIndexError::none, BookSideError::none,
+                       PriceLevelError::price_mismatch);
+  }
+  if (target.tail() != nullptr && node.priority_sequence() <= target.tail()->priority_sequence()) {
+    return make_status(InstrumentBookError::price_level_failure, StorageError::none,
+                       ActiveOrderIndexError::none, BookSideError::none,
+                       PriceLevelError::nonmonotonic_priority);
+  }
+  if (target.aggregate_quantity().value() >
+      std::numeric_limits<std::uint64_t>::max() - node.remaining_quantity().value()) {
+    return make_status(InstrumentBookError::price_level_failure, StorageError::none,
+                       ActiveOrderIndexError::none, BookSideError::none,
+                       PriceLevelError::aggregate_overflow);
+  }
+  if (target.order_count() == std::numeric_limits<std::size_t>::max()) {
+    return make_status(InstrumentBookError::price_level_failure, StorageError::none,
+                       ActiveOrderIndexError::none, BookSideError::none,
+                       PriceLevelError::order_count_overflow);
+  }
+  return {};
+}
+
 }  // namespace
 
 InstrumentBook::InstrumentBook(domain::InstrumentId instrument_id) : instrument_id_{instrument_id} {
@@ -74,6 +114,246 @@ InstrumentBook::InstrumentBook(domain::InstrumentId instrument_id) : instrument_
 }
 
 InstrumentBook::~InstrumentBook() noexcept { drain(); }
+
+InstrumentBook::PreparedRest::PreparedRest(InstrumentBook& owner, OrderNode& node,
+                                           std::unique_ptr<PriceLevel> staging_level,
+                                           PreparedLevel prepared_level) noexcept
+    : owner_{&owner},
+      node_{&node},
+      staging_level_{std::move(staging_level)},
+      prepared_level_{std::move(prepared_level)} {}
+
+InstrumentBook::PreparedRest::PreparedRest(PreparedRest&& other) noexcept
+    : owner_{std::exchange(other.owner_, nullptr)},
+      node_{std::exchange(other.node_, nullptr)},
+      staging_level_{std::move(other.staging_level_)},
+      prepared_level_{std::move(other.prepared_level_)},
+      status_{std::exchange(other.status_, {})} {}
+
+InstrumentBook::PreparedRest& InstrumentBook::PreparedRest::operator=(
+    PreparedRest&& other) noexcept {
+  if (this != &other) {
+    rollback();
+    owner_ = std::exchange(other.owner_, nullptr);
+    node_ = std::exchange(other.node_, nullptr);
+    staging_level_ = std::move(other.staging_level_);
+    prepared_level_ = std::move(other.prepared_level_);
+    status_ = std::exchange(other.status_, {});
+  }
+  return *this;
+}
+
+InstrumentBook::PreparedRest::~PreparedRest() noexcept { rollback(); }
+
+void InstrumentBook::PreparedRest::rollback() noexcept {
+  if (owner_ == nullptr) {
+    return;
+  }
+  if (node_ == nullptr || staging_level_ == nullptr || owner_->pending_node_ != node_ ||
+      owner_->pending_level_ != staging_level_.get()) {
+    std::terminate();
+  }
+
+  const auto level_error = staging_level_->erase(*node_);
+  if (level_error != PriceLevelError::none) {
+    std::terminate();
+  }
+  const auto index_error = owner_->index_.erase(*node_);
+  if (index_error != ActiveOrderIndexError::none) {
+    std::terminate();
+  }
+  const auto storage_error = owner_->storage_.destroy(*node_);
+  if (storage_error != StorageError::none) {
+    std::terminate();
+  }
+
+  auto* const owner = std::exchange(owner_, nullptr);
+  owner->pending_node_ = nullptr;
+  owner->pending_level_ = nullptr;
+  node_ = nullptr;
+  staging_level_.reset();
+  prepared_level_ = std::monostate{};
+  owner->enforce_postconditions();
+}
+
+RestOrderResult InstrumentBook::PreparedRest::commit() noexcept {
+  if (!has_value()) {
+    return {
+        .node = nullptr,
+        .status =
+            status_.valid() ? make_status(InstrumentBookError::book_invariant_violation) : status_,
+    };
+  }
+  if (owner_->pending_node_ != node_ || owner_->pending_level_ != staging_level_.get() ||
+      !owner_->validate_invariants()) {
+    std::terminate();
+  }
+
+  const auto staging_result = staging_level_->validate_invariants();
+  if (!staging_result || staging_level_->order_count() != 1U || staging_level_->head() != node_ ||
+      staging_level_->tail() != node_ || node_->price_level() != staging_level_.get()) {
+    std::terminate();
+  }
+
+  PriceLevel* target = nullptr;
+  BookSideError publish_error = BookSideError::none;
+  if (node_->side() == domain::Side::buy) {
+    if (!std::holds_alternative<BidBookSide::DetachedLevel>(prepared_level_)) {
+      std::terminate();
+    }
+    auto& prepared = std::get<BidBookSide::DetachedLevel>(prepared_level_);
+    target = owner_->bids_.find_level(node_->price());
+    if (target == nullptr) {
+      target = prepared.level();
+    }
+    const auto* const best_ask = owner_->asks_.best_level();
+    if (best_ask != nullptr && node_->price() >= best_ask->price()) {
+      std::terminate();
+    }
+  } else if (node_->side() == domain::Side::sell) {
+    if (!std::holds_alternative<AskBookSide::DetachedLevel>(prepared_level_)) {
+      std::terminate();
+    }
+    auto& prepared = std::get<AskBookSide::DetachedLevel>(prepared_level_);
+    target = owner_->asks_.find_level(node_->price());
+    if (target == nullptr) {
+      target = prepared.level();
+    }
+    const auto* const best_bid = owner_->bids_.best_level();
+    if (best_bid != nullptr && node_->price() <= best_bid->price()) {
+      std::terminate();
+    }
+  } else {
+    std::terminate();
+  }
+
+  if (target == nullptr || !validate_append_target(*target, *node_)) {
+    std::terminate();
+  }
+
+  const auto staging_erase_error = staging_level_->erase(*node_);
+  if (staging_erase_error != PriceLevelError::none) {
+    std::terminate();
+  }
+  const auto append_error = target->append(*node_);
+  if (append_error != PriceLevelError::none) {
+    std::terminate();
+  }
+
+  if (node_->side() == domain::Side::buy && owner_->bids_.find_level(node_->price()) == nullptr) {
+    publish_error = std::get<BidBookSide::DetachedLevel>(prepared_level_).publish();
+  } else if (node_->side() == domain::Side::sell &&
+             owner_->asks_.find_level(node_->price()) == nullptr) {
+    publish_error = std::get<AskBookSide::DetachedLevel>(prepared_level_).publish();
+  }
+  if (publish_error != BookSideError::none) {
+    std::terminate();
+  }
+
+  auto* const committed_node = node_;
+  auto* const owner = std::exchange(owner_, nullptr);
+  owner->pending_node_ = nullptr;
+  owner->pending_level_ = nullptr;
+  node_ = nullptr;
+  staging_level_.reset();
+  prepared_level_ = std::monostate{};
+  owner->enforce_postconditions();
+  return {.node = committed_node, .status = {}};
+}
+
+InstrumentBook::PreparedRest InstrumentBook::prepare_rest(const OrderNodeSpec& spec) {
+  const auto spec_status = validate_rest_spec(spec, instrument_id_);
+  if (!spec_status) {
+    return PreparedRest{spec_status};
+  }
+  if (!validate_invariants()) {
+    return PreparedRest{make_status(InstrumentBookError::book_invariant_violation)};
+  }
+  if (pending_node_ != nullptr || pending_level_ != nullptr) {
+    return PreparedRest{make_status(InstrumentBookError::preparation_in_progress)};
+  }
+  if (storage_.find(spec.order_id) != nullptr || index_.find(spec.order_id) != nullptr) {
+    return PreparedRest{make_status(InstrumentBookError::duplicate_order_id,
+                                    StorageError::duplicate_order_id,
+                                    ActiveOrderIndexError::duplicate_order_id)};
+  }
+
+  PreparedRest::PreparedLevel prepared_level;
+  if (spec.side == domain::Side::buy) {
+    auto prepared = bids_.prepare_detached_level(spec.price);
+    if (!prepared) {
+      return PreparedRest{make_status(InstrumentBookError::book_side_failure, StorageError::none,
+                                      ActiveOrderIndexError::none, prepared.error())};
+    }
+    prepared_level.emplace<BidBookSide::DetachedLevel>(std::move(prepared));
+  } else {
+    auto prepared = asks_.prepare_detached_level(spec.price);
+    if (!prepared) {
+      return PreparedRest{make_status(InstrumentBookError::book_side_failure, StorageError::none,
+                                      ActiveOrderIndexError::none, prepared.error())};
+    }
+    prepared_level.emplace<AskBookSide::DetachedLevel>(std::move(prepared));
+  }
+
+  auto staging_level = std::make_unique<PriceLevel>(spec.price);
+  const auto created = storage_.create(spec);
+  if (!created) {
+    const auto error = created.error == StorageError::duplicate_order_id
+                           ? InstrumentBookError::duplicate_order_id
+                           : InstrumentBookError::storage_failure;
+    return PreparedRest{make_status(error, created.error)};
+  }
+
+  auto* const node = created.node;
+  const auto cleanup_node = [this, node, &staging_level](bool indexed) noexcept {
+    if (node->is_linked() &&
+        (staging_level == nullptr || staging_level->erase(*node) != PriceLevelError::none)) {
+      std::terminate();
+    }
+    if (indexed && index_.erase(*node) != ActiveOrderIndexError::none) {
+      std::terminate();
+    }
+    if (storage_.destroy(*node) != StorageError::none) {
+      std::terminate();
+    }
+  };
+
+  if (const auto* existing = spec.side == domain::Side::buy ? bids_.find_level(spec.price)
+                                                            : asks_.find_level(spec.price);
+      existing != nullptr) {
+    const auto target_status = validate_append_target(*existing, *node);
+    if (!target_status) {
+      cleanup_node(false);
+      return PreparedRest{target_status};
+    }
+  }
+
+  const auto append_error = staging_level->append(*node);
+  if (append_error != PriceLevelError::none) {
+    cleanup_node(false);
+    return PreparedRest{make_status(InstrumentBookError::price_level_failure, StorageError::none,
+                                    ActiveOrderIndexError::none, BookSideError::none,
+                                    append_error)};
+  }
+
+  try {
+    const auto index_error = index_.insert(*node);
+    if (index_error != ActiveOrderIndexError::none) {
+      cleanup_node(false);
+      return PreparedRest{
+          make_status(InstrumentBookError::index_failure, StorageError::none, index_error)};
+    }
+  } catch (...) {
+    cleanup_node(false);
+    throw;
+  }
+
+  PreparedRest result{*this, *node, std::move(staging_level), std::move(prepared_level)};
+  pending_node_ = node;
+  pending_level_ = result.staging_level_.get();
+  enforce_postconditions();
+  return result;
+}
 
 RestOrderResult InstrumentBook::rest(const OrderNodeSpec& spec) {
   const auto spec_status = validate_rest_spec(spec, instrument_id_);
@@ -86,6 +366,12 @@ RestOrderResult InstrumentBook::rest(const OrderNodeSpec& spec) {
         .status = make_status(InstrumentBookError::book_invariant_violation),
     };
   }
+  if (pending_node_ != nullptr || pending_level_ != nullptr) {
+    return {
+        .node = nullptr,
+        .status = make_status(InstrumentBookError::preparation_in_progress),
+    };
+  }
   if (storage_.find(spec.order_id) != nullptr || index_.find(spec.order_id) != nullptr) {
     return {
         .node = nullptr,
@@ -94,119 +380,28 @@ RestOrderResult InstrumentBook::rest(const OrderNodeSpec& spec) {
                         ActiveOrderIndexError::duplicate_order_id),
     };
   }
-  if (spec.side == domain::Side::buy) {
-    const auto* const best_ask_level = asks_.best_level();
-    if (best_ask_level != nullptr && spec.price >= best_ask_level->price()) {
-      return {
-          .node = nullptr,
-          .status = make_status(InstrumentBookError::would_cross_book),
-      };
-    }
-  } else {
-    const auto* const best_bid_level = bids_.best_level();
-    if (best_bid_level != nullptr && spec.price <= best_bid_level->price()) {
-      return {
-          .node = nullptr,
-          .status = make_status(InstrumentBookError::would_cross_book),
-      };
-    }
-  }
-
-  const auto created = storage_.create(spec);
-  if (!created) {
-    const auto error = created.error == StorageError::duplicate_order_id
-                           ? InstrumentBookError::duplicate_order_id
-                           : InstrumentBookError::storage_failure;
+  if (would_cross(spec, bids_, asks_)) {
     return {
         .node = nullptr,
-        .status = make_status(error, created.error),
+        .status = make_status(InstrumentBookError::would_cross_book),
     };
   }
 
-  auto* const node = created.node;
-  bool indexed = false;
-  try {
-    const auto complete_rest = [this, node, &indexed](auto& side) -> RestOrderResult {
-      auto prepared = side.prepare_level(node->price());
-
-      if (!prepared) {
-        const auto rollback = rollback_prepared(*node, indexed);
-        if (!rollback) {
-          std::terminate();
-        }
-        return {
-            .node = nullptr,
-            .status = make_status(InstrumentBookError::book_side_failure, StorageError::none,
-                                  ActiveOrderIndexError::none, prepared.error()),
-        };
-      }
-
-      const auto index_error = index_.insert(*node);
-      if (index_error != ActiveOrderIndexError::none) {
-        const auto rollback = rollback_prepared(*node, indexed);
-        if (!rollback) {
-          std::terminate();
-        }
-        return {
-            .node = nullptr,
-            .status =
-                make_status(InstrumentBookError::index_failure, StorageError::none, index_error),
-        };
-      }
-      indexed = true;
-
-      auto* const level = prepared.level();
-      const auto append_error = level->append(*node);
-      if (append_error != PriceLevelError::none) {
-        const auto rollback = rollback_prepared(*node, indexed);
-        if (!rollback) {
-          std::terminate();
-        }
-        return {
-            .node = nullptr,
-            .status = make_status(InstrumentBookError::price_level_failure, StorageError::none,
-                                  ActiveOrderIndexError::none, BookSideError::none, append_error),
-        };
-      }
-
-      const auto commit_error = prepared.commit();
-      if (commit_error != BookSideError::none) {
-        const auto erase_error = level->erase(*node);
-        if (erase_error != PriceLevelError::none) {
-          std::terminate();
-        }
-        const auto rollback = rollback_prepared(*node, indexed);
-        if (!rollback) {
-          std::terminate();
-        }
-        return {
-            .node = nullptr,
-            .status = make_status(InstrumentBookError::book_side_failure, StorageError::none,
-                                  ActiveOrderIndexError::none, commit_error),
-        };
-      }
-
-      return {.node = node, .status = {}};
-    };
-
-    auto result = spec.side == domain::Side::buy ? complete_rest(bids_) : complete_rest(asks_);
-    if (result) {
-      enforce_postconditions();
-    }
-    return result;
-  } catch (...) {
-    const auto rollback = rollback_prepared(*node, indexed);
-    if (!rollback) {
-      std::terminate();
-    }
-    throw;
+  auto prepared = prepare_rest(spec);
+  if (!prepared) {
+    return {.node = nullptr, .status = prepared.status()};
   }
+  return prepared.commit();
 }
 
-OrderNode* InstrumentBook::find(domain::OrderId order_id) noexcept { return index_.find(order_id); }
+OrderNode* InstrumentBook::find(domain::OrderId order_id) noexcept {
+  auto* const node = index_.find(order_id);
+  return node == pending_node_ ? nullptr : node;
+}
 
 const OrderNode* InstrumentBook::find(domain::OrderId order_id) const noexcept {
-  return index_.find(order_id);
+  const auto* const node = index_.find(order_id);
+  return node == pending_node_ ? nullptr : node;
 }
 
 InstrumentBookStatus InstrumentBook::preflight_node(const OrderNode& node) const noexcept {
@@ -328,7 +523,7 @@ RemoveOrderResult InstrumentBook::cancel(domain::OrderId order_id) noexcept {
         .status = make_status(InstrumentBookError::book_invariant_violation),
     };
   }
-  auto* const node = index_.find(order_id);
+  auto* const node = find(order_id);
   if (node == nullptr) {
     return {
         .order = {},
@@ -336,23 +531,6 @@ RemoveOrderResult InstrumentBook::cancel(domain::OrderId order_id) noexcept {
     };
   }
   return remove_prevalidated(*node);
-}
-
-InstrumentBookStatus InstrumentBook::rollback_prepared(OrderNode& node, bool indexed) noexcept {
-  if (node.is_linked()) {
-    return make_status(InstrumentBookError::book_invariant_violation);
-  }
-  if (indexed) {
-    const auto index_error = index_.erase(node);
-    if (index_error != ActiveOrderIndexError::none) {
-      return make_status(InstrumentBookError::index_failure, StorageError::none, index_error);
-    }
-  }
-  const auto storage_error = storage_.destroy(node);
-  if (storage_error != StorageError::none) {
-    return make_status(InstrumentBookError::storage_failure, storage_error);
-  }
-  return {};
 }
 
 InstrumentBookInvariantResult InstrumentBook::validate_invariants() const noexcept {
@@ -375,6 +553,11 @@ InstrumentBookInvariantResult InstrumentBook::validate_invariants() const noexce
   if (instrument_id_.value() == 0) {
     return fail(InstrumentBookInvariantError::invalid_instrument_id);
   }
+  const bool has_pending_node = pending_node_ != nullptr;
+  const bool has_pending_level = pending_level_ != nullptr;
+  if (has_pending_node != has_pending_level) {
+    return fail(InstrumentBookInvariantError::pending_state_mismatch, pending_node_);
+  }
 
   const auto bid_result = bids_.validate_invariants();
   if (!bid_result) {
@@ -394,6 +577,26 @@ InstrumentBookInvariantResult InstrumentBook::validate_invariants() const noexce
   if (result.storage_size != result.index_size) {
     return fail(InstrumentBookInvariantError::storage_index_size_mismatch);
   }
+  if (has_pending_node) {
+    if (result.index_size == 0U || storage_.find(pending_node_->order_id()) != pending_node_ ||
+        index_.find(pending_node_->order_id()) != pending_node_ ||
+        pending_node_->instrument_id() != instrument_id_ ||
+        pending_node_->client_id().value() == 0U || !domain::is_valid(pending_node_->side()) ||
+        pending_node_->price_level() != pending_level_ ||
+        bids_.find_level(pending_node_->price()) == pending_level_ ||
+        asks_.find_level(pending_node_->price()) == pending_level_) {
+      return fail(InstrumentBookInvariantError::pending_state_mismatch, pending_node_,
+                  pending_node_->order_id(), pending_node_->price());
+    }
+
+    const auto pending_result = pending_level_->validate_invariants();
+    if (!pending_result || pending_level_->price() != pending_node_->price() ||
+        pending_level_->order_count() != 1U || pending_level_->head() != pending_node_ ||
+        pending_level_->tail() != pending_node_) {
+      return fail(InstrumentBookInvariantError::pending_node_invariant, pending_node_,
+                  pending_node_->order_id(), pending_node_->price());
+    }
+  }
 
   const auto traverse_side = [this, &result, &fail](const auto& side,
                                                     domain::Side expected_side) noexcept {
@@ -406,6 +609,11 @@ InstrumentBookInvariantResult InstrumentBook::validate_invariants() const noexce
           return false;
         }
         ++result.observed_order_count;
+        if (node == pending_node_) {
+          static_cast<void>(fail(InstrumentBookInvariantError::pending_state_mismatch, node,
+                                 node->order_id(), level.price()));
+          return false;
+        }
         if (node->side() != expected_side) {
           static_cast<void>(fail(InstrumentBookInvariantError::node_side_mismatch, node,
                                  node->order_id(), level.price()));
@@ -450,7 +658,8 @@ InstrumentBookInvariantResult InstrumentBook::validate_invariants() const noexce
   if (!traverse_side(bids_, domain::Side::buy) || !traverse_side(asks_, domain::Side::sell)) {
     return result;
   }
-  if (result.observed_order_count != result.index_size) {
+  const auto expected_active_count = result.index_size - (has_pending_node ? 1U : 0U);
+  if (result.observed_order_count != expected_active_count) {
     return fail(InstrumentBookInvariantError::traversal_index_size_mismatch);
   }
 
@@ -472,6 +681,9 @@ void InstrumentBook::enforce_postconditions() const noexcept {
 }
 
 void InstrumentBook::drain() noexcept {
+  if (pending_node_ != nullptr || pending_level_ != nullptr) {
+    std::terminate();
+  }
   while (!index_.empty()) {
     auto* const node = index_.any_order();
     if (node == nullptr || !remove(*node)) {

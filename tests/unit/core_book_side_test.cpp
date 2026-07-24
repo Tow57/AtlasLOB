@@ -28,6 +28,10 @@ static_assert(!std::is_copy_constructible_v<BidBookSide::PreparedLevel>);
 static_assert(!std::is_copy_assignable_v<BidBookSide::PreparedLevel>);
 static_assert(std::is_move_constructible_v<BidBookSide::PreparedLevel>);
 static_assert(std::is_move_assignable_v<BidBookSide::PreparedLevel>);
+static_assert(!std::is_copy_constructible_v<BidBookSide::DetachedLevel>);
+static_assert(!std::is_copy_assignable_v<BidBookSide::DetachedLevel>);
+static_assert(std::is_move_constructible_v<BidBookSide::DetachedLevel>);
+static_assert(std::is_move_assignable_v<BidBookSide::DetachedLevel>);
 static_assert(std::is_same_v<decltype(*std::declval<BidBookSide&>().begin()), const PriceLevel&>);
 static_assert(
     std::is_same_v<decltype(*std::declval<const AskBookSide&>().begin()), const PriceLevel&>);
@@ -261,6 +265,70 @@ TEST(BookSidePreparedLevel, DroppingExistingLevelPreparationDoesNotEraseIt) {
 
   EXPECT_EQ(asks.level_count(), 1U);
   EXPECT_EQ(asks.find_level(domain::PriceTicks{10'250}), original.level);
+  EXPECT_TRUE(asks.validate_invariants());
+}
+
+TEST(BookSideDetachedLevel, RejectsInvalidPriceAndEmptyPublishWithoutVisibleMutation) {
+  BidBookSide bids;
+
+  auto invalid = bids.prepare_detached_level(domain::PriceTicks{});
+  EXPECT_FALSE(invalid);
+  EXPECT_EQ(invalid.error(), BookSideError::invalid_price);
+  EXPECT_TRUE(bids.empty());
+
+  auto empty = bids.prepare_detached_level(domain::PriceTicks{10'000});
+  ASSERT_TRUE(empty);
+  ASSERT_NE(empty.level(), nullptr);
+  EXPECT_EQ(empty.publish(), BookSideError::prepared_level_empty);
+  EXPECT_TRUE(bids.empty());
+  EXPECT_TRUE(bids.validate_invariants());
+}
+
+TEST(BookSideDetachedLevel, ConflictPreservesTheVisibleAndDetachedLevels) {
+  HeapOrderStorage storage;
+  BidBookSide bids;
+  std::vector<RestingEntry> tracked;
+  RestingCleanup cleanup{bids, tracked};
+  const auto existing = rest_order(bids, storage, tracked, 1U, 10'000, 5U, 1U);
+  ASSERT_NE(existing.level, nullptr);
+  const auto staged = storage.create(node_spec(2U, 7U, 2U, domain::Side::buy, 10'000));
+  ASSERT_TRUE(staged);
+
+  auto detached = bids.prepare_detached_level(domain::PriceTicks{10'000});
+  ASSERT_TRUE(detached);
+  auto* const detached_level = detached.level();
+  ASSERT_NE(detached_level, nullptr);
+  ASSERT_EQ(detached_level->append(*staged.node), PriceLevelError::none);
+
+  EXPECT_EQ(detached.publish(), BookSideError::prepared_level_conflict);
+  EXPECT_EQ(bids.find_level(domain::PriceTicks{10'000}), existing.level);
+  EXPECT_EQ(existing.level->aggregate_quantity(), domain::Quantity{5U});
+  EXPECT_EQ(detached.level(), detached_level);
+  EXPECT_EQ(detached_level->aggregate_quantity(), domain::Quantity{7U});
+  EXPECT_TRUE(bids.validate_invariants());
+
+  ASSERT_EQ(detached_level->erase(*staged.node), PriceLevelError::none);
+  ASSERT_EQ(storage.destroy(*staged.node), StorageError::none);
+}
+
+TEST(BookSideDetachedLevel, MoveConstructionAndAssignmentTransferTheMapNode) {
+  AskBookSide asks;
+  auto first = asks.prepare_detached_level(domain::PriceTicks{10'100});
+  ASSERT_TRUE(first);
+  auto* const first_level = first.level();
+
+  AskBookSide::DetachedLevel second{std::move(first)};
+  EXPECT_FALSE(first);
+  ASSERT_TRUE(second);
+  EXPECT_EQ(second.level(), first_level);
+
+  auto third = asks.prepare_detached_level(domain::PriceTicks{10'200});
+  ASSERT_TRUE(third);
+  third = std::move(second);
+  EXPECT_FALSE(second);
+  ASSERT_TRUE(third);
+  EXPECT_EQ(third.level(), first_level);
+  EXPECT_TRUE(asks.empty());
   EXPECT_TRUE(asks.validate_invariants());
 }
 

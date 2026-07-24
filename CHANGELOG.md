@@ -25,7 +25,14 @@ The format is based on Keep a Changelog, and public releases will follow semanti
 - Checked active-order indexing, direct indexed cancellation, empty-level cleanup, safe live-book
   teardown, and full storage/index/FIFO invariants.
 - Fixed-seed 10,000-operation model stress coverage for mixed resting, reduction, and cancellation.
+- Monotonic command sequencing, deterministic pure/state admission, and explicit internal failure
+  boundaries.
+- Read-only best-price/FIFO match planning with final active-order capacity projection.
+- Immutable command-owned event batches with exact preallocated slots and contiguous headers.
+- Allocation-before-mutation preparation for a future GTC residual, including rollback and
+  allocation-free publication at existing or detached price levels.
 - ADR 0003 documenting node ownership, pointer invalidation, and internal error boundaries.
-- ADRs 0004 and 0005 documenting ordered-side and indexed-book ownership boundaries.
+- ADRs 0004 through 0006 documenting ordered-side, indexed-book, admission, planning, and
+  execution-preparation boundaries.
 - GCC, Clang, formatting, ASan, and UBSan workflow definitions.
 - Initial semantic contract, roadmap, and architecture decision record.

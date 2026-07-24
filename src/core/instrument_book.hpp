@@ -2,7 +2,9 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <memory>
 #include <string_view>
+#include <variant>
 
 #include "active_order_index.hpp"
 #include "book_side.hpp"
@@ -28,6 +30,7 @@ enum class InstrumentBookError : std::uint8_t {
   price_level_failure = 14,
   book_invariant_violation = 15,
   would_cross_book = 16,
+  preparation_in_progress = 17,
 };
 
 [[nodiscard]] constexpr std::string_view to_string(InstrumentBookError error) noexcept {
@@ -66,6 +69,8 @@ enum class InstrumentBookError : std::uint8_t {
       return "book_invariant_violation";
     case InstrumentBookError::would_cross_book:
       return "would_cross_book";
+    case InstrumentBookError::preparation_in_progress:
+      return "preparation_in_progress";
   }
   return "unknown";
 }
@@ -135,6 +140,8 @@ enum class InstrumentBookInvariantError : std::uint8_t {
   traversal_index_size_mismatch = 13,
   node_invalid_client_id = 14,
   crossed_book = 15,
+  pending_state_mismatch = 16,
+  pending_node_invariant = 17,
 };
 
 [[nodiscard]] constexpr std::string_view to_string(InstrumentBookInvariantError error) noexcept {
@@ -171,6 +178,10 @@ enum class InstrumentBookInvariantError : std::uint8_t {
       return "node_invalid_client_id";
     case InstrumentBookInvariantError::crossed_book:
       return "crossed_book";
+    case InstrumentBookInvariantError::pending_state_mismatch:
+      return "pending_state_mismatch";
+    case InstrumentBookInvariantError::pending_node_invariant:
+      return "pending_node_invariant";
   }
   return "unknown";
 }
@@ -197,6 +208,47 @@ struct InstrumentBookInvariantResult final {
 
 class InstrumentBook final {
  public:
+  class PreparedRest final {
+   public:
+    PreparedRest(const PreparedRest&) = delete;
+    PreparedRest& operator=(const PreparedRest&) = delete;
+    PreparedRest(PreparedRest&& other) noexcept;
+    PreparedRest& operator=(PreparedRest&& other) noexcept;
+    ~PreparedRest() noexcept;
+
+    [[nodiscard]] const OrderNode* node() const noexcept { return node_; }
+    [[nodiscard]] const InstrumentBookStatus& status() const noexcept { return status_; }
+
+    [[nodiscard]] bool has_value() const noexcept {
+      return owner_ != nullptr && node_ != nullptr && staging_level_ != nullptr && status_.valid();
+    }
+
+    [[nodiscard]] explicit operator bool() const noexcept { return has_value(); }
+
+    // Publishes the prepared residual without allocating. A changed book that
+    // violates the planned residual's append or uncrossed-book preconditions is
+    // an internal execution-contract failure and terminates.
+    [[nodiscard]] RestOrderResult commit() noexcept;
+
+   private:
+    friend class InstrumentBook;
+
+    using PreparedLevel =
+        std::variant<std::monostate, BidBookSide::DetachedLevel, AskBookSide::DetachedLevel>;
+
+    explicit PreparedRest(InstrumentBookStatus status) noexcept : status_{status} {}
+    PreparedRest(InstrumentBook& owner, OrderNode& node, std::unique_ptr<PriceLevel> staging_level,
+                 PreparedLevel prepared_level) noexcept;
+
+    void rollback() noexcept;
+
+    InstrumentBook* owner_{};
+    OrderNode* node_{};
+    std::unique_ptr<PriceLevel> staging_level_;
+    PreparedLevel prepared_level_;
+    InstrumentBookStatus status_{};
+  };
+
   explicit InstrumentBook(domain::InstrumentId instrument_id);
 
   InstrumentBook(const InstrumentBook&) = delete;
@@ -206,9 +258,13 @@ class InstrumentBook final {
   ~InstrumentBook() noexcept;
 
   [[nodiscard]] domain::InstrumentId instrument_id() const noexcept { return instrument_id_; }
-  [[nodiscard]] std::size_t active_order_count() const noexcept { return index_.size(); }
-  [[nodiscard]] bool empty() const noexcept { return index_.empty(); }
+  [[nodiscard]] std::size_t active_order_count() const noexcept {
+    return index_.size() -
+           (pending_node_ != nullptr && !index_.empty() ? std::size_t{1U} : std::size_t{0U});
+  }
+  [[nodiscard]] bool empty() const noexcept { return active_order_count() == 0U; }
 
+  [[nodiscard]] PreparedRest prepare_rest(const OrderNodeSpec& spec);
   [[nodiscard]] RestOrderResult rest(const OrderNodeSpec& spec);
   [[nodiscard]] OrderNode* find(domain::OrderId order_id) noexcept;
   [[nodiscard]] const OrderNode* find(domain::OrderId order_id) const noexcept;
@@ -233,7 +289,6 @@ class InstrumentBook final {
 
   [[nodiscard]] InstrumentBookStatus preflight_node(const OrderNode& node) const noexcept;
   [[nodiscard]] RemoveOrderResult remove_prevalidated(OrderNode& node) noexcept;
-  [[nodiscard]] InstrumentBookStatus rollback_prepared(OrderNode& node, bool indexed) noexcept;
   void enforce_postconditions() const noexcept;
   void drain() noexcept;
 
@@ -242,6 +297,8 @@ class InstrumentBook final {
   BidBookSide bids_;
   AskBookSide asks_;
   ActiveOrderIndex index_;
+  OrderNode* pending_node_{};
+  PriceLevel* pending_level_{};
 };
 
 }  // namespace atlaslob::core

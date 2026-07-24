@@ -21,6 +21,7 @@ enum class BookSideError : std::uint8_t {
   level_not_empty = 4,
   level_invariant_violation = 5,
   prepared_level_empty = 6,
+  prepared_level_conflict = 7,
 };
 
 [[nodiscard]] constexpr std::string_view to_string(BookSideError error) noexcept {
@@ -39,6 +40,8 @@ enum class BookSideError : std::uint8_t {
       return "level_invariant_violation";
     case BookSideError::prepared_level_empty:
       return "prepared_level_empty";
+    case BookSideError::prepared_level_conflict:
+      return "prepared_level_conflict";
   }
   return "unknown";
 }
@@ -190,6 +193,84 @@ class BookSide final {
     BookSideError error_{BookSideError::none};
   };
 
+  // Owns a fully allocated std::map node that is deliberately detached from the
+  // visible side.  It is the allocation-free fallback used by a higher-level
+  // transaction when the target price level does not exist at commit time.
+  class DetachedLevel final {
+   public:
+    DetachedLevel(const DetachedLevel&) = delete;
+    DetachedLevel& operator=(const DetachedLevel&) = delete;
+
+    DetachedLevel(DetachedLevel&& other) noexcept
+        : owner_{std::exchange(other.owner_, nullptr)},
+          node_{std::move(other.node_)},
+          error_{std::exchange(other.error_, BookSideError::none)} {}
+
+    DetachedLevel& operator=(DetachedLevel&& other) noexcept {
+      if (this != &other) {
+        owner_ = std::exchange(other.owner_, nullptr);
+        node_ = std::move(other.node_);
+        error_ = std::exchange(other.error_, BookSideError::none);
+      }
+      return *this;
+    }
+
+    ~DetachedLevel() = default;
+
+    [[nodiscard]] PriceLevel* level() const noexcept {
+      return node_.empty() ? nullptr : node_.mapped().get();
+    }
+
+    [[nodiscard]] BookSideError error() const noexcept { return error_; }
+
+    [[nodiscard]] bool has_value() const noexcept {
+      return owner_ != nullptr && !node_.empty() && level() != nullptr &&
+             error_ == BookSideError::none;
+    }
+
+    [[nodiscard]] explicit operator bool() const noexcept { return has_value(); }
+
+    // No allocation occurs here: the map node was allocated by
+    // prepare_detached_level(). A conflict indicates that the caller violated
+    // its commit-time preflight contract.
+    [[nodiscard]] BookSideError publish() noexcept {
+      if (error_ != BookSideError::none) {
+        return error_;
+      }
+      if (owner_ == nullptr || node_.empty() || level() == nullptr) {
+        return BookSideError::level_invariant_violation;
+      }
+      if (level()->empty()) {
+        return BookSideError::prepared_level_empty;
+      }
+      if (!level()->validate_invariants()) {
+        return BookSideError::level_invariant_violation;
+      }
+      if (owner_->levels_.contains(node_.key())) {
+        return BookSideError::prepared_level_conflict;
+      }
+
+      auto inserted = owner_->levels_.insert(std::move(node_));
+      if (!inserted.inserted) {
+        node_ = std::move(inserted.node);
+        return BookSideError::prepared_level_conflict;
+      }
+
+      owner_ = nullptr;
+      return BookSideError::none;
+    }
+
+   private:
+    friend class BookSide;
+
+    DetachedLevel(BookSide* owner, typename Levels::node_type node, BookSideError error) noexcept
+        : owner_{owner}, node_{std::move(node)}, error_{error} {}
+
+    BookSide* owner_{};
+    typename Levels::node_type node_;
+    BookSideError error_{BookSideError::none};
+  };
+
   class const_iterator final {
    public:
     using iterator_category = std::bidirectional_iterator_tag;
@@ -289,6 +370,23 @@ class BookSide final {
       return PreparedLevel{this, position->second.get(), false, BookSideError::none};
     }
     return PreparedLevel{this, address, true, BookSideError::none};
+  }
+
+  [[nodiscard]] DetachedLevel prepare_detached_level(domain::PriceTicks price) {
+    if (price.value() <= 0) {
+      return DetachedLevel{nullptr, {}, BookSideError::invalid_price};
+    }
+    if (!validate_invariants()) {
+      return DetachedLevel{nullptr, {}, BookSideError::level_invariant_violation};
+    }
+
+    Levels detached;
+    auto level = std::make_unique<PriceLevel>(price);
+    const auto [position, inserted] = detached.try_emplace(price, std::move(level));
+    if (!inserted) {
+      return DetachedLevel{nullptr, {}, BookSideError::prepared_level_conflict};
+    }
+    return DetachedLevel{this, detached.extract(position), BookSideError::none};
   }
 
   [[nodiscard]] BookSideError erase_level(PriceLevel& level) noexcept {

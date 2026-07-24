@@ -15,8 +15,9 @@ latency claims.
 
 ## Current status
 
-**Phase 1 implementation complete on the current development branch: indexed cancellation,
-whole-book invariants, and fixed-seed structural stress are implemented; hosted PR gates remain**
+**Phase 2 execution foundation complete locally on the current development branch: sequenced
+admission, read-only match planning, owned event batches, and allocation-before-mutation residual
+preparation are implemented; command execution and hosted PR gates remain**
 
 | Capability | Status | Evidence |
 | --- | --- | --- |
@@ -31,11 +32,14 @@ whole-book invariants, and fixed-seed structural stress are implemented; hosted 
 | Checked intrusive FIFO price levels | Complete | Core mutation, invariant, and stress tests |
 | Ordered bid/ask sides and best-price access | Complete | `core.BookSide*` tests, ADR 0004 |
 | Active-order index and direct cancellation | Complete locally; hosted gates pending | `core.ActiveOrderIndex*`, `core.InstrumentBook*`, ADR 0005 |
+| Sequenced command admission and state validation | Complete locally; hosted gates pending | `core.CommandAdmission*`, ADR 0006 |
+| Read-only match planning and final-capacity projection | Complete locally; hosted gates pending | `core.MatchPlan*`, ADR 0006 |
+| Owned normalized event batches and prepared residuals | Complete locally; hosted gates pending | `core.EventBatchBuilder*`, `core.InstrumentBookPreparedRest*` |
 | GCC and Clang CI | Passing on `main`; required per PR | `.github/workflows/ci.yml` |
 | ASan and UBSan CI | Passing on `main`; required per PR | `asan-ubsan` preset and CI job |
 | Pinned clang-format gate | Passing on `main`; required per PR | `format-check` CI job |
 | Resting book structure | Complete locally; hosted gates pending | `stress.InstrumentBookStress*` |
-| Matching and normalized command execution | Planned | Phase 2 |
+| Matching and normalized command execution | In progress | Phase 2 |
 | Replay, Python bindings, benchmarks, gateway | Planned | Later gated phases |
 
 ## Quick start
@@ -92,13 +96,17 @@ developed with MinGW GCC on Windows, but Linux CI is the support authority.
 - ADR 0005 retains storage as the sole owner while the active index and FIFO links hold checked
   non-owning pointers. Direct indexed cancellation follows one reviewed invalidation order:
   unlink, index removal, empty-level removal, and storage destruction.
+- ADR 0006 assigns a sequence before domain admission, plans matches without mutation, owns each
+  command's complete event batch, and allocates a resting residual before any planned fill is
+  applied.
 
 See [the semantic contract](docs/semantics.md) and
 [ADR 0001](docs/decisions/0001-core-semantics.md) plus
 [ADR 0002](docs/decisions/0002-command-sequencing-and-identity.md) plus
 [ADR 0003](docs/decisions/0003-stable-order-storage-and-price-levels.md) plus
 [ADR 0004](docs/decisions/0004-ordered-book-sides.md) plus
-[ADR 0005](docs/decisions/0005-indexed-order-book-and-cancellation.md) for accepted rules.
+[ADR 0005](docs/decisions/0005-indexed-order-book-and-cancellation.md) plus
+[ADR 0006](docs/decisions/0006-command-admission-and-execution-preparation.md) for accepted rules.
 
 ## Roadmap
 

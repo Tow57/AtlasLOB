@@ -1,8 +1,8 @@
-# Semantic Contract v0.3
+# Semantic Contract v0.4
 
 This document defines AtlasLOB's implemented command vocabulary, pure validation behavior, stable
-order-node ownership, and one-price FIFO mutation. It also freezes sequencing, identity, event, and
-future matching rules before book sides and execution are introduced.
+order-node ownership, ordered resting book, direct cancellation, command admission, value-only
+event batches, and read-only matching plans. Matching execution remains the next layer.
 
 ## Values and enumerations
 
@@ -55,11 +55,12 @@ stateful decisions represented in the rejection vocabulary but not produced by t
 
 - Representation and numeric-conversion failures occur outside the domain and consume no engine
   sequence.
-- A future engine assigns one nonzero monotonically increasing sequence to every well-formed
-  command that enters domain processing, including commands that receive domain rejections.
+- Command admission assigns one nonzero monotonically increasing sequence to every command that
+  enters domain processing, including commands that receive pure or stateful domain rejections.
 - A successfully resting new or replacement order uses that command sequence as its immutable
   priority sequence.
-- Sequence zero means unassigned. Wraparound is an internal fatal/capacity condition.
+- Sequence zero means unassigned. The maximum 64-bit value is issued once; later allocation
+  reports sticky internal exhaustion and never rolls over or becomes a client rejection.
 - Order IDs are unique while active and may be reused only after the previous order is terminal.
 - Future cancel/replace handling requires both client and instrument identity to match.
 
@@ -79,10 +80,18 @@ Reserved event order:
 - Valid new: accepted, zero or more trades, then rested or done.
 - Rejected command: one rejected event.
 - Cancel: accepted, canceled, done.
-- Replace: accepted, replaced, canceled-old, then the new-order trade/rest/done chain.
+- Replace: accepted, replaced, canceled-old, done-old with reason `replaced`, then the new-order
+  trade/rest/done chain.
 
-Event generation begins with the matching-engine phase. This release freezes the schema and
-ordering contract without claiming execution support.
+`Done.remaining_quantity` is the unexecuted quantity made terminal: zero for a fill, otherwise the
+residual canceled by cancel, replacement, IOC completion, or market exhaustion. Passive fills do
+not emit passive `Done` events.
+
+`EventBatch` owns one command's immutable, nonempty event vector. Its events share one nonzero
+sequence and instrument and have contiguous zero-based indices. The exact-slot builder allocates
+the complete vector before mutation and overwrites caller-supplied headers with authoritative
+values. Event production begins with matching execution; this release implements the safe batch
+container and builder without claiming command execution.
 
 ## Stable order storage and FIFO price levels
 
@@ -121,16 +130,26 @@ configurable full traversal checks are additional mutation-time diagnostics.
 Deliberate-corruption access is compiled only into a separate test core; the production
 `atlas_core` class definitions contain no test friendship.
 
-The required future terminal-removal order is:
+Ordered bid and ask sides own stable `PriceLevel` objects in best-price-first maps. A checked
+non-owning active-order index provides direct ID lookup. `InstrumentBook` keeps storage, index, and
+FIFO traversal in exact one-to-one correspondence and validates identity, linkage, cardinality,
+uncrossed best prices, and component-local invariants.
+
+The terminal-removal order is:
 
 1. Unlink the node from its price level.
 2. Remove its pointer from the global active-order index.
 3. Remove the price level if it is empty.
 4. Destroy the node through owning storage.
 
-No step may destroy an object while a later step can still dereference it. Ordered bid/ask sides,
-the active-order index, executable cancellation and replacement, empty-level cleanup, and matching
-remain outside this slice.
+No step may destroy an object while a later step can still dereference it. Executable cancellation
+uses this path and removes empty levels immediately.
+
+A prepared GTC residual allocates its node, storage/index entries, private staging level, and a
+detached fallback map node before matching mutation. The one pending node is hidden from public
+active lookup/counts but remains fully covered by whole-book invariants. Abandonment restores the
+exact visible state. Commit chooses an existing level or the detached fallback and performs no
+allocation. Preparation guards must not outlive their owning book.
 
 ## Error boundaries
 
@@ -141,7 +160,7 @@ remain outside this slice.
 - Allocation failure is a propagated resource failure, not ordinary command rejection.
 - Invariant failures indicate implementation bugs and are not converted into client rejections.
 
-## Matching rules reserved for later phases
+## Matching planning and execution boundary
 
 - Best price, then earliest priority sequence at that price.
 - Execution at the resting order's price.
@@ -149,3 +168,8 @@ remain outside this slice.
 - IOC and market residuals terminate without resting.
 - Partial execution does not reset a resting order's priority.
 - Replace uses atomic cancel-and-new semantics and resets priority.
+
+The read-only planner implements these traversal and residual rules for supported new orders. It
+performs a counting pass before allocating a value-only trade plan, records expected passive
+identity/price/quantity/priority, and leaves the book unchanged. Execution must revalidate the plan
+before its first mutation and remains outside this release slice.

@@ -34,12 +34,22 @@ index removal, empty-level cleanup, and storage destruction.
 
 ## Phase 2 - Matching MVP
 
+- [x] Assign authoritative sequences and apply deterministic state validation.
+- [x] Produce immutable read-only match plans and checked final-capacity projections.
+- [x] Preallocate owned event batches and staged GTC residuals before mutation.
 - [ ] Rest non-marketable limit GTC orders.
 - [ ] Match one level with full and partial fills.
 - [ ] Sweep multiple orders and price levels.
 - [ ] Support market IOC and limit IOC residual behavior.
 - [ ] Replace with cancel-and-new priority reset.
 - [ ] Produce normalized event and state digests.
+
+ADR 0006 fixes the Phase 2 failure boundary: admission consumes the command sequence, match plans
+contain values rather than pointers, event capacity and a possible resting residual are allocated
+before mutation, and active-order capacity is checked against the planned final state. Local
+Debug and Release suites pass 157/157 tests, the production-only build and pinned formatting gate
+pass, and an independent review found no blocker or high-severity issue. Hosted compiler and
+sanitizer evidence remains a pull-request gate.
 
 ## Phase 3 - Independent correctness evidence
 

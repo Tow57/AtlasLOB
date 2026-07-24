@@ -30,6 +30,7 @@ target_sources(
     BASE_DIRS include
     FILES
       include/atlaslob/domain/commands.hpp
+      include/atlaslob/domain/event_batch.hpp
       include/atlaslob/domain/events.hpp
       include/atlaslob/domain/types.hpp
       include/atlaslob/domain/validation.hpp
@@ -50,13 +51,24 @@ set(
   src/core/book_side.cpp
   src/core/book_side.hpp
   src/core/checked_arithmetic.hpp
+  src/core/command_admission.cpp
+  src/core/command_admission.hpp
+  src/core/command_sequencer.hpp
+  src/core/event_batch_builder.cpp
+  src/core/event_batch_builder.hpp
+  src/core/execution_policy.hpp
   src/core/instrument_book.cpp
   src/core/instrument_book.hpp
+  src/core/match_plan.cpp
+  src/core/match_plan.hpp
   src/core/order_node.hpp
   src/core/order_storage.cpp
   src/core/order_storage.hpp
   src/core/price_level.cpp
   src/core/price_level.hpp
+  src/core/state_validation.cpp
+  src/core/state_validation.hpp
+  src/core/top_of_book.hpp
 )
 
 function(atlas_configure_core target_name)

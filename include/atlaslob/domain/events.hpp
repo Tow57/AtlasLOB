@@ -130,4 +130,13 @@ template <typename EventValue>
       [](const auto& value) noexcept { return expected_event_type<decltype(value)>(); }, event);
 }
 
+[[nodiscard]] inline EventHeader& event_header(Event& event) noexcept {
+  return std::visit([](auto& value) noexcept -> EventHeader& { return value.header; }, event);
+}
+
+[[nodiscard]] inline const EventHeader& event_header(const Event& event) noexcept {
+  return std::visit([](const auto& value) noexcept -> const EventHeader& { return value.header; },
+                    event);
+}
+
 }  // namespace atlaslob::domain
