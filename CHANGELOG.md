@@ -15,6 +15,17 @@ The format is based on Keep a Changelog, and public releases will follow semanti
 - Successful `BookSide::PreparedLevel` commit now invalidates its guard completely.
 - Kept the expensive invariant toggle private to the core build instead of exporting it to
   consumers.
+- Replaced two tautological canonical-digest assertions with an independently reproduced Python
+  rejection hash and the existing cross-instance/snapshot comparisons.
+- Made native adapter selection fail closed: an explicit `ATLAS_DIFF_NATIVE` never falls back, and
+  a complete evidence run without any adapter now fails instead of skipping process parity.
+- Hardened the native adapter's process boundary so read, snapshot, digest, serialization, output,
+  and terminal-flush failures return the documented fatal exit without appending a second record
+  after partial output.
+- Bound decoded native transcripts to the requested mode, configuration, command stream,
+  checkpoint cadence, contiguous sequence timeline, process exit, and final state; impossible
+  event envelopes, snapshots, and malformed numeric JSON now fail as protocol errors.
+- Aligned the internal oracle package and CI support window to Python 3.11 through 3.14.
 
 ### Added
 
@@ -68,3 +79,22 @@ The format is based on Keep a Changelog, and public releases will follow semanti
   execution-preparation, atomic New/Cancel, atomic Replace, and public API boundaries.
 - GCC, Clang, formatting, ASan, and UBSan workflow definitions.
 - Initial semantic contract, roadmap, and architecture decision record.
+- A non-installed `atlas_diff_native` adapter with strict numeric input, exact/compact JSONL
+  evidence, complete event serialization, checkpoint snapshots, and fatal harness boundaries.
+- A typed Python 3.11-through-3.14 internal `atlaslob` correctness package with no runtime
+  dependencies.
+- Independent ADR 0009 state/event encoders that reproduce the frozen C++ golden hashes.
+- A plain dictionary/deque Python matching oracle with validation, sequencing, New/Cancel/Replace,
+  invariants, capacity/overflow checks, and fatal poisoning after internal exceptions.
+- Strict native JSONL decoding that revalidates canonical digests, snapshot aggregates, ordering,
+  active identities/priorities, instrument consistency, top of book, sequence observers, and the
+  adapter error-code vocabulary.
+- Named exact cross-language scenarios comparing every command result, event, snapshot, observer,
+  and digest.
+- Pinned pytest, Hypothesis, Ruff, and mypy top-level development tooling plus Python 3.11-3.14
+  CI; Hypothesis remains reserved for the next seeded-generation slice.
+- A normal-wheel build/install smoke gate that imports the oracle without development
+  dependencies and verifies its `py.typed` marker.
+- Native process fault-injection and black-box CLI coverage for throwing/partial output, terminal
+  flush failure, every documented mode spelling, and invalid usage.
+- ADR 0010 and a versioned differential-interface reference.

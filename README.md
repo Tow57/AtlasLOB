@@ -15,11 +15,11 @@ latency claims.
 
 ## Current status
 
-**Phase 2 matching MVP complete on the current development branch: price-time New, Cancel, and
-atomic Replace execution, a public single-instrument engine, canonical state/event digests, and
-independent command-stream comparison are implemented. The published Phase 2 head passed GCC,
-Clang, ASan/UBSan, and pinned-formatting CI; every follow-up commit must pass the same gates before
-merge.**
+**Phase 2 matching MVP is complete on `main`. The first Phase 3 slice now adds a test-only native
+evidence adapter, a standard-library-only internal Python correctness-oracle package,
+independently encoded canonical digests, and named command-by-command cross-language parity
+scenarios. The next slice adds seeded generation, a fixed corpus, and failure persistence;
+shrinking and long/fuzz campaigns follow as separate Phase 3 slices.**
 
 | Capability | Status | Evidence |
 | --- | --- | --- |
@@ -44,9 +44,15 @@ merge.**
 | Canonical snapshots and state/event digests | Complete | `core.Canonical*`, ADR 0009 |
 | Executable matching fixture | Complete | `atlas_cli engine-fixture`, golden integration fixtures |
 | Independent command-stream comparison | Complete | 10,000 mixed commands plus deterministic rerun |
-| GCC and Clang CI | Passing on `main` and published Phase 2 head; required per PR | `.github/workflows/ci.yml` |
-| ASan and UBSan CI | Passing on `main` and published Phase 2 head; required per PR | `asan-ubsan` preset and CI job |
-| Pinned clang-format gate | Passing on `main` and published Phase 2 head; required per PR | `format-check` CI job |
+| Versioned native differential adapter | Complete | `atlas_diff_native`, strict JSONL integration tests |
+| Independent Python domain and digest model | Complete | Python golden-vector and strict typing tests |
+| Independent Python matching oracle | Complete | `dict`/`deque` model, named transition tests |
+| Named cross-language parity | Complete | Exact per-command events, snapshots, observers, and digests |
+| Internal oracle package | Complete | Python 3.11-3.14 matrix and normal typed-wheel smoke gate |
+| Seeded generation, shrinking, and fuzzing | Planned | Later Phase 3 slices |
+| GCC and Clang CI | Passing on `main`; required on each Phase 3 PR head before merge | `.github/workflows/ci.yml` |
+| ASan and UBSan CI | Passing on `main`; required on each Phase 3 PR head before merge | `asan-ubsan` preset and CI job |
+| Pinned clang-format gate | Passing on `main`; required on each Phase 3 PR head before merge | `format-check` CI job |
 | Resting book structure | Complete | `stress.InstrumentBookStress*` |
 | Matching and normalized command execution | Complete | Phase 2 |
 | Replay, Python bindings, benchmarks, gateway | Planned | Later gated phases |
@@ -59,6 +65,7 @@ Requirements:
 - Ninja
 - Git, used by CMake to fetch the pinned test-only GoogleTest dependency
 - A C++20 compiler: GCC 13+ or Clang 17+
+- Python 3.11 through 3.14 for the independent correctness-evidence package
 
 The first testing-enabled configure downloads GoogleTest 1.17.0 at an immutable commit. Production
 library builds configured with `BUILD_TESTING=OFF` do not fetch or link GoogleTest.
@@ -93,6 +100,46 @@ Execute a deterministic matching fixture with per-command event and state hashes
 
 On Windows, use `build/dev-gcc/atlas_cli.exe` for either fixture command.
 
+Build and run the independent Python evidence suite on Linux or macOS:
+
+```sh
+python3 -m venv .venv
+.venv/bin/python -m pip install -e ".[dev]"
+cmake --preset dev-gcc
+cmake --build --preset dev-gcc --target atlas_diff_native
+.venv/bin/python -m ruff format --check python
+.venv/bin/python -m ruff check python
+.venv/bin/python -m mypy
+.venv/bin/python -m pytest
+```
+
+Use the virtual environment directly from Windows PowerShell:
+
+```powershell
+py -3.11 -m venv .venv
+.\.venv\Scripts\python.exe -m pip install -e ".[dev]"
+cmake --preset dev-gcc
+cmake --build --preset dev-gcc --target atlas_diff_native
+.\.venv\Scripts\python.exe -m ruff format --check python
+.\.venv\Scripts\python.exe -m ruff check python
+.\.venv\Scripts\python.exe -m mypy
+.\.venv\Scripts\python.exe -m pytest
+```
+
+The parity tests discover the normal `build/dev-gcc` adapter path. A complete evidence run fails
+when no adapter exists. To select a different build, set `ATLAS_DIFF_NATIVE` to that executable's
+existing absolute path. An explicit missing path is also an evidence failure; it never falls back
+to another build or skips parity.
+
+```sh
+ATLAS_DIFF_NATIVE=/absolute/path/to/atlas_diff_native .venv/bin/python -m pytest
+```
+
+```powershell
+$env:ATLAS_DIFF_NATIVE = "C:\absolute\path\to\atlas_diff_native.exe"
+.\.venv\Scripts\python.exe -m pytest
+```
+
 ## Supported environments
 
 Ubuntu 24.04 is the primary supported environment because later gateway and profiling work will
@@ -122,6 +169,8 @@ developed with MinGW GCC on Windows, but Linux CI is the support authority.
   mutable implementation details behind the public `MatchingEngine` PImpl.
 - ADR 0009 freezes exact best-price/FIFO snapshots and versioned big-endian state/event digest
   encodings, then verifies complete command streams against a separate map/deque reference model.
+- ADR 0010 keeps the Python oracle in a separate process with no bindings or private C++ access
+  and defines fatal adapter/resource boundaries for cross-language evidence.
 
 See [the semantic contract](docs/semantics.md) and
 [ADR 0001](docs/decisions/0001-core-semantics.md) plus
@@ -132,7 +181,10 @@ See [the semantic contract](docs/semantics.md) and
 [ADR 0006](docs/decisions/0006-command-admission-and-execution-preparation.md) plus
 [ADR 0007](docs/decisions/0007-atomic-new-and-cancel-execution.md) plus
 [ADR 0008](docs/decisions/0008-atomic-replace-and-public-engine.md) plus
-[ADR 0009](docs/decisions/0009-canonical-deterministic-evidence.md) for accepted rules.
+[ADR 0009](docs/decisions/0009-canonical-deterministic-evidence.md) plus
+[ADR 0010](docs/decisions/0010-independent-python-oracle-boundary.md) for accepted rules. The
+test-only process schema is documented in
+[Differential testing interface](docs/differential-testing.md).
 
 ## Roadmap
 
@@ -140,7 +192,8 @@ See [the semantic contract](docs/semantics.md) and
 2. Limit/market matching, GTC/IOC residuals, replace, canonical digests, and deterministic
    command-stream evidence.
 3. Independent Python reference model, differential generation, shrinking, and fuzzing.
-4. Command logging, deterministic replay, Python batch bindings, and analysis tooling.
+4. Command logging, deterministic replay, native-backed Python batch bindings and distribution,
+   and analysis tooling.
 5. Reproducible benchmarks and a profile-supported optimization study.
 6. Optional versioned protocol and nonblocking Linux gateway after the core release is tagged.
 

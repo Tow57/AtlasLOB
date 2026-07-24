@@ -2,6 +2,7 @@ name: CI
 
 on:
   push:
+    branches: [main]
   pull_request:
 
 permissions:
@@ -9,7 +10,7 @@ permissions:
 
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   build-and-test:
@@ -67,6 +68,101 @@ jobs:
 
       - name: Test
         run: ctest --preset asan-ubsan
+
+  python-evidence:
+    name: Python ${{ matrix.python-version }}
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.12", "3.13", "3.14"]
+    env:
+      ATLAS_DIFF_NATIVE: ${{ github.workspace }}/build/dev-gcc/atlas_diff_native
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Install native toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes g++ ninja-build
+
+      - name: Configure native evidence adapter
+        run: cmake --preset dev-gcc
+
+      - name: Build native evidence adapter
+        run: cmake --build --preset dev-gcc --target atlas_diff_native --parallel 2
+
+      - name: Install Python evidence dependencies
+        run: python -m pip install --disable-pip-version-check -e ".[dev]"
+
+      - name: Check Python formatting
+        run: python -m ruff format --check python
+
+      - name: Lint Python
+        run: python -m ruff check python
+
+      - name: Type-check Python
+        run: python -m mypy
+
+      - name: Test Python evidence
+        run: python -m pytest
+
+  python-wheel:
+    name: Python wheel smoke
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up minimum supported Python
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
+        with:
+          python-version: "3.11"
+
+      - name: Build a normal wheel
+        run: >-
+          python -m pip wheel
+          --disable-pip-version-check
+          --no-deps
+          --wheel-dir "$RUNNER_TEMP/atlas-wheel"
+          .
+
+      - name: Verify typed package contents
+        run: >-
+          python -c
+          "from pathlib import Path;
+          from zipfile import ZipFile;
+          wheel = next(Path('$RUNNER_TEMP/atlas-wheel').glob('atlaslob-*.whl'));
+          archive = ZipFile(wheel);
+          assert 'atlaslob/py.typed' in archive.namelist();
+          metadata_name = next(name for name in archive.namelist() if name.endswith('.dist-info/METADATA'));
+          metadata = archive.read(metadata_name).decode();
+          assert 'Requires-Python: <3.15,>=3.11' in metadata;
+          assert 'License-Expression: MIT' in metadata;
+          archive.close()"
+
+      - name: Install and import without development dependencies
+        run: |
+          python -m venv "$RUNNER_TEMP/atlas-wheel-smoke"
+          "$RUNNER_TEMP/atlas-wheel-smoke/bin/python" -m pip install \
+            --disable-pip-version-check \
+            --no-deps \
+            "$RUNNER_TEMP"/atlas-wheel/atlaslob-*.whl
+          "$RUNNER_TEMP/atlas-wheel-smoke/bin/python" -c \
+            "import atlaslob; from importlib.metadata import version; \
+            assert atlaslob.ATLASLOB_SEMANTICS_VERSION == 6; \
+            assert version('atlaslob') == '0.1.0'"
+          "$RUNNER_TEMP/atlas-wheel-smoke/bin/python" -m pip check
 
   formatting:
     name: Formatting

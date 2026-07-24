@@ -136,6 +136,71 @@ if(BUILD_TESTING)
   atlas_setup_test_dependencies()
   include(GoogleTest)
 
+  add_executable(atlas_diff_native tests/differential/native_driver.cpp)
+  target_link_libraries(atlas_diff_native PRIVATE AtlasLOB::core)
+  target_include_directories(
+    atlas_diff_native
+    PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/tests/differential"
+  )
+  target_compile_features(atlas_diff_native PRIVATE cxx_std_20)
+  set_target_properties(atlas_diff_native PROPERTIES CXX_EXTENSIONS OFF)
+  atlas_set_project_warnings(atlas_diff_native)
+  atlas_enable_sanitizers(atlas_diff_native)
+
+  add_executable(
+    atlas_native_diff_tests
+    tests/differential/native_driver.cpp
+    tests/integration/native_diff_driver_test.cpp
+  )
+  target_link_libraries(atlas_native_diff_tests PRIVATE AtlasLOB::core GTest::gtest_main)
+  target_include_directories(
+    atlas_native_diff_tests
+    PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/tests/differential"
+  )
+  target_compile_definitions(atlas_native_diff_tests PRIVATE ATLAS_DIFF_NATIVE_NO_MAIN=1)
+  target_compile_features(atlas_native_diff_tests PRIVATE cxx_std_20)
+  set_target_properties(atlas_native_diff_tests PROPERTIES CXX_EXTENSIONS OFF)
+  atlas_set_project_warnings(atlas_native_diff_tests)
+  atlas_enable_sanitizers(atlas_native_diff_tests)
+
+  gtest_discover_tests(
+    atlas_native_diff_tests
+    TEST_PREFIX "differential."
+    PROPERTIES LABELS "integration\\;differential"
+  )
+
+  set(ATLAS_NATIVE_CLI_TEST_INPUT "${CMAKE_CURRENT_BINARY_DIR}/native_cli_test.input")
+  file(
+    GENERATE
+    OUTPUT "${ATLAS_NATIVE_CLI_TEST_INPUT}"
+    CONTENT "ATLAS_DIFF_V1 7 1000 1 16 0\n"
+  )
+  foreach(
+    test_case
+    IN ITEMS
+      exact
+      compact
+      equals_exact
+      equals_compact
+      split_exact
+      split_compact
+      invalid_usage
+  )
+    add_test(
+      NAME differential.native_cli_${test_case}
+      COMMAND
+        "${CMAKE_COMMAND}"
+        "-DNATIVE_EXECUTABLE=$<TARGET_FILE:atlas_diff_native>"
+        "-DINPUT_FILE=${ATLAS_NATIVE_CLI_TEST_INPUT}"
+        "-DTEST_CASE=${test_case}"
+        -P "${CMAKE_CURRENT_SOURCE_DIR}/tests/integration/native_cli_test.cmake"
+    )
+    set_tests_properties(
+      differential.native_cli_${test_case}
+      PROPERTIES LABELS "integration;differential"
+    )
+  endforeach()
+
   add_library(atlas_core_testable)
   atlas_configure_core(atlas_core_testable)
   target_compile_definitions(atlas_core_testable PUBLIC ATLAS_ENABLE_TEST_ACCESS=1)

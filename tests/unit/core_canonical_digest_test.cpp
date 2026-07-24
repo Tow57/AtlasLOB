@@ -454,7 +454,6 @@ TEST(MatchingEngineSnapshot, IsExactBestPriceThenFifoAndDeterministic) {
   EXPECT_EQ(second.snapshot(), snapshot);
   EXPECT_EQ(first.state_digest(), second.state_digest());
   EXPECT_EQ(first.state_digest(), atlaslob::state_digest(snapshot));
-  EXPECT_EQ(first.state_digest(), first.state_digest());
 }
 
 TEST(MatchingEngineSnapshot, RejectionAdvancesCanonicalSequenceOnly) {
@@ -472,7 +471,10 @@ TEST(MatchingEngineSnapshot, RejectionAdvancesCanonicalSequenceOnly) {
   expected.last_sequence = domain::Sequence{2U};
   EXPECT_EQ(after, expected);
   EXPECT_NE(engine.state_digest(), before_digest);
-  EXPECT_EQ(event_digest(*rejected.batch()), event_digest(*rejected.batch()));
+  // Independently reproduced by the Phase 3 Python ADR 0009 encoder.
+  EXPECT_EQ(event_digest(*rejected.batch()).hex(),
+            "42d80848e8544fc1685184327d7e61540"
+            "fd49d3ad4f4c6f3cbe144493d905772");
 }
 
 }  // namespace
