@@ -112,6 +112,9 @@ class HeapOrderStorage final : public OrderStorage {
   [[nodiscard]] CreateOrderResult create(const OrderNodeSpec& spec) override;
   [[nodiscard]] StorageError destroy(OrderNode& node) noexcept override;
   [[nodiscard]] std::size_t size() const noexcept override { return orders_.size(); }
+  [[nodiscard]] OrderNode* find(domain::OrderId order_id) noexcept;
+  [[nodiscard]] const OrderNode* find(domain::OrderId order_id) const noexcept;
+  [[nodiscard]] bool owns(const OrderNode& node) const noexcept;
 
  private:
 #if defined(ATLAS_ENABLE_TEST_ACCESS) && ATLAS_ENABLE_TEST_ACCESS

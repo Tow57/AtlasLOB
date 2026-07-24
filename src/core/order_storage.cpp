@@ -76,4 +76,18 @@ StorageError HeapOrderStorage::destroy(OrderNode& node) noexcept {
   return StorageError::none;
 }
 
+OrderNode* HeapOrderStorage::find(domain::OrderId order_id) noexcept {
+  const auto position = orders_.find(order_id);
+  return position == orders_.end() ? nullptr : position->second.get();
+}
+
+const OrderNode* HeapOrderStorage::find(domain::OrderId order_id) const noexcept {
+  const auto position = orders_.find(order_id);
+  return position == orders_.end() ? nullptr : position->second.get();
+}
+
+bool HeapOrderStorage::owns(const OrderNode& node) const noexcept {
+  return find(node.order_id()) == &node;
+}
+
 }  // namespace atlaslob::core

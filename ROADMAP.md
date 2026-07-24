@@ -18,13 +18,19 @@ satisfied.
 - [x] Stable owning storage for order nodes.
 - [x] FIFO price levels with aggregate quantity and order count.
 - [x] Ordered bid and ask sides with best-price access.
-- [ ] Direct indexed cancellation without level scans.
-- [ ] Full structural invariants and sanitizer stress tests.
+- [x] Direct indexed cancellation without level scans.
+- [x] Full structural invariants and fixed-seed stress tests.
+- [ ] Hosted sanitizer evidence for the completed indexed-book slice.
 
-Ordered bid/ask sides now provide side-specific ordered ownership, stable level addresses,
-side-independent best-level access, guarded level preparation, and explicit side invariants. The
-global active-order index, executable cancellation, whole-book invariants, and matching remain
-deferred.
+The resting-book structure now provides ordered sides, stable level addresses, guarded level
+preparation, a checked active-order index, direct cancellation, active-only ID reuse, safe
+teardown, and cross-structure invariants. A 10,000-operation fixed-seed model stress test checks
+the complete book after every mutation. Hosted sanitizer evidence remains open until the branch
+can be published; matching begins as a separate Phase 2 layer.
+
+ADR 0005 records the accepted ownership boundary: storage remains the sole node owner, a checked
+non-owning index provides direct identity lookup, and one centralized path performs level unlink,
+index removal, empty-level cleanup, and storage destruction.
 
 ## Phase 2 - Matching MVP
 

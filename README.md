@@ -15,7 +15,8 @@ latency claims.
 
 ## Current status
 
-**Phase 1 in progress: ordered bid/ask sides complete; the global active-order index follows**
+**Phase 1 implementation complete on the current development branch: indexed cancellation,
+whole-book invariants, and fixed-seed structural stress are implemented; hosted PR gates remain**
 
 | Capability | Status | Evidence |
 | --- | --- | --- |
@@ -29,10 +30,12 @@ latency claims.
 | Stable owning order-node storage | Complete | `atlas_core_tests`, ADR 0003 |
 | Checked intrusive FIFO price levels | Complete | Core mutation, invariant, and stress tests |
 | Ordered bid/ask sides and best-price access | Complete | `core.BookSide*` tests, ADR 0004 |
+| Active-order index and direct cancellation | Complete locally; hosted gates pending | `core.ActiveOrderIndex*`, `core.InstrumentBook*`, ADR 0005 |
 | GCC and Clang CI | Passing on `main`; required per PR | `.github/workflows/ci.yml` |
 | ASan and UBSan CI | Passing on `main`; required per PR | `asan-ubsan` preset and CI job |
 | Pinned clang-format gate | Passing on `main`; required per PR | `format-check` CI job |
-| Resting book and matching | Planned | Phase 1 and Phase 2 |
+| Resting book structure | Complete locally; hosted gates pending | `stress.InstrumentBookStress*` |
+| Matching and normalized command execution | Planned | Phase 2 |
 | Replay, Python bindings, benchmarks, gateway | Planned | Later gated phases |
 
 ## Quick start
@@ -86,12 +89,16 @@ developed with MinGW GCC on Windows, but Linux CI is the support authority.
   non-mutating liquidity preflight exists.
 - Baseline order storage owns nodes through `unique_ptr`; price levels hold non-owning intrusive
   links and never control node lifetime.
+- ADR 0005 retains storage as the sole owner while the active index and FIFO links hold checked
+  non-owning pointers. Direct indexed cancellation follows one reviewed invalidation order:
+  unlink, index removal, empty-level removal, and storage destruction.
 
 See [the semantic contract](docs/semantics.md) and
 [ADR 0001](docs/decisions/0001-core-semantics.md) plus
 [ADR 0002](docs/decisions/0002-command-sequencing-and-identity.md) plus
 [ADR 0003](docs/decisions/0003-stable-order-storage-and-price-levels.md) plus
-[ADR 0004](docs/decisions/0004-ordered-book-sides.md) for the current accepted rules.
+[ADR 0004](docs/decisions/0004-ordered-book-sides.md) plus
+[ADR 0005](docs/decisions/0005-indexed-order-book-and-cancellation.md) for accepted rules.
 
 ## Roadmap
 
