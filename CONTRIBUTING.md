@@ -25,20 +25,37 @@ When Clang is available, also run the `dev-clang` and `asan-ubsan` presets. The 
 pinned to clang-format 18.1.8; use that version when running `format-check` before submitting C++
 changes.
 
-Phase 3 Python evidence requires Python 3.11 or newer. The runtime package uses only the standard
-library; its pinned optional development tools are installed with:
+Phase 3 Python evidence supports Python 3.11 through 3.14. The internal oracle package uses only the
+standard library at runtime; its pinned top-level development tools are installed into a virtual
+environment with the following Linux or macOS commands:
 
 ```sh
-python -m venv .venv
-python -m pip install -e ".[dev]"
-python -m ruff format --check python
-python -m ruff check python
-python -m mypy
-python -m pytest
+python3 -m venv .venv
+.venv/bin/python -m pip install -e ".[dev]"
+.venv/bin/python -m ruff format --check python
+.venv/bin/python -m ruff check python
+.venv/bin/python -m mypy
+.venv/bin/python -m pytest
+```
+
+Use these corresponding commands on Windows PowerShell:
+
+```powershell
+py -3.11 -m venv .venv
+.\.venv\Scripts\python.exe -m pip install -e ".[dev]"
+.\.venv\Scripts\python.exe -m ruff format --check python
+.\.venv\Scripts\python.exe -m ruff check python
+.\.venv\Scripts\python.exe -m mypy
+.\.venv\Scripts\python.exe -m pytest
 ```
 
 Build `atlas_diff_native` before parity tests. The normal `build/dev-gcc` location is discovered
-automatically; otherwise set `ATLAS_DIFF_NATIVE` to the executable's absolute path.
+automatically; otherwise set `ATLAS_DIFF_NATIVE` to the executable's absolute path. When that
+variable is set, the path is authoritative. A complete evidence run fails when neither the
+configured executable nor a standard build exists rather than falling back or skipping.
+
+The Phase 3 package exists only to provide independent correctness evidence. Native pybind11 batch
+bindings and their distributable, production-facing package remain Phase 4 work.
 
 ## Pull requests
 

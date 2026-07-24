@@ -201,6 +201,7 @@ class ReferenceEngine:
 
     @property
     def instrument_id(self) -> int:
+        self._ensure_usable()
         return self._instrument_id
 
     @property

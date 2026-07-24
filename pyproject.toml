@@ -7,7 +7,7 @@ name = "atlaslob"
 version = "0.1.0"
 description = "Independent Python correctness oracle for the AtlasLOB matching engine"
 readme = "README.md"
-requires-python = ">=3.11"
+requires-python = ">=3.11,<3.15"
 license = "MIT"
 authors = [{ name = "Lucas" }]
 dependencies = []

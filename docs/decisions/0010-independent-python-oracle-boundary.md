@@ -46,10 +46,10 @@ format, installed CLI, or performance path.
 
 ### Python oracle
 
-Create a Python 3.11-or-newer `atlaslob` package with a standard-library-only runtime. The oracle
-uses dictionaries, deques, and explicit price sorting. It independently implements validation
-precedence, sequencing, matching, cancellation, replacement, event construction, snapshots, and
-the canonical encodings frozen by ADR 0009.
+Create an internal Python 3.11-through-3.14 `atlaslob` correctness package with a
+standard-library-only runtime. The oracle uses dictionaries, deques, and explicit price sorting.
+It independently implements validation precedence, sequencing, matching, cancellation,
+replacement, event construction, snapshots, and the canonical encodings frozen by ADR 0009.
 
 The oracle may share documented numeric vocabulary and value schemas. It must not import a native
 extension, parse C++ headers, call `atlas_diff_native` as transition logic, or reuse optimized
@@ -87,8 +87,9 @@ batch.
 
 - Extending `engine-fixture` was rejected because its stable human output and symbolic grammar do
   not carry the complete or raw evidence required for differential diagnosis.
-- Adding pybind11 now was rejected because bindings, batching, packaging, and GIL policy belong to
-  Phase 4 and would couple the oracle to the implementation process.
+- Adding pybind11 now was rejected because bindings, batching, native-backed distribution
+  packaging, and GIL policy belong to Phase 4 and would couple the oracle to the implementation
+  process.
 - Reusing or exporting the Phase 2 C++ reference model was rejected because shared language,
   headers, and transition code weaken independence.
 - Introducing a JSON parser in C++ was rejected. The fixed numeric input grammar is smaller,

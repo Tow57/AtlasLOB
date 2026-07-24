@@ -16,9 +16,10 @@ latency claims.
 ## Current status
 
 **Phase 2 matching MVP is complete on `main`. The first Phase 3 slice now adds a test-only native
-evidence adapter, a standard-library-only independent Python matching oracle, independently
-encoded canonical digests, and named command-by-command cross-language parity scenarios. Seeded
-generation, persistence, shrinking, and long fuzz campaigns remain the next Phase 3 slices.**
+evidence adapter, a standard-library-only internal Python correctness-oracle package,
+independently encoded canonical digests, and named command-by-command cross-language parity
+scenarios. The next slice adds seeded generation, a fixed corpus, and failure persistence;
+shrinking and long/fuzz campaigns follow as separate Phase 3 slices.**
 
 | Capability | Status | Evidence |
 | --- | --- | --- |
@@ -47,10 +48,11 @@ generation, persistence, shrinking, and long fuzz campaigns remain the next Phas
 | Independent Python domain and digest model | Complete | Python golden-vector and strict typing tests |
 | Independent Python matching oracle | Complete | `dict`/`deque` model, named transition tests |
 | Named cross-language parity | Complete | Exact per-command events, snapshots, observers, and digests |
+| Internal oracle package | Complete | Python 3.11-3.14 matrix and normal typed-wheel smoke gate |
 | Seeded generation, shrinking, and fuzzing | Planned | Later Phase 3 slices |
-| GCC and Clang CI | Passing on `main` and published Phase 2 head; required per PR | `.github/workflows/ci.yml` |
-| ASan and UBSan CI | Passing on `main` and published Phase 2 head; required per PR | `asan-ubsan` preset and CI job |
-| Pinned clang-format gate | Passing on `main` and published Phase 2 head; required per PR | `format-check` CI job |
+| GCC and Clang CI | Passing on `main`; required on each Phase 3 PR head before merge | `.github/workflows/ci.yml` |
+| ASan and UBSan CI | Passing on `main`; required on each Phase 3 PR head before merge | `asan-ubsan` preset and CI job |
+| Pinned clang-format gate | Passing on `main`; required on each Phase 3 PR head before merge | `format-check` CI job |
 | Resting book structure | Complete | `stress.InstrumentBookStress*` |
 | Matching and normalized command execution | Complete | Phase 2 |
 | Replay, Python bindings, benchmarks, gateway | Planned | Later gated phases |
@@ -63,6 +65,7 @@ Requirements:
 - Ninja
 - Git, used by CMake to fetch the pinned test-only GoogleTest dependency
 - A C++20 compiler: GCC 13+ or Clang 17+
+- Python 3.11 through 3.14 for the independent correctness-evidence package
 
 The first testing-enabled configure downloads GoogleTest 1.17.0 at an immutable commit. Production
 library builds configured with `BUILD_TESTING=OFF` do not fetch or link GoogleTest.
@@ -97,21 +100,45 @@ Execute a deterministic matching fixture with per-command event and state hashes
 
 On Windows, use `build/dev-gcc/atlas_cli.exe` for either fixture command.
 
-Build and run the independent Python evidence suite:
+Build and run the independent Python evidence suite on Linux or macOS:
 
 ```sh
-python -m venv .venv
-python -m pip install -e ".[dev]"
+python3 -m venv .venv
+.venv/bin/python -m pip install -e ".[dev]"
 cmake --preset dev-gcc
 cmake --build --preset dev-gcc --target atlas_diff_native
-python -m ruff format --check python
-python -m ruff check python
-python -m mypy
-python -m pytest
+.venv/bin/python -m ruff format --check python
+.venv/bin/python -m ruff check python
+.venv/bin/python -m mypy
+.venv/bin/python -m pytest
 ```
 
-The parity tests discover the normal `build/dev-gcc` adapter path. A different build can be
-selected with `ATLAS_DIFF_NATIVE=/absolute/path/to/atlas_diff_native`.
+Use the virtual environment directly from Windows PowerShell:
+
+```powershell
+py -3.11 -m venv .venv
+.\.venv\Scripts\python.exe -m pip install -e ".[dev]"
+cmake --preset dev-gcc
+cmake --build --preset dev-gcc --target atlas_diff_native
+.\.venv\Scripts\python.exe -m ruff format --check python
+.\.venv\Scripts\python.exe -m ruff check python
+.\.venv\Scripts\python.exe -m mypy
+.\.venv\Scripts\python.exe -m pytest
+```
+
+The parity tests discover the normal `build/dev-gcc` adapter path. A complete evidence run fails
+when no adapter exists. To select a different build, set `ATLAS_DIFF_NATIVE` to that executable's
+existing absolute path. An explicit missing path is also an evidence failure; it never falls back
+to another build or skips parity.
+
+```sh
+ATLAS_DIFF_NATIVE=/absolute/path/to/atlas_diff_native .venv/bin/python -m pytest
+```
+
+```powershell
+$env:ATLAS_DIFF_NATIVE = "C:\absolute\path\to\atlas_diff_native.exe"
+.\.venv\Scripts\python.exe -m pytest
+```
 
 ## Supported environments
 
@@ -165,7 +192,8 @@ test-only process schema is documented in
 2. Limit/market matching, GTC/IOC residuals, replace, canonical digests, and deterministic
    command-stream evidence.
 3. Independent Python reference model, differential generation, shrinking, and fuzzing.
-4. Command logging, deterministic replay, Python batch bindings, and analysis tooling.
+4. Command logging, deterministic replay, native-backed Python batch bindings and distribution,
+   and analysis tooling.
 5. Reproducible benchmarks and a profile-supported optimization study.
 6. Optional versioned protocol and nonblocking Linux gateway after the core release is tagged.
 

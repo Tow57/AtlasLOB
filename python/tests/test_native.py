@@ -36,16 +36,51 @@ _EMPTY_TRANSCRIPT = """\
 
 def _executable() -> Path:
     configured = os.environ.get("ATLAS_DIFF_NATIVE")
+    if configured is not None:
+        candidate = Path(configured)
+        if not candidate.is_file():
+            raise FileNotFoundError(
+                f"ATLAS_DIFF_NATIVE does not name a native evidence executable: {configured}"
+            )
+        return candidate.resolve()
+
     candidates = (
-        Path(configured) if configured is not None else None,
         Path("build/fix-debug/atlas_diff_native.exe"),
         Path("build/dev-gcc/atlas_diff_native.exe"),
         Path("build/dev-gcc/atlas_diff_native"),
     )
     for candidate in candidates:
-        if candidate is not None and candidate.is_file():
+        if candidate.is_file():
             return candidate.resolve()
-    pytest.skip("atlas_diff_native has not been built")
+    raise FileNotFoundError(
+        "atlas_diff_native has not been built in a standard development location; "
+        "build it or set ATLAS_DIFF_NATIVE"
+    )
+
+
+def test_native_executable_is_required_and_explicit_path_is_authoritative(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    missing = tmp_path / "missing-atlas-diff-native"
+    fallback = tmp_path / "build" / "fix-debug" / "atlas_diff_native.exe"
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("ATLAS_DIFF_NATIVE", raising=False)
+
+    with pytest.raises(FileNotFoundError, match="has not been built"):
+        _executable()
+
+    fallback.parent.mkdir(parents=True)
+    fallback.touch()
+    monkeypatch.setenv("ATLAS_DIFF_NATIVE", str(missing))
+
+    with pytest.raises(FileNotFoundError, match="ATLAS_DIFF_NATIVE"):
+        _executable()
+
+    selected = tmp_path / "selected-atlas-diff-native"
+    selected.touch()
+    monkeypatch.setenv("ATLAS_DIFF_NATIVE", str(selected))
+    assert _executable() == selected.resolve()
 
 
 def _limit(

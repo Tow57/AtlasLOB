@@ -96,3 +96,18 @@ For each submitted command, the Python differential runner compares:
 The Python reference engine must produce its result before invoking the native adapter and may
 not import C++ headers, private helpers, bindings, or native transition logic. Matching agreement
 is supplemented by hand-derived named scenarios and independently encoded ADR 0009 hash vectors.
+
+The decoder also binds the transcript to the submitted mode, configuration, instrument, command
+types, source lines, checkpoint cadence, contiguous command sequences, process exit, and terminal
+state. Internally consistent but unrelated records are protocol failures. Exact event envelopes
+and snapshot values are revalidated before they may be used as correctness evidence.
+
+## Runner executable selection
+
+With `ATLAS_DIFF_NATIVE` unset, local Python tests search the normal MinGW/Windows and
+Linux `build/dev-gcc` development locations. A complete evidence run fails when no adapter has
+been built; unit-only modules can still be selected and run independently.
+
+When `ATLAS_DIFF_NATIVE` is set, its value is authoritative. It must name an existing executable;
+the suite fails instead of falling back to another build or skipping parity. Hosted evidence jobs
+always set this variable after building the selected adapter.

@@ -169,6 +169,38 @@ if(BUILD_TESTING)
     PROPERTIES LABELS "integration\\;differential"
   )
 
+  set(ATLAS_NATIVE_CLI_TEST_INPUT "${CMAKE_CURRENT_BINARY_DIR}/native_cli_test.input")
+  file(
+    GENERATE
+    OUTPUT "${ATLAS_NATIVE_CLI_TEST_INPUT}"
+    CONTENT "ATLAS_DIFF_V1 7 1000 1 16 0\n"
+  )
+  foreach(
+    test_case
+    IN ITEMS
+      exact
+      compact
+      equals_exact
+      equals_compact
+      split_exact
+      split_compact
+      invalid_usage
+  )
+    add_test(
+      NAME differential.native_cli_${test_case}
+      COMMAND
+        "${CMAKE_COMMAND}"
+        "-DNATIVE_EXECUTABLE=$<TARGET_FILE:atlas_diff_native>"
+        "-DINPUT_FILE=${ATLAS_NATIVE_CLI_TEST_INPUT}"
+        "-DTEST_CASE=${test_case}"
+        -P "${CMAKE_CURRENT_SOURCE_DIR}/tests/integration/native_cli_test.cmake"
+    )
+    set_tests_properties(
+      differential.native_cli_${test_case}
+      PROPERTIES LABELS "integration;differential"
+    )
+  endforeach()
+
   add_library(atlas_core_testable)
   atlas_configure_core(atlas_core_testable)
   target_compile_definitions(atlas_core_testable PUBLIC ATLAS_ENABLE_TEST_ACCESS=1)

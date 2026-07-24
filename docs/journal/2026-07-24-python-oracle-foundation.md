@@ -10,10 +10,11 @@ preserves unknown enum representations for domain validation, and emits versione
 complete events, public observers, canonical digests, and checkpoint snapshots. It links only the
 public core/domain interfaces and is neither installed nor presented as a performance protocol.
 
-The Python side is a typed Python 3.11+ package with a standard-library-only runtime. Its matching
-model uses dictionaries, deques, and explicit price sorting. It independently implements frozen
-validation precedence, sequencing, price-time matching, cancellation, replacement, normalized
-events, final-state capacity, same-level `uint64` aggregate checks, snapshots, and invariants.
+The Python side is a typed internal Python 3.11-through-3.14 package with a
+standard-library-only runtime. Its matching model uses dictionaries, deques, and explicit price
+sorting. It independently implements frozen validation precedence, sequencing, price-time
+matching, cancellation, replacement, normalized events, final-state capacity, same-level
+`uint64` aggregate checks, snapshots, and invariants.
 
 ## Review corrections
 
@@ -24,14 +25,20 @@ change decimal JSON, and output failures could be detected too late. The correct
 - catches parser resource/internal failures at the process boundary;
 - keeps thrown engine/resource exceptions distinct from returned engine errors;
 - writes integers with locale/stream-flag-independent `to_chars`;
-- stops on write failure and returns the fatal process code; and
+- covers reads, snapshots, digests, serialization, writes, and terminal flushing with one fatal
+  process boundary;
+- never appends a second JSON record after a partial serialization failure;
+- flushes the terminal record before selecting success; and
 - belongs to both the integration and differential CTest labels.
 
 The Python review found that configuration accepted floats/booleans and that ordinary container
 allocation failure could occur after oracle mutation. Fixed-width configuration now requires
 integer values and explicitly rejects booleans. Once sequencing has begun, any unexpected Python
 internal exception poisons that engine instance; the runner must stop and never treat the partial
-state as recoverable evidence.
+state as recoverable evidence. The final protocol review also bound native output to the submitted
+request, sequence timeline, checkpoint cadence, exact event grammar, process exit, and terminal
+state. It rejects malformed numeric JSON, duplicate fields, impossible snapshots, and internally
+consistent records spliced from another run.
 
 ## Evidence
 
@@ -46,12 +53,19 @@ state as recoverable evidence.
   public observers, state digest, and full snapshot.
 - A separate read-only review spot-checked 10,000 mixed native/Python commands without a
   classification, sequence, event-digest, or state-digest divergence.
-- Local Python 3.12 strict mypy, Ruff, and 89-test gates pass after final review hardening.
+- The hardened request-bound decoder accepted a further 5,000-command state-aware exact stream
+  containing 3,532 commits, 1,468 rejections, and 807 trades without divergence.
+- Debug GCC, Release GCC, and Clang 19 ASan/UBSan each pass all 284 CTest cases; the sanitizer run
+  includes the fixed-seed stress suites and reports no sanitizer diagnostic.
+- Local Python 3.12 strict mypy, Ruff, and 109-test gates pass after final review hardening.
+- CI covers Python 3.11 through 3.14 and separately builds, inspects, installs, and imports a
+  normal wheel without development dependencies.
 
 This is correctness evidence, not a latency, throughput, memory, or production-readiness claim.
 
 ## Deferred
 
 Seeded Hypothesis strategies, fixed corpus persistence, minimized failure artifacts, shrinker
-demonstrations, long campaigns, and fuzzing remain later Phase 3 pull requests. Python bindings,
-batch APIs, replay, and packaging remain Phase 4.
+demonstrations, long campaigns, and fuzzing remain later Phase 3 pull requests. Native Python
+bindings, batch APIs, replay, and production-facing distribution packaging remain Phase 4; the
+current pure-Python package is only the internal correctness oracle.

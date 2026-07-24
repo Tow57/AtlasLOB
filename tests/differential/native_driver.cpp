@@ -573,9 +573,13 @@ void write_final(std::ostream& output, const MatchingEngine& engine,
   return interval != 0U && (command_index + 1U) % interval == 0U;
 }
 
-}  // namespace
+[[nodiscard]] int finish_terminal_record(std::ostream& output, int intended_exit_code) {
+  output.flush();
+  return output ? intended_exit_code : native_driver_engine_error_exit_code;
+}
 
-int run_native_driver(std::istream& input, std::ostream& output, OutputMode mode) {
+[[nodiscard]] int run_native_driver_impl(std::istream& input, std::ostream& output,
+                                         OutputMode mode) {
   std::uint64_t line_number = 0U;
   std::string line;
   std::optional<DriverConfig> config;
@@ -590,14 +594,14 @@ int run_native_driver(std::istream& input, std::ostream& output, OutputMode mode
       parsed = parse_header(line);
     } catch (const std::bad_alloc&) {
       write_harness_error(output, line_number, "resource_failure");
-      return native_driver_engine_error_exit_code;
+      return finish_terminal_record(output, native_driver_engine_error_exit_code);
     } catch (...) {
       write_harness_error(output, line_number, "adapter_exception");
-      return native_driver_engine_error_exit_code;
+      return finish_terminal_record(output, native_driver_engine_error_exit_code);
     }
     if (const auto* error = std::get_if<HarnessError>(&parsed)) {
       write_harness_error(output, line_number, error->code);
-      return output ? native_driver_input_error_exit_code : native_driver_engine_error_exit_code;
+      return finish_terminal_record(output, native_driver_input_error_exit_code);
     }
     config = std::get<DriverConfig>(parsed);
     break;
@@ -607,7 +611,7 @@ int run_native_driver(std::istream& input, std::ostream& output, OutputMode mode
     write_harness_error(
         output, line_number + 1U,
         input.bad() ? std::string_view{"input_read_failure"} : std::string_view{"missing_header"});
-    return output ? native_driver_input_error_exit_code : native_driver_engine_error_exit_code;
+    return finish_terminal_record(output, native_driver_input_error_exit_code);
   }
 
   std::unique_ptr<MatchingEngine> engine;
@@ -615,14 +619,14 @@ int run_native_driver(std::istream& input, std::ostream& output, OutputMode mode
     engine = std::make_unique<MatchingEngine>(config->instrument_id, config->engine);
   } catch (const std::invalid_argument&) {
     write_harness_error(output, line_number, "invalid_engine_config");
-    return output ? native_driver_input_error_exit_code : native_driver_engine_error_exit_code;
+    return finish_terminal_record(output, native_driver_input_error_exit_code);
   } catch (const std::exception&) {
     write_harness_error(output, line_number, "engine_construction_failure");
-    return native_driver_engine_error_exit_code;
+    return finish_terminal_record(output, native_driver_engine_error_exit_code);
   }
   write_config(output, *config, mode);
   if (!output) {
-    return native_driver_engine_error_exit_code;
+    return finish_terminal_record(output, native_driver_engine_error_exit_code);
   }
 
   std::uint64_t command_index = 0U;
@@ -637,14 +641,14 @@ int run_native_driver(std::istream& input, std::ostream& output, OutputMode mode
       parsed = parse_command(line);
     } catch (const std::bad_alloc&) {
       write_harness_error(output, line_number, "resource_failure");
-      return native_driver_engine_error_exit_code;
+      return finish_terminal_record(output, native_driver_engine_error_exit_code);
     } catch (...) {
       write_harness_error(output, line_number, "adapter_exception");
-      return native_driver_engine_error_exit_code;
+      return finish_terminal_record(output, native_driver_engine_error_exit_code);
     }
     if (const auto* error = std::get_if<HarnessError>(&parsed)) {
       write_harness_error(output, line_number, error->code);
-      return output ? native_driver_input_error_exit_code : native_driver_engine_error_exit_code;
+      return finish_terminal_record(output, native_driver_input_error_exit_code);
     }
     auto command = std::get<domain::Command>(std::move(parsed));
 
@@ -653,29 +657,43 @@ int run_native_driver(std::istream& input, std::ostream& output, OutputMode mode
       result.emplace(engine->execute(command));
     } catch (const std::bad_alloc&) {
       write_harness_error(output, line_number, "resource_failure");
-      return native_driver_engine_error_exit_code;
+      return finish_terminal_record(output, native_driver_engine_error_exit_code);
     } catch (...) {
       write_harness_error(output, line_number, "engine_exception");
-      return native_driver_engine_error_exit_code;
+      return finish_terminal_record(output, native_driver_engine_error_exit_code);
     }
     write_result(output, *engine, command, *result, command_index, line_number, mode,
                  is_checkpoint(command_index, config->snapshot_interval));
     if (!output) {
-      return native_driver_engine_error_exit_code;
+      return finish_terminal_record(output, native_driver_engine_error_exit_code);
     }
     ++command_index;
     if (!result->has_value()) {
       write_final(output, *engine, command_index);
-      return native_driver_engine_error_exit_code;
+      return finish_terminal_record(output, native_driver_engine_error_exit_code);
     }
   }
 
   if (input.bad() || (input.fail() && !input.eof())) {
     write_harness_error(output, line_number + 1U, "input_read_failure");
-    return output ? native_driver_input_error_exit_code : native_driver_engine_error_exit_code;
+    return finish_terminal_record(output, native_driver_input_error_exit_code);
   }
   write_final(output, *engine, command_index);
-  return output ? native_driver_success_exit_code : native_driver_engine_error_exit_code;
+  return finish_terminal_record(output, native_driver_success_exit_code);
+}
+
+}  // namespace
+
+int run_native_driver(std::istream& input, std::ostream& output, OutputMode mode) {
+  try {
+    return run_native_driver_impl(input, output, mode);
+  } catch (...) {
+    // Any exception that escapes a pre-record parsing or execution boundary may
+    // have occurred after a JSON record began. Do not append a second record to
+    // potentially partial output; report the process failure through the exit
+    // status only.
+    return native_driver_engine_error_exit_code;
+  }
 }
 
 }  // namespace atlaslob::differential

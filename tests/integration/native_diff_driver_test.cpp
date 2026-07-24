@@ -1,6 +1,7 @@
 #include <gtest/gtest.h>
 
 #include <cstddef>
+#include <new>
 #include <sstream>
 #include <streambuf>
 #include <string>
@@ -42,6 +43,48 @@ class RejectingOutputBuffer final : public std::streambuf {
   int_type overflow(int_type) override { return traits_type::eof(); }
 
   std::streamsize xsputn(const char_type*, std::streamsize) override { return 0; }
+};
+
+class RejectingSyncOutputBuffer final : public std::stringbuf {
+ protected:
+  int sync() override { return -1; }
+};
+
+class ResourceFailureOutputBuffer final : public std::streambuf {
+ public:
+  explicit ResourceFailureOutputBuffer(std::size_t limit) : limit_{limit} {}
+
+  [[nodiscard]] const std::string& str() const noexcept { return output_; }
+
+ protected:
+  std::streamsize xsputn(const char_type* text, std::streamsize count) override {
+    if (count < 0) {
+      return 0;
+    }
+    const auto requested = static_cast<std::size_t>(count);
+    const auto available = limit_ - output_.size();
+    const auto accepted = requested < available ? requested : available;
+    output_.append(text, accepted);
+    if (accepted != requested) {
+      throw std::bad_alloc{};
+    }
+    return count;
+  }
+
+  int_type overflow(int_type value) override {
+    if (traits_type::eq_int_type(value, traits_type::eof())) {
+      return traits_type::not_eof(value);
+    }
+    if (output_.size() == limit_) {
+      throw std::bad_alloc{};
+    }
+    output_.push_back(traits_type::to_char_type(value));
+    return value;
+  }
+
+ private:
+  std::size_t limit_;
+  std::string output_;
 };
 
 constexpr std::string_view all_event_stream{
@@ -199,6 +242,50 @@ TEST(NativeDiffDriver, OutputFailureStopsAsAProcessFailure) {
 
   EXPECT_EQ(run_native_driver(input, output), native_driver_engine_error_exit_code);
   EXPECT_FALSE(output);
+}
+
+TEST(NativeDiffDriver, ThrowingOutputFailureDoesNotEscapeTheProcessBoundary) {
+  std::istringstream input{"ATLAS_DIFF_V1 7 1000 1 16 0\n"};
+  RejectingOutputBuffer buffer;
+  std::ostream output{&buffer};
+  output.exceptions(std::ios::badbit | std::ios::failbit);
+
+  EXPECT_EQ(run_native_driver(input, output), native_driver_engine_error_exit_code);
+}
+
+TEST(NativeDiffDriver, ResourceFailureAfterRecordStartDoesNotAppendAnotherRecord) {
+  std::istringstream input{
+      "ATLAS_DIFF_V1 7 1000 1 16 0\n"
+      "N 11 1 7 1 1 1 1 100 5\n"};
+  ResourceFailureOutputBuffer buffer{260U};
+  std::ostream output{&buffer};
+  output.exceptions(std::ios::badbit | std::ios::failbit);
+
+  EXPECT_EQ(run_native_driver(input, output), native_driver_engine_error_exit_code);
+  EXPECT_NE(buffer.str().find(R"("kind":"config")"), std::string::npos);
+  EXPECT_NE(buffer.str().find(R"("kind":"result")"), std::string::npos);
+  EXPECT_EQ(buffer.str().find(R"("kind":"error")"), std::string::npos);
+  EXPECT_EQ(buffer.str().find(R"("kind":"final")"), std::string::npos);
+}
+
+TEST(NativeDiffDriver, TerminalFlushFailureCannotReportSuccess) {
+  std::istringstream input{"ATLAS_DIFF_V1 7 1000 1 16 0\n"};
+  RejectingSyncOutputBuffer buffer;
+  std::ostream output{&buffer};
+
+  EXPECT_EQ(run_native_driver(input, output), native_driver_engine_error_exit_code);
+  EXPECT_FALSE(output);
+  EXPECT_NE(buffer.str().find(R"("kind":"final")"), std::string::npos);
+}
+
+TEST(NativeDiffDriver, ThrowingTerminalFlushFailureDoesNotEscapeTheProcessBoundary) {
+  std::istringstream input{"ATLAS_DIFF_V1 7 1000 1 16 0\n"};
+  RejectingSyncOutputBuffer buffer;
+  std::ostream output{&buffer};
+  output.exceptions(std::ios::badbit | std::ios::failbit);
+
+  EXPECT_EQ(run_native_driver(input, output), native_driver_engine_error_exit_code);
+  EXPECT_NE(buffer.str().find(R"("kind":"final")"), std::string::npos);
 }
 
 }  // namespace

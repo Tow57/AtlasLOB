@@ -102,7 +102,7 @@ than being hidden inside the initial oracle change.
 - [ ] Multi-instrument routing and global sequencing.
 - [ ] Explicit append-only command log codec.
 - [ ] Inspector, replay, corruption, and truncated-tail tests.
-- [ ] pybind11 batch API and installable Python package.
+- [ ] pybind11 batch API and distributable native-backed Python package.
 - [ ] Optional canonical snapshot plus log-suffix recovery.
 
 ## Phase 5 - Measured portfolio release
