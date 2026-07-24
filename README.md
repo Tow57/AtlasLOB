@@ -15,7 +15,7 @@ latency claims.
 
 ## Current status
 
-**Phase 1 in progress: stable storage and FIFO price levels complete; book sides and index next**
+**Phase 1 in progress: ordered bid/ask sides complete; the global active-order index follows**
 
 | Capability | Status | Evidence |
 | --- | --- | --- |
@@ -28,6 +28,7 @@ latency claims.
 | Canonical domain fixture | Complete | `atlas_cli domain-fixture` integration tests |
 | Stable owning order-node storage | Complete | `atlas_core_tests`, ADR 0003 |
 | Checked intrusive FIFO price levels | Complete | Core mutation, invariant, and stress tests |
+| Ordered bid/ask sides and best-price access | Complete | `core.BookSide*` tests, ADR 0004 |
 | GCC and Clang CI | Passing on `main`; required per PR | `.github/workflows/ci.yml` |
 | ASan and UBSan CI | Passing on `main`; required per PR | `asan-ubsan` preset and CI job |
 | Pinned clang-format gate | Passing on `main`; required per PR | `format-check` CI job |
@@ -89,7 +90,8 @@ developed with MinGW GCC on Windows, but Linux CI is the support authority.
 See [the semantic contract](docs/semantics.md) and
 [ADR 0001](docs/decisions/0001-core-semantics.md) plus
 [ADR 0002](docs/decisions/0002-command-sequencing-and-identity.md) plus
-[ADR 0003](docs/decisions/0003-stable-order-storage-and-price-levels.md) for the current rules.
+[ADR 0003](docs/decisions/0003-stable-order-storage-and-price-levels.md) plus
+[ADR 0004](docs/decisions/0004-ordered-book-sides.md) for the current accepted rules.
 
 ## Roadmap
 

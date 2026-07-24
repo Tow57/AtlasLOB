@@ -17,11 +17,12 @@ satisfied.
 - [x] Complete command, event, and rejection vocabulary.
 - [x] Stable owning storage for order nodes.
 - [x] FIFO price levels with aggregate quantity and order count.
-- [ ] Ordered bid and ask sides with best-price access.
+- [x] Ordered bid and ask sides with best-price access.
 - [ ] Direct indexed cancellation without level scans.
 - [ ] Full structural invariants and sanitizer stress tests.
 
-Stable storage and one-price FIFO mutation are the stopping point of this slice. Book sides, the
+Ordered bid/ask sides now provide side-specific ordered ownership, stable level addresses,
+side-independent best-level access, guarded level preparation, and explicit side invariants. The
 global active-order index, executable cancellation, whole-book invariants, and matching remain
 deferred.
 

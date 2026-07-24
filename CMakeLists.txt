@@ -45,6 +45,8 @@ add_library(AtlasLOB::core ALIAS atlas_core)
 
 set(
   ATLAS_CORE_SOURCES
+  src/core/book_side.cpp
+  src/core/book_side.hpp
   src/core/checked_arithmetic.hpp
   src/core/order_node.hpp
   src/core/order_storage.cpp

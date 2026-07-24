@@ -7,6 +7,7 @@
 #include <cstddef>
 #include <initializer_list>
 
+#include "book_side.hpp"
 #include "order_storage.hpp"
 #include "price_level.hpp"
 
@@ -14,6 +15,18 @@ namespace atlaslob::core::test {
 
 class CoreAccess final {
  public:
+  template <domain::Side RestingSide>
+  [[nodiscard]] static bool insert_null_level(BookSide<RestingSide>& side,
+                                              domain::PriceTicks price) {
+    return side.levels_.try_emplace(price, nullptr).second;
+  }
+
+  template <domain::Side RestingSide>
+  [[nodiscard]] static bool erase_level_entry(BookSide<RestingSide>& side,
+                                              domain::PriceTicks price) noexcept {
+    return side.levels_.erase(price) == 1U;
+  }
+
   [[nodiscard]] static std::size_t storage_bucket_count(const HeapOrderStorage& storage) noexcept {
     return storage.orders_.bucket_count();
   }
@@ -44,6 +57,10 @@ class CoreAccess final {
 
   static void set_level_aggregate(PriceLevel& level, domain::Quantity aggregate) noexcept {
     level.aggregate_quantity_ = aggregate;
+  }
+
+  static void set_level_price(PriceLevel& level, domain::PriceTicks price) noexcept {
+    level.price_ = price;
   }
 
   static void set_level_count(PriceLevel& level, std::size_t count) noexcept {
