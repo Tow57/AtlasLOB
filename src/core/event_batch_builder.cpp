@@ -12,11 +12,12 @@ namespace {
   if (command_sequence.value() == 0U) {
     throw std::invalid_argument{"event batch builder command sequence must be nonzero"};
   }
-  if (instrument_id.value() == 0U) {
-    throw std::invalid_argument{"event batch builder instrument ID must be nonzero"};
-  }
   if (expected_event_count == 0U) {
     throw std::invalid_argument{"event batch builder requires at least one event slot"};
+  }
+  if (instrument_id.value() == 0U && expected_event_count != 1U) {
+    throw std::invalid_argument{
+        "zero-instrument event batch builder requires exactly one event slot"};
   }
   if (expected_event_count - 1U > std::numeric_limits<std::uint32_t>::max()) {
     throw std::length_error{"event batch builder event count exceeds index range"};
@@ -74,6 +75,11 @@ EventBatchBuilderError EventBatchBuilder::append_event(domain::Event event) noex
   }
   if (appended_event_count_ == events_.size()) {
     error_ = EventBatchBuilderError::capacity_overflow;
+    return error_;
+  }
+  if (instrument_id_.value() == 0U &&
+      (events_.size() != 1U || domain::event_type(event) != domain::EventType::rejected)) {
+    error_ = EventBatchBuilderError::invalid_zero_instrument_batch;
     return error_;
   }
 

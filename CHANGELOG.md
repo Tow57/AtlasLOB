@@ -31,8 +31,15 @@ The format is based on Keep a Changelog, and public releases will follow semanti
 - Immutable command-owned event batches with exact preallocated slots and contiguous headers.
 - Allocation-before-mutation preparation for a future GTC residual, including rollback and
   allocation-free publication at existing or detached price levels.
+- Atomic New execution for limit GTC, limit IOC, and market IOC with passive-price trades,
+  price-time sweeps, residual handling, and coalesced final top-of-book events.
+- Sequenced Cancel execution with current-residual cancellation events and direct terminal
+  removal.
+- All-preflight passive reduction batches and allocation-free final top-of-book projection.
+- Deterministic exception evidence for exact prepared-residual rollback after the command sequence
+  has been consumed.
 - ADR 0003 documenting node ownership, pointer invalidation, and internal error boundaries.
-- ADRs 0004 through 0006 documenting ordered-side, indexed-book, admission, planning, and
-  execution-preparation boundaries.
+- ADRs 0004 through 0007 documenting ordered-side, indexed-book, admission, planning,
+  execution-preparation, and atomic New/Cancel boundaries.
 - GCC, Clang, formatting, ASan, and UBSan workflow definitions.
 - Initial semantic contract, roadmap, and architecture decision record.

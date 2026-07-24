@@ -150,8 +150,6 @@ TEST(EventBatchBuilder, PreallocatesExactSlotsAndStampsEveryEventKind) {
 
 TEST(EventBatchBuilder, RejectsInvalidConstructionBeforeAnySlotsAreUsable) {
   EXPECT_THROW(static_cast<void>(EventBatchBuilder{{}, instrument_id, 1U}), std::invalid_argument);
-  EXPECT_THROW(static_cast<void>(EventBatchBuilder{command_sequence, {}, 1U}),
-               std::invalid_argument);
   EXPECT_THROW(static_cast<void>(EventBatchBuilder{command_sequence, instrument_id, 0U}),
                std::invalid_argument);
 
@@ -162,6 +160,32 @@ TEST(EventBatchBuilder, RejectsInvalidConstructionBeforeAnySlotsAreUsable) {
     EXPECT_THROW(static_cast<void>(EventBatchBuilder{command_sequence, instrument_id, too_many}),
                  std::length_error);
   }
+}
+
+TEST(EventBatchBuilder, PreservesZeroInstrumentOnlyForASingleRejectedCommand) {
+  EventBatchBuilder rejected{command_sequence, {}, 1U};
+  ASSERT_EQ(rejected.append(domain::RejectedEvent{
+                .command_type = domain::CommandType::new_order,
+                .reason = domain::RejectReason::invalid_instrument_id,
+                .order_id = domain::OrderId{8U},
+            }),
+            EventBatchBuilderError::none);
+  auto rejected_result = std::move(rejected).finish();
+  ASSERT_TRUE(rejected_result);
+  EXPECT_EQ(rejected_result.batch->instrument_id(), domain::InstrumentId{});
+  EXPECT_EQ(domain::event_type((*rejected_result.batch)[0]), domain::EventType::rejected);
+
+  EventBatchBuilder accepted{command_sequence, {}, 1U};
+  EXPECT_EQ(accepted.append(domain::AcceptedEvent{
+                .command_type = domain::CommandType::new_order,
+            }),
+            EventBatchBuilderError::invalid_zero_instrument_batch);
+  auto accepted_result = std::move(accepted).finish();
+  EXPECT_FALSE(accepted_result);
+  EXPECT_EQ(accepted_result.error, EventBatchBuilderError::invalid_zero_instrument_batch);
+
+  EXPECT_THROW(static_cast<void>(EventBatchBuilder{command_sequence, {}, 2U}),
+               std::invalid_argument);
 }
 
 TEST(EventBatchBuilder, ReportsUnderfillWithoutPublishingAPartialBatch) {
@@ -225,6 +249,8 @@ TEST(EventBatchBuilderErrorVocabulary, HasStableStringRepresentations) {
   EXPECT_EQ(to_string(EventBatchBuilderError::capacity_overflow), "capacity_overflow");
   EXPECT_EQ(to_string(EventBatchBuilderError::capacity_underfill), "capacity_underfill");
   EXPECT_EQ(to_string(EventBatchBuilderError::builder_finished), "builder_finished");
+  EXPECT_EQ(to_string(EventBatchBuilderError::invalid_zero_instrument_batch),
+            "invalid_zero_instrument_batch");
   EXPECT_EQ(to_string(static_cast<EventBatchBuilderError>(255U)), "unknown");
 }
 

@@ -15,9 +15,9 @@ latency claims.
 
 ## Current status
 
-**Phase 2 execution foundation complete locally on the current development branch: sequenced
-admission, read-only match planning, owned event batches, and allocation-before-mutation residual
-preparation are implemented; command execution and hosted PR gates remain**
+**Phase 2 New/Cancel matching execution complete locally on the current development branch:
+price-time matching, GTC/IOC/market outcomes, atomic cancellation, and normalized event batches
+are implemented; Replace, digests, and hosted PR gates remain**
 
 | Capability | Status | Evidence |
 | --- | --- | --- |
@@ -35,11 +35,13 @@ preparation are implemented; command execution and hosted PR gates remain**
 | Sequenced command admission and state validation | Complete locally; hosted gates pending | `core.CommandAdmission*`, ADR 0006 |
 | Read-only match planning and final-capacity projection | Complete locally; hosted gates pending | `core.MatchPlan*`, ADR 0006 |
 | Owned normalized event batches and prepared residuals | Complete locally; hosted gates pending | `core.EventBatchBuilder*`, `core.InstrumentBookPreparedRest*` |
+| Atomic limit/market New execution | Complete locally; hosted gates pending | `core.CommandExecutor*`, ADR 0007 |
+| Sequenced Cancel execution and normalized events | Complete locally; hosted gates pending | `core.CommandExecutorCancel*`, ADR 0007 |
 | GCC and Clang CI | Passing on `main`; required per PR | `.github/workflows/ci.yml` |
 | ASan and UBSan CI | Passing on `main`; required per PR | `asan-ubsan` preset and CI job |
 | Pinned clang-format gate | Passing on `main`; required per PR | `format-check` CI job |
 | Resting book structure | Complete locally; hosted gates pending | `stress.InstrumentBookStress*` |
-| Matching and normalized command execution | In progress | Phase 2 |
+| Matching and normalized command execution | New/Cancel complete; Replace pending | Phase 2 |
 | Replay, Python bindings, benchmarks, gateway | Planned | Later gated phases |
 
 ## Quick start
@@ -99,6 +101,8 @@ developed with MinGW GCC on Windows, but Linux CI is the support authority.
 - ADR 0006 assigns a sequence before domain admission, plans matches without mutation, owns each
   command's complete event batch, and allocates a resting residual before any planned fill is
   applied.
+- ADR 0007 rebinds plans in exact price-time order, prebuilds normalized events, and commits New or
+  Cancel through one all-preflight mutation boundary.
 
 See [the semantic contract](docs/semantics.md) and
 [ADR 0001](docs/decisions/0001-core-semantics.md) plus
@@ -106,7 +110,8 @@ See [the semantic contract](docs/semantics.md) and
 [ADR 0003](docs/decisions/0003-stable-order-storage-and-price-levels.md) plus
 [ADR 0004](docs/decisions/0004-ordered-book-sides.md) plus
 [ADR 0005](docs/decisions/0005-indexed-order-book-and-cancellation.md) plus
-[ADR 0006](docs/decisions/0006-command-admission-and-execution-preparation.md) for accepted rules.
+[ADR 0006](docs/decisions/0006-command-admission-and-execution-preparation.md) plus
+[ADR 0007](docs/decisions/0007-atomic-new-and-cancel-execution.md) for accepted rules.
 
 ## Roadmap
 

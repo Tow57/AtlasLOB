@@ -17,6 +17,7 @@ enum class EventBatchBuilderError : std::uint8_t {
   capacity_overflow = 1,
   capacity_underfill = 2,
   builder_finished = 3,
+  invalid_zero_instrument_batch = 4,
 };
 
 [[nodiscard]] constexpr std::string_view to_string(EventBatchBuilderError error) noexcept {
@@ -29,6 +30,8 @@ enum class EventBatchBuilderError : std::uint8_t {
       return "capacity_underfill";
     case EventBatchBuilderError::builder_finished:
       return "builder_finished";
+    case EventBatchBuilderError::invalid_zero_instrument_batch:
+      return "invalid_zero_instrument_batch";
   }
   return "unknown";
 }

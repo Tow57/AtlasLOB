@@ -103,6 +103,29 @@ TEST(EventBatch, RejectsEmptyOrInvalidBatchHeaders) {
                }}}),
                std::invalid_argument);
 
+  EventBatch zero_instrument_rejection{std::vector<Event>{RejectedEvent{
+      .header = batch_header(0U, Sequence{41U}, InstrumentId{}),
+      .command_type = CommandType::new_order,
+      .reason = RejectReason::invalid_instrument_id,
+      .order_id = OrderId{1U},
+  }}};
+  EXPECT_EQ(zero_instrument_rejection.instrument_id(), InstrumentId{});
+  EXPECT_EQ(event_type(zero_instrument_rejection[0]), EventType::rejected);
+
+  EXPECT_THROW(static_cast<void>(EventBatch{std::vector<Event>{
+                   RejectedEvent{
+                       .header = batch_header(0U, Sequence{41U}, InstrumentId{}),
+                       .command_type = CommandType::new_order,
+                       .reason = RejectReason::invalid_instrument_id,
+                   },
+                   RejectedEvent{
+                       .header = batch_header(1U, Sequence{41U}, InstrumentId{}),
+                       .command_type = CommandType::cancel,
+                       .reason = RejectReason::invalid_instrument_id,
+                   },
+               }}),
+               std::invalid_argument);
+
   EXPECT_THROW(
       static_cast<void>(EventBatch{std::vector<Event>{
           AcceptedEvent{.header = batch_header(0U), .command_type = CommandType::new_order},

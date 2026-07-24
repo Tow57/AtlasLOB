@@ -53,9 +53,13 @@ set(
   src/core/checked_arithmetic.hpp
   src/core/command_admission.cpp
   src/core/command_admission.hpp
+  src/core/command_executor.cpp
+  src/core/command_executor.hpp
   src/core/command_sequencer.hpp
   src/core/event_batch_builder.cpp
   src/core/event_batch_builder.hpp
+  src/core/execution_projection.cpp
+  src/core/execution_projection.hpp
   src/core/execution_policy.hpp
   src/core/instrument_book.cpp
   src/core/instrument_book.hpp

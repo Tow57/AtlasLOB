@@ -3,6 +3,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <memory>
+#include <span>
 #include <string_view>
 #include <variant>
 
@@ -121,6 +122,69 @@ struct RemoveOrderResult final {
   }
 
   [[nodiscard]] constexpr explicit operator bool() const noexcept { return has_value(); }
+};
+
+// A value-plus-pointer binding created by the execution layer after match
+// planning.  Every value is revalidated before InstrumentBook enters its
+// no-fail mutation boundary.
+struct PrevalidatedBookReduction final {
+  OrderNode* node{};
+  domain::OrderId order_id{};
+  domain::ClientId client_id{};
+  domain::Side side{};
+  domain::PriceTicks price{};
+  domain::Quantity remaining_before{};
+  domain::Quantity reduction{};
+  domain::Quantity remaining_after{};
+  domain::Sequence priority_sequence{};
+
+  bool operator==(const PrevalidatedBookReduction&) const = default;
+};
+
+enum class PrevalidatedBatchError : std::uint8_t {
+  none = 0,
+  book_invariant_violation = 1,
+  invalid_binding = 2,
+  duplicate_binding = 3,
+  invalid_reduction = 4,
+  preparation_mismatch = 5,
+  residual_would_cross = 6,
+  residual_append_failure = 7,
+};
+
+[[nodiscard]] constexpr std::string_view to_string(PrevalidatedBatchError error) noexcept {
+  switch (error) {
+    case PrevalidatedBatchError::none:
+      return "none";
+    case PrevalidatedBatchError::book_invariant_violation:
+      return "book_invariant_violation";
+    case PrevalidatedBatchError::invalid_binding:
+      return "invalid_binding";
+    case PrevalidatedBatchError::duplicate_binding:
+      return "duplicate_binding";
+    case PrevalidatedBatchError::invalid_reduction:
+      return "invalid_reduction";
+    case PrevalidatedBatchError::preparation_mismatch:
+      return "preparation_mismatch";
+    case PrevalidatedBatchError::residual_would_cross:
+      return "residual_would_cross";
+    case PrevalidatedBatchError::residual_append_failure:
+      return "residual_append_failure";
+  }
+  return "unknown";
+}
+
+struct PrevalidatedBatchStatus final {
+  PrevalidatedBatchError error{PrevalidatedBatchError::none};
+  std::size_t failing_reduction{};
+
+  [[nodiscard]] constexpr bool valid() const noexcept {
+    return error == PrevalidatedBatchError::none;
+  }
+
+  [[nodiscard]] constexpr explicit operator bool() const noexcept { return valid(); }
+
+  bool operator==(const PrevalidatedBatchStatus&) const = default;
 };
 
 enum class InstrumentBookInvariantError : std::uint8_t {
@@ -263,6 +327,9 @@ class InstrumentBook final {
            (pending_node_ != nullptr && !index_.empty() ? std::size_t{1U} : std::size_t{0U});
   }
   [[nodiscard]] bool empty() const noexcept { return active_order_count() == 0U; }
+  [[nodiscard]] bool has_pending_preparation() const noexcept {
+    return pending_node_ != nullptr || pending_level_ != nullptr;
+  }
 
   [[nodiscard]] PreparedRest prepare_rest(const OrderNodeSpec& spec);
   [[nodiscard]] RestOrderResult rest(const OrderNodeSpec& spec);
@@ -272,6 +339,14 @@ class InstrumentBook final {
                                                       domain::Quantity reduction) noexcept;
   [[nodiscard]] RemoveOrderResult remove(OrderNode& node) noexcept;
   [[nodiscard]] RemoveOrderResult cancel(domain::OrderId order_id) noexcept;
+
+  // Applies an already-planned set of passive reductions. All pointer/value
+  // bindings and an optional prepared residual are checked before mutation.
+  // Once mutation begins, component failures are impossible by contract and
+  // therefore terminate. No allocation occurs inside the mutation boundary.
+  [[nodiscard]] PrevalidatedBatchStatus apply_prevalidated_batch(
+      std::span<const PrevalidatedBookReduction> reductions,
+      PreparedRest* prepared_rest = nullptr) noexcept;
 
   [[nodiscard]] PriceLevel* best_bid() noexcept { return bids_.best_level(); }
   [[nodiscard]] const PriceLevel* best_bid() const noexcept { return bids_.best_level(); }
@@ -289,6 +364,8 @@ class InstrumentBook final {
 
   [[nodiscard]] InstrumentBookStatus preflight_node(const OrderNode& node) const noexcept;
   [[nodiscard]] RemoveOrderResult remove_prevalidated(OrderNode& node) noexcept;
+  void apply_reduction_no_check(const PrevalidatedBookReduction& reduction) noexcept;
+  [[nodiscard]] OrderNode* commit_prepared_no_check(PreparedRest& prepared_rest) noexcept;
   void enforce_postconditions() const noexcept;
   void drain() noexcept;
 

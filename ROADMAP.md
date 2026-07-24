@@ -37,10 +37,10 @@ index removal, empty-level cleanup, and storage destruction.
 - [x] Assign authoritative sequences and apply deterministic state validation.
 - [x] Produce immutable read-only match plans and checked final-capacity projections.
 - [x] Preallocate owned event batches and staged GTC residuals before mutation.
-- [ ] Rest non-marketable limit GTC orders.
-- [ ] Match one level with full and partial fills.
-- [ ] Sweep multiple orders and price levels.
-- [ ] Support market IOC and limit IOC residual behavior.
+- [x] Rest non-marketable limit GTC orders.
+- [x] Match one level with full and partial fills.
+- [x] Sweep multiple orders and price levels.
+- [x] Support market IOC and limit IOC residual behavior.
 - [ ] Replace with cancel-and-new priority reset.
 - [ ] Produce normalized event and state digests.
 
@@ -50,6 +50,13 @@ before mutation, and active-order capacity is checked against the planned final 
 Debug and Release suites pass 157/157 tests, the production-only build and pinned formatting gate
 pass, and an independent review found no blocker or high-severity issue. Hosted compiler and
 sanitizer evidence remains a pull-request gate.
+
+ADR 0007 applies that boundary to executable New and Cancel commands. Plans are rebound in exact
+best-price/FIFO order; final capacity and top of book are projected before mutation; events and a
+possible residual are fully allocated first; and all passive reductions are preflighted as one
+batch. End-to-end tests cover both sides, multi-level sweeps, exact and residual IOC/market
+outcomes, final-state capacity, cancellation after partial execution, active-ID reuse, and
+exception rollback after residual preparation.
 
 ## Phase 3 - Independent correctness evidence
 

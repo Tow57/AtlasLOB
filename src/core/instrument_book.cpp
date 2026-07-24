@@ -2,6 +2,7 @@
 
 #include <exception>
 #include <limits>
+#include <optional>
 #include <stdexcept>
 #include <utility>
 
@@ -103,6 +104,39 @@ namespace {
                        PriceLevelError::order_count_overflow);
   }
   return {};
+}
+
+[[nodiscard]] const PrevalidatedBookReduction* find_reduction(
+    const OrderNode& node, std::span<const PrevalidatedBookReduction> reductions) noexcept {
+  for (const auto& reduction : reductions) {
+    if (reduction.node == &node) {
+      return &reduction;
+    }
+  }
+  return nullptr;
+}
+
+[[nodiscard]] bool survives_batch(const PriceLevel& level,
+                                  std::span<const PrevalidatedBookReduction> reductions) noexcept {
+  for (const auto* node = level.head(); node != nullptr; node = node->next()) {
+    const auto* const reduction = find_reduction(*node, reductions);
+    if (reduction == nullptr || reduction->remaining_after.value() != 0U) {
+      return true;
+    }
+  }
+  return false;
+}
+
+template <domain::Side RestingSide>
+[[nodiscard]] std::optional<domain::PriceTicks> projected_best_price(
+    const BookSide<RestingSide>& side,
+    std::span<const PrevalidatedBookReduction> reductions) noexcept {
+  for (const PriceLevel& level : side) {
+    if (survives_batch(level, reductions)) {
+      return level.price();
+    }
+  }
+  return std::nullopt;
 }
 
 }  // namespace
@@ -531,6 +565,221 @@ RemoveOrderResult InstrumentBook::cancel(domain::OrderId order_id) noexcept {
     };
   }
   return remove_prevalidated(*node);
+}
+
+PrevalidatedBatchStatus InstrumentBook::apply_prevalidated_batch(
+    std::span<const PrevalidatedBookReduction> reductions, PreparedRest* prepared_rest) noexcept {
+  const auto fail = [](PrevalidatedBatchError error, std::size_t failing_reduction = 0U) noexcept {
+    return PrevalidatedBatchStatus{
+        .error = error,
+        .failing_reduction = failing_reduction,
+    };
+  };
+
+  if (!validate_invariants()) {
+    return fail(PrevalidatedBatchError::book_invariant_violation);
+  }
+
+  if (prepared_rest == nullptr) {
+    if (pending_node_ != nullptr || pending_level_ != nullptr) {
+      return fail(PrevalidatedBatchError::preparation_mismatch);
+    }
+  } else {
+    if (!prepared_rest->has_value() || prepared_rest->owner_ != this ||
+        prepared_rest->node_ != pending_node_ ||
+        prepared_rest->staging_level_.get() != pending_level_) {
+      return fail(PrevalidatedBatchError::preparation_mismatch);
+    }
+
+    const auto staging_result = prepared_rest->staging_level_->validate_invariants();
+    if (!staging_result || prepared_rest->staging_level_->order_count() != 1U ||
+        prepared_rest->staging_level_->head() != prepared_rest->node_ ||
+        prepared_rest->staging_level_->tail() != prepared_rest->node_ ||
+        prepared_rest->node_->price_level() != prepared_rest->staging_level_.get()) {
+      return fail(PrevalidatedBatchError::preparation_mismatch);
+    }
+  }
+
+  for (std::size_t index = 0U; index < reductions.size(); ++index) {
+    const auto& reduction = reductions[index];
+    const auto* const node = reduction.node;
+    if (node == nullptr || node == pending_node_ || storage_.find(reduction.order_id) != node ||
+        index_.find(reduction.order_id) != node || find(reduction.order_id) != node) {
+      return fail(PrevalidatedBatchError::invalid_binding, index);
+    }
+    if (node->order_id() != reduction.order_id || node->client_id() != reduction.client_id ||
+        node->instrument_id() != instrument_id_ || node->side() != reduction.side ||
+        node->price() != reduction.price ||
+        node->remaining_quantity() != reduction.remaining_before ||
+        node->priority_sequence() != reduction.priority_sequence || !node->is_linked() ||
+        node->price_level() == nullptr) {
+      return fail(PrevalidatedBatchError::invalid_binding, index);
+    }
+
+    const auto* const expected_level = reduction.side == domain::Side::buy
+                                           ? bids_.find_level(reduction.price)
+                                           : asks_.find_level(reduction.price);
+    if (!domain::is_valid(reduction.side) || expected_level == nullptr ||
+        expected_level != node->price_level()) {
+      return fail(PrevalidatedBatchError::invalid_binding, index);
+    }
+
+    if (reduction.reduction.value() == 0U || reduction.reduction > reduction.remaining_before ||
+        reduction.remaining_after.value() !=
+            reduction.remaining_before.value() - reduction.reduction.value()) {
+      return fail(PrevalidatedBatchError::invalid_reduction, index);
+    }
+
+    for (std::size_t previous = 0U; previous < index; ++previous) {
+      if (reductions[previous].node == node ||
+          reductions[previous].order_id == reduction.order_id) {
+        return fail(PrevalidatedBatchError::duplicate_binding, index);
+      }
+    }
+
+    if (prepared_rest != nullptr && reduction.side == prepared_rest->node_->side()) {
+      return fail(PrevalidatedBatchError::preparation_mismatch, index);
+    }
+  }
+
+  if (prepared_rest != nullptr) {
+    const auto* const residual = prepared_rest->node_;
+    PriceLevel* target = nullptr;
+    if (residual->side() == domain::Side::buy) {
+      if (!std::holds_alternative<BidBookSide::DetachedLevel>(prepared_rest->prepared_level_)) {
+        return fail(PrevalidatedBatchError::preparation_mismatch);
+      }
+      auto& detached = std::get<BidBookSide::DetachedLevel>(prepared_rest->prepared_level_);
+      if (!detached) {
+        return fail(PrevalidatedBatchError::preparation_mismatch);
+      }
+      target = bids_.find_level(residual->price());
+      if (target == nullptr) {
+        target = detached.level();
+      }
+      const auto projected_ask = projected_best_price(asks_, reductions);
+      if (projected_ask.has_value() && residual->price() >= projected_ask.value()) {
+        return fail(PrevalidatedBatchError::residual_would_cross);
+      }
+    } else if (residual->side() == domain::Side::sell) {
+      if (!std::holds_alternative<AskBookSide::DetachedLevel>(prepared_rest->prepared_level_)) {
+        return fail(PrevalidatedBatchError::preparation_mismatch);
+      }
+      auto& detached = std::get<AskBookSide::DetachedLevel>(prepared_rest->prepared_level_);
+      if (!detached) {
+        return fail(PrevalidatedBatchError::preparation_mismatch);
+      }
+      target = asks_.find_level(residual->price());
+      if (target == nullptr) {
+        target = detached.level();
+      }
+      const auto projected_bid = projected_best_price(bids_, reductions);
+      if (projected_bid.has_value() && residual->price() <= projected_bid.value()) {
+        return fail(PrevalidatedBatchError::residual_would_cross);
+      }
+    } else {
+      return fail(PrevalidatedBatchError::preparation_mismatch);
+    }
+
+    if (target == nullptr || !validate_append_target(*target, *residual)) {
+      return fail(PrevalidatedBatchError::residual_append_failure);
+    }
+  }
+
+  // No recoverable error may cross this boundary. Every component operation
+  // below was made infallible by the complete preflight above.
+  for (const auto& reduction : reductions) {
+    apply_reduction_no_check(reduction);
+  }
+  if (prepared_rest != nullptr) {
+    static_cast<void>(commit_prepared_no_check(*prepared_rest));
+  }
+
+  // This is deliberately the only whole-book invariant check after mutation.
+  if (!validate_invariants()) {
+    std::terminate();
+  }
+  return {};
+}
+
+void InstrumentBook::apply_reduction_no_check(const PrevalidatedBookReduction& reduction) noexcept {
+  auto& node = *reduction.node;
+  auto* const level = reduction.side == domain::Side::buy ? bids_.find_level(reduction.price)
+                                                          : asks_.find_level(reduction.price);
+  if (level == nullptr) {
+    std::terminate();
+  }
+
+  if (reduction.remaining_after.value() != 0U) {
+    if (level->reduce_remaining(node, reduction.reduction) != PriceLevelError::none) {
+      std::terminate();
+    }
+    return;
+  }
+
+  if (level->erase(node) != PriceLevelError::none) {
+    std::terminate();
+  }
+  if (index_.erase(node) != ActiveOrderIndexError::none) {
+    std::terminate();
+  }
+  if (level->empty()) {
+    const auto side_error =
+        reduction.side == domain::Side::buy ? bids_.erase_level(*level) : asks_.erase_level(*level);
+    if (side_error != BookSideError::none) {
+      std::terminate();
+    }
+  }
+  if (storage_.destroy(node) != StorageError::none) {
+    std::terminate();
+  }
+}
+
+OrderNode* InstrumentBook::commit_prepared_no_check(PreparedRest& prepared_rest) noexcept {
+  auto* const node = prepared_rest.node_;
+  if (node == nullptr || prepared_rest.staging_level_ == nullptr) {
+    std::terminate();
+  }
+
+  PriceLevel* target = nullptr;
+  if (node->side() == domain::Side::buy) {
+    auto& detached = std::get<BidBookSide::DetachedLevel>(prepared_rest.prepared_level_);
+    target = bids_.find_level(node->price());
+    if (target == nullptr) {
+      target = detached.level();
+    }
+  } else if (node->side() == domain::Side::sell) {
+    auto& detached = std::get<AskBookSide::DetachedLevel>(prepared_rest.prepared_level_);
+    target = asks_.find_level(node->price());
+    if (target == nullptr) {
+      target = detached.level();
+    }
+  } else {
+    std::terminate();
+  }
+
+  if (target == nullptr || prepared_rest.staging_level_->erase(*node) != PriceLevelError::none ||
+      target->append(*node) != PriceLevelError::none) {
+    std::terminate();
+  }
+
+  BookSideError publish_error = BookSideError::none;
+  if (node->side() == domain::Side::buy && bids_.find_level(node->price()) == nullptr) {
+    publish_error = std::get<BidBookSide::DetachedLevel>(prepared_rest.prepared_level_).publish();
+  } else if (node->side() == domain::Side::sell && asks_.find_level(node->price()) == nullptr) {
+    publish_error = std::get<AskBookSide::DetachedLevel>(prepared_rest.prepared_level_).publish();
+  }
+  if (publish_error != BookSideError::none) {
+    std::terminate();
+  }
+
+  prepared_rest.owner_ = nullptr;
+  prepared_rest.node_ = nullptr;
+  prepared_rest.staging_level_.reset();
+  prepared_rest.prepared_level_ = std::monostate{};
+  pending_node_ = nullptr;
+  pending_level_ = nullptr;
+  return node;
 }
 
 InstrumentBookInvariantResult InstrumentBook::validate_invariants() const noexcept {

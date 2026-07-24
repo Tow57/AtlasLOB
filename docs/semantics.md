@@ -1,8 +1,9 @@
-# Semantic Contract v0.4
+# Semantic Contract v0.5
 
 This document defines AtlasLOB's implemented command vocabulary, pure validation behavior, stable
 order-node ownership, ordered resting book, direct cancellation, command admission, value-only
-event batches, and read-only matching plans. Matching execution remains the next layer.
+event batches, read-only matching plans, and atomic New/Cancel execution. Replace execution remains
+the next layer.
 
 ## Values and enumerations
 
@@ -63,6 +64,11 @@ stateful decisions represented in the rejection vocabulary but not produced by t
   reports sticky internal exhaustion and never rolls over or becomes a client rejection.
 - Order IDs are unique while active and may be reused only after the previous order is terminal.
 - Future cancel/replace handling requires both client and instrument identity to match.
+- A default `CommandExecutor` starts at sequence one and therefore requires an empty book. Resumed
+  books require an explicit first sequence greater than every active priority; persisted replay
+  state must additionally preserve the authoritative next sequence across terminal orders.
+- Executor attachment is rejected while a prepared residual transaction is outstanding, because
+  pending nodes are intentionally hidden from visible active counts and priority traversal.
 
 ## Normalized events
 
@@ -88,10 +94,11 @@ residual canceled by cancel, replacement, IOC completion, or market exhaustion. 
 not emit passive `Done` events.
 
 `EventBatch` owns one command's immutable, nonempty event vector. Its events share one nonzero
-sequence and instrument and have contiguous zero-based indices. The exact-slot builder allocates
-the complete vector before mutation and overwrites caller-supplied headers with authoritative
-values. Event production begins with matching execution; this release implements the safe batch
-container and builder without claiming command execution.
+sequence and one submitted instrument value and have contiguous zero-based indices. Instrument
+zero is preserved only for the canonical one-event rejection of a structurally invalid command;
+zero-instrument accepted or multi-event batches are invalid. The exact-slot builder allocates the
+complete vector before mutation and overwrites caller-supplied headers with authoritative values.
+New and Cancel execution now publish these batches.
 
 ## Stable order storage and FIFO price levels
 
@@ -157,6 +164,9 @@ allocation. Preparation guards must not outlive their owning book.
 - Domain rejections describe expected invalid command values or state.
 - Storage/price-level errors describe internal component precondition or arithmetic failures and
   are never converted into public `RejectReason` values.
+- A projected final active-order limit or projected resting-level aggregate overflow produces
+  `capacity_exceeded` before mutation. Allocation failure itself is never translated to that
+  rejection.
 - Allocation failure is a propagated resource failure, not ordinary command rejection.
 - Invariant failures indicate implementation bugs and are not converted into client rejections.
 
@@ -171,5 +181,31 @@ allocation. Preparation guards must not outlive their owning book.
 
 The read-only planner implements these traversal and residual rules for supported new orders. It
 performs a counting pass before allocating a value-only trade plan, records expected passive
-identity/price/quantity/priority, and leaves the book unchanged. Execution must revalidate the plan
-before its first mutation and remains outside this release slice.
+identity/price/quantity/priority, and leaves the book unchanged.
+
+New execution then:
+
+1. Assigns a sequence and emits a singleton rejection for expected pure/state failure.
+2. Plans, checks the final active count, and re-walks the opposite book in exact price/FIFO order
+   to bind every planned value to its current node.
+3. Projects the final top of book and prepares any GTC residual.
+4. Allocates and finishes the complete event batch.
+5. Revalidates the complete reduction set, applies partial/full passive reductions, and publishes
+   the prepared residual through a no-allocation mutation boundary.
+6. Verifies the actual final top against the projection.
+
+The New event order is accepted, zero or more trades, rested or done, then at most one final
+book-changed event. IOC and market residuals produce done events and never rested or canceled
+events. Passive fills are represented by each trade's zero resting remainder and do not produce
+passive done events.
+
+Cancel execution re-finds the owned active node, projects its full removal, prebuilds accepted,
+canceled, and done events plus an optional final book-changed event, then applies one exact
+prevalidated terminal reduction. The canceled and done quantities both equal the order's current
+remaining quantity.
+
+All returnable execution failures occur before the first semantic write. Once batch mutation
+starts, a component failure is an impossible internal contract violation and terminates rather
+than returning a partially changed book. A test-only failpoint proves that an exception after GTC
+residual preparation consumes the sequence but rolls storage, index, staging FIFO, and visible
+top of book back exactly.
