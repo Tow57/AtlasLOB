@@ -114,6 +114,7 @@ class CommandExecutor final {
 
   [[nodiscard]] CommandExecutionResult execute(const domain::NewOrder& order);
   [[nodiscard]] CommandExecutionResult execute(const domain::CancelOrder& order);
+  [[nodiscard]] CommandExecutionResult execute(const domain::ReplaceOrder& order);
 
   [[nodiscard]] const ExecutionPolicy& policy() const noexcept { return admission_.policy(); }
   [[nodiscard]] domain::Sequence next_sequence() const noexcept {

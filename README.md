@@ -15,9 +15,9 @@ latency claims.
 
 ## Current status
 
-**Phase 2 New/Cancel matching execution complete locally on the current development branch:
-price-time matching, GTC/IOC/market outcomes, atomic cancellation, and normalized event batches
-are implemented; Replace, digests, and hosted PR gates remain**
+**Phase 2 matching commands complete locally on the current development branch: price-time New,
+Cancel, and atomic Replace execution plus a public single-instrument engine are implemented;
+canonical digests, command-stream stress, and hosted PR gates remain**
 
 | Capability | Status | Evidence |
 | --- | --- | --- |
@@ -37,11 +37,13 @@ are implemented; Replace, digests, and hosted PR gates remain**
 | Owned normalized event batches and prepared residuals | Complete locally; hosted gates pending | `core.EventBatchBuilder*`, `core.InstrumentBookPreparedRest*` |
 | Atomic limit/market New execution | Complete locally; hosted gates pending | `core.CommandExecutor*`, ADR 0007 |
 | Sequenced Cancel execution and normalized events | Complete locally; hosted gates pending | `core.CommandExecutorCancel*`, ADR 0007 |
+| Atomic Replace with priority reset | Complete locally; hosted gates pending | `core.CommandExecutorReplace*`, ADR 0008 |
+| Public single-instrument matching facade | Complete locally; hosted gates pending | `atlaslob::MatchingEngine`, ADR 0008 |
 | GCC and Clang CI | Passing on `main`; required per PR | `.github/workflows/ci.yml` |
 | ASan and UBSan CI | Passing on `main`; required per PR | `asan-ubsan` preset and CI job |
 | Pinned clang-format gate | Passing on `main`; required per PR | `format-check` CI job |
 | Resting book structure | Complete locally; hosted gates pending | `stress.InstrumentBookStress*` |
-| Matching and normalized command execution | New/Cancel complete; Replace pending | Phase 2 |
+| Matching and normalized command execution | New/Cancel/Replace complete; digests pending | Phase 2 |
 | Replay, Python bindings, benchmarks, gateway | Planned | Later gated phases |
 
 ## Quick start
@@ -103,6 +105,8 @@ developed with MinGW GCC on Windows, but Linux CI is the support authority.
   applied.
 - ADR 0007 rebinds plans in exact price-time order, prebuilds normalized events, and commits New or
   Cancel through one all-preflight mutation boundary.
+- ADR 0008 treats Replace as one atomic old-removal/passive-fill/residual transaction and keeps
+  mutable implementation details behind the public `MatchingEngine` PImpl.
 
 See [the semantic contract](docs/semantics.md) and
 [ADR 0001](docs/decisions/0001-core-semantics.md) plus
@@ -111,7 +115,8 @@ See [the semantic contract](docs/semantics.md) and
 [ADR 0004](docs/decisions/0004-ordered-book-sides.md) plus
 [ADR 0005](docs/decisions/0005-indexed-order-book-and-cancellation.md) plus
 [ADR 0006](docs/decisions/0006-command-admission-and-execution-preparation.md) plus
-[ADR 0007](docs/decisions/0007-atomic-new-and-cancel-execution.md) for accepted rules.
+[ADR 0007](docs/decisions/0007-atomic-new-and-cancel-execution.md) plus
+[ADR 0008](docs/decisions/0008-atomic-replace-and-public-engine.md) for accepted rules.
 
 ## Roadmap
 

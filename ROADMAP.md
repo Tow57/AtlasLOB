@@ -41,7 +41,7 @@ index removal, empty-level cleanup, and storage destruction.
 - [x] Match one level with full and partial fills.
 - [x] Sweep multiple orders and price levels.
 - [x] Support market IOC and limit IOC residual behavior.
-- [ ] Replace with cancel-and-new priority reset.
+- [x] Replace with cancel-and-new priority reset.
 - [ ] Produce normalized event and state digests.
 
 ADR 0006 fixes the Phase 2 failure boundary: admission consumes the command sequence, match plans
@@ -57,6 +57,13 @@ possible residual are fully allocated first; and all passive reductions are pref
 batch. End-to-end tests cover both sides, multi-level sweeps, exact and residual IOC/market
 outcomes, final-state capacity, cancellation after partial execution, active-ID reuse, and
 exception rollback after residual preparation.
+
+ADR 0008 completes command execution with atomic Replace. The old order, passive fills, and
+optional new residual commit through one replacement-specific all-preflight boundary; same-price
+replacement receives new FIFO priority and credits the old aggregate before checked addition.
+The public `MatchingEngine` PImpl now exposes value-only commands, events, top of book, active
+count, and sequence state without exposing mutable book internals. Canonical digests and
+command-stream model stress remain the final Phase 2 evidence slice.
 
 ## Phase 3 - Independent correctness evidence
 

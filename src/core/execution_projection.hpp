@@ -20,6 +20,7 @@ enum class ExecutionProjectionError : std::uint8_t {
   aggregate_overflow = 7,
   aggregate_underflow = 8,
   crossed_book = 9,
+  replacement_order_mismatch = 10,
 };
 
 [[nodiscard]] constexpr std::string_view to_string(ExecutionProjectionError error) noexcept {
@@ -44,6 +45,8 @@ enum class ExecutionProjectionError : std::uint8_t {
       return "aggregate_underflow";
     case ExecutionProjectionError::crossed_book:
       return "crossed_book";
+    case ExecutionProjectionError::replacement_order_mismatch:
+      return "replacement_order_mismatch";
   }
   return "unknown";
 }
@@ -100,5 +103,14 @@ struct ExecutionProjectionResult final {
 // order. The value-only target is revalidated against the book before use.
 [[nodiscard]] ExecutionProjectionResult project_cancel_top_of_book(
     const InstrumentBook& book, const CancelProjectionTarget& target) noexcept;
+
+// Projects the visible top of book for an atomic replace. The old value-only
+// target is removed from its side, passive fills from `plan` are applied to the
+// opposite side, and an optional GTC residual is then added with new priority.
+// The helper performs no allocation and never mutates `book`.
+[[nodiscard]] ExecutionProjectionResult project_replace_top_of_book(
+    const InstrumentBook& book, const CancelProjectionTarget& old_target,
+    const domain::NewOrder& replacement_order, const MatchPlan& plan,
+    std::optional<ProjectedRestingResidual> resting_residual = std::nullopt) noexcept;
 
 }  // namespace atlaslob::core

@@ -32,6 +32,8 @@ enum class InstrumentBookError : std::uint8_t {
   book_invariant_violation = 15,
   would_cross_book = 16,
   preparation_in_progress = 17,
+  replacement_transaction_required = 18,
+  replacement_mismatch = 19,
 };
 
 [[nodiscard]] constexpr std::string_view to_string(InstrumentBookError error) noexcept {
@@ -72,6 +74,10 @@ enum class InstrumentBookError : std::uint8_t {
       return "would_cross_book";
     case InstrumentBookError::preparation_in_progress:
       return "preparation_in_progress";
+    case InstrumentBookError::replacement_transaction_required:
+      return "replacement_transaction_required";
+    case InstrumentBookError::replacement_mismatch:
+      return "replacement_mismatch";
   }
   return "unknown";
 }
@@ -302,7 +308,7 @@ class InstrumentBook final {
 
     explicit PreparedRest(InstrumentBookStatus status) noexcept : status_{status} {}
     PreparedRest(InstrumentBook& owner, OrderNode& node, std::unique_ptr<PriceLevel> staging_level,
-                 PreparedLevel prepared_level) noexcept;
+                 PreparedLevel prepared_level, OrderNode* replacement_old) noexcept;
 
     void rollback() noexcept;
 
@@ -310,6 +316,10 @@ class InstrumentBook final {
     OrderNode* node_{};
     std::unique_ptr<PriceLevel> staging_level_;
     PreparedLevel prepared_level_;
+    // Non-null only for prepare_replace_rest(). The pointer remains owned by
+    // the visible book until apply_prevalidated_replace_batch() crosses its
+    // no-fail mutation boundary.
+    OrderNode* replacement_old_{};
     InstrumentBookStatus status_{};
   };
 
@@ -332,6 +342,7 @@ class InstrumentBook final {
   }
 
   [[nodiscard]] PreparedRest prepare_rest(const OrderNodeSpec& spec);
+  [[nodiscard]] PreparedRest prepare_replace_rest(const OrderNodeSpec& spec, OrderNode& old_order);
   [[nodiscard]] RestOrderResult rest(const OrderNodeSpec& spec);
   [[nodiscard]] OrderNode* find(domain::OrderId order_id) noexcept;
   [[nodiscard]] const OrderNode* find(domain::OrderId order_id) const noexcept;
@@ -346,6 +357,15 @@ class InstrumentBook final {
   // therefore terminate. No allocation occurs inside the mutation boundary.
   [[nodiscard]] PrevalidatedBatchStatus apply_prevalidated_batch(
       std::span<const PrevalidatedBookReduction> reductions,
+      PreparedRest* prepared_rest = nullptr) noexcept;
+
+  // Atomically removes the exact old order, applies the replacement's passive
+  // fills, and publishes its optional prepared residual. The old binding is a
+  // mandatory full reduction. All checks happen before the allocation-free,
+  // no-fail mutation boundary.
+  [[nodiscard]] PrevalidatedBatchStatus apply_prevalidated_replace_batch(
+      const PrevalidatedBookReduction& old_reduction,
+      std::span<const PrevalidatedBookReduction> passive_reductions,
       PreparedRest* prepared_rest = nullptr) noexcept;
 
   [[nodiscard]] PriceLevel* best_bid() noexcept { return bids_.best_level(); }
@@ -363,6 +383,8 @@ class InstrumentBook final {
 #endif
 
   [[nodiscard]] InstrumentBookStatus preflight_node(const OrderNode& node) const noexcept;
+  [[nodiscard]] PreparedRest prepare_rest_impl(const OrderNodeSpec& spec,
+                                               OrderNode* replacement_old);
   [[nodiscard]] RemoveOrderResult remove_prevalidated(OrderNode& node) noexcept;
   void apply_reduction_no_check(const PrevalidatedBookReduction& reduction) noexcept;
   [[nodiscard]] OrderNode* commit_prepared_no_check(PreparedRest& prepared_rest) noexcept;

@@ -63,6 +63,7 @@ set(
   src/core/execution_policy.hpp
   src/core/instrument_book.cpp
   src/core/instrument_book.hpp
+  src/core/matching_engine.cpp
   src/core/match_plan.cpp
   src/core/match_plan.hpp
   src/core/order_node.hpp
@@ -76,7 +77,14 @@ set(
 )
 
 function(atlas_configure_core target_name)
-  target_sources(${target_name} PRIVATE ${ATLAS_CORE_SOURCES})
+  target_sources(
+    ${target_name}
+    PRIVATE ${ATLAS_CORE_SOURCES}
+    PUBLIC
+      FILE_SET HEADERS
+      BASE_DIRS include
+      FILES include/atlaslob/matching_engine.hpp
+  )
   target_link_libraries(${target_name} PUBLIC AtlasLOB::domain)
   target_include_directories(${target_name} PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src/core")
   target_compile_features(${target_name} PUBLIC cxx_std_20)

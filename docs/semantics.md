@@ -1,9 +1,9 @@
-# Semantic Contract v0.5
+# Semantic Contract v0.6
 
 This document defines AtlasLOB's implemented command vocabulary, pure validation behavior, stable
 order-node ownership, ordered resting book, direct cancellation, command admission, value-only
-event batches, read-only matching plans, and atomic New/Cancel execution. Replace execution remains
-the next layer.
+event batches, read-only matching plans, atomic New/Cancel/Replace execution, and public
+single-instrument engine boundary.
 
 ## Values and enumerations
 
@@ -24,9 +24,9 @@ codes retain their original numeric values and new reasons are appended.
 - `ReplaceOrder` carries the client, old and new order IDs, instrument, new limit price, and new
   quantity.
 
-Replace is reserved as an atomic cancel-and-new GTC limit operation. It retains the original side,
-client, and instrument; requires a distinct inactive new ID; may trade immediately; and receives a
-new priority sequence.
+Replace is implemented as an atomic cancel-and-new GTC limit operation. It retains the original
+side, client, and instrument; requires a distinct inactive new ID; may trade immediately; and
+receives a new priority sequence.
 
 ## Supported new-order combinations
 
@@ -98,7 +98,7 @@ sequence and one submitted instrument value and have contiguous zero-based indic
 zero is preserved only for the canonical one-event rejection of a structurally invalid command;
 zero-instrument accepted or multi-event batches are invalid. The exact-slot builder allocates the
 complete vector before mutation and overwrites caller-supplied headers with authoritative values.
-New and Cancel execution now publish these batches.
+New, Cancel, and Replace execution publish these batches.
 
 ## Stable order storage and FIFO price levels
 
@@ -204,8 +204,42 @@ canceled, and done events plus an optional final book-changed event, then applie
 prevalidated terminal reduction. The canceled and done quantities both equal the order's current
 remaining quantity.
 
+Replace execution:
+
+1. Assigns one sequence and validates the exact old owner/instrument plus a distinct inactive new
+   ID.
+2. Synthesizes a limit GTC order retaining the old client, instrument, and side, then plans and
+   binds its passive trades.
+3. Projects final capacity after removing the old order and terminal passives, and projects final
+   top of book after the complete replacement.
+4. Prepares an optional hidden residual with the command sequence as new priority. Same-level
+   checks subtract the old quantity before checked addition and place the new node at the FIFO
+   tail.
+5. Prebuilds accepted, replaced, canceled-old, done-old, trade, new rested/done, and optional
+   book-changed events.
+6. Atomically removes the old order, applies passive reductions, and publishes the residual
+   through a replacement-specific no-allocation boundary.
+
+The old order remains visible until the replacement commits. A replacement preparation cannot be
+published through the ordinary New path, and abandonment removes only hidden staging state. A
+fully filled replacement leaves both old and new IDs terminal.
+
 All returnable execution failures occur before the first semantic write. Once batch mutation
 starts, a component failure is an impossible internal contract violation and terminates rather
 than returning a partially changed book. A test-only failpoint proves that an exception after GTC
 residual preparation consumes the sequence but rolls storage, index, staging FIFO, and visible
 top of book back exactly.
+
+## Public matching engine
+
+`atlaslob::MatchingEngine` is the supported single-instrument, single-writer facade. It owns the
+private book and executor behind a PImpl and accepts typed New, Cancel, and Replace values or the
+`Command` variant. Its move-only result contains either one complete normalized `EventBatch` or a
+coarse internal `EngineError`; a normal domain rejection is a valid one-event batch, not an engine
+failure.
+
+Read-only observers expose the configured instrument, active order count, emptiness, current best
+bid/ask price and aggregate, next sequence, and sticky sequence exhaustion. Node addresses,
+levels, indexes, planners, prepared transactions, and detailed internal component errors are not
+public API. Allocation failure propagates. Multi-instrument routing and durable replay remain
+future infrastructure.

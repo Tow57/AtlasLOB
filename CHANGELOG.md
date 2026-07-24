@@ -38,8 +38,14 @@ The format is based on Keep a Changelog, and public releases will follow semanti
 - All-preflight passive reduction batches and allocation-free final top-of-book projection.
 - Deterministic exception evidence for exact prepared-residual rollback after the command sequence
   has been consumed.
+- Atomic Replace execution with retained identity/side, new FIFO priority, passive-price matching,
+  final-state capacity checks, and one normalized event batch.
+- Replacement-specific residual preparation and all-preflight mutation with same-level aggregate
+  relief and exact exception rollback.
+- Public non-owning-detail-free `MatchingEngine` PImpl with typed/variant command execution,
+  policy configuration, sequence observers, active count, and top-of-book values.
 - ADR 0003 documenting node ownership, pointer invalidation, and internal error boundaries.
-- ADRs 0004 through 0007 documenting ordered-side, indexed-book, admission, planning,
-  execution-preparation, and atomic New/Cancel boundaries.
+- ADRs 0004 through 0008 documenting ordered-side, indexed-book, admission, planning,
+  execution-preparation, atomic New/Cancel, atomic Replace, and public API boundaries.
 - GCC, Clang, formatting, ASan, and UBSan workflow definitions.
 - Initial semantic contract, roadmap, and architecture decision record.

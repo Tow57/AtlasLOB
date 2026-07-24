@@ -159,6 +159,16 @@ template <domain::Side RestingSide>
          result - 1U <= static_cast<std::size_t>(std::numeric_limits<std::uint32_t>::max());
 }
 
+[[nodiscard]] bool checked_replace_event_count(std::size_t trade_count, bool book_changed,
+                                               std::size_t& result) noexcept {
+  const std::size_t fixed_count = 5U + (book_changed ? 1U : 0U);
+  if (trade_count > std::numeric_limits<std::size_t>::max() - fixed_count) {
+    return false;
+  }
+  result = trade_count + fixed_count;
+  return result - 1U <= static_cast<std::size_t>(std::numeric_limits<std::uint32_t>::max());
+}
+
 [[nodiscard]] CommandExecutionResult finish_events(EventBatchBuilder& builder) noexcept {
   auto finished = std::move(builder).finish();
   if (!finished) {
@@ -277,6 +287,77 @@ template <domain::Side RestingSide>
   }
 
   if (book_changed) {
+    error = builder.append(domain::BookChangedEvent{
+        .best_bid = projected_top.best_bid,
+        .best_ask = projected_top.best_ask,
+    });
+  }
+  return error;
+}
+
+[[nodiscard]] EventBatchBuilderError append_replace_events(
+    EventBatchBuilder& builder, const domain::ReplaceOrder& command,
+    const domain::NewOrder& replacement, domain::Quantity old_remaining, const MatchPlan& plan,
+    const TopOfBookSnapshot& projected_top, bool book_changed) noexcept {
+  auto error = builder.append(domain::AcceptedEvent{
+      .command_type = domain::CommandType::replace,
+  });
+  if (error == EventBatchBuilderError::none) {
+    error = builder.append(domain::ReplacedEvent{
+        .old_order_id = command.old_order_id,
+        .new_order_id = command.new_order_id,
+    });
+  }
+  if (error == EventBatchBuilderError::none) {
+    error = builder.append(domain::CanceledEvent{
+        .order_id = command.old_order_id,
+        .canceled_quantity = old_remaining,
+    });
+  }
+  if (error == EventBatchBuilderError::none) {
+    error = builder.append(domain::DoneEvent{
+        .order_id = command.old_order_id,
+        .reason = domain::DoneReason::replaced,
+        .remaining_quantity = old_remaining,
+    });
+  }
+  if (error != EventBatchBuilderError::none) {
+    return error;
+  }
+
+  for (const auto& trade : plan.trades) {
+    error = builder.append(domain::TradeEvent{
+        .aggressor_order_id = replacement.order_id,
+        .resting_order_id = trade.resting_order_id,
+        .aggressor_client_id = replacement.client_id,
+        .resting_client_id = trade.resting_client_id,
+        .aggressor_side = replacement.side,
+        .execution_price = trade.execution_price,
+        .execution_quantity = trade.execution_quantity,
+        .aggressor_remaining = trade.aggressor_remaining,
+        .resting_remaining = trade.resting_remaining_after,
+    });
+    if (error != EventBatchBuilderError::none) {
+      return error;
+    }
+  }
+
+  if (plan.residual_disposition == ResidualDisposition::rest) {
+    error = builder.append(domain::RestedEvent{
+        .order_id = replacement.order_id,
+        .client_id = replacement.client_id,
+        .side = replacement.side,
+        .price = replacement.limit_price.value(),
+        .remaining_quantity = plan.residual_quantity,
+    });
+  } else {
+    error = builder.append(domain::DoneEvent{
+        .order_id = replacement.order_id,
+        .reason = done_reason(plan.residual_disposition),
+        .remaining_quantity = plan.residual_quantity,
+    });
+  }
+  if (error == EventBatchBuilderError::none && book_changed) {
     error = builder.append(domain::BookChangedEvent{
         .best_bid = projected_top.best_bid,
         .best_ask = projected_top.best_ask,
@@ -516,6 +597,158 @@ CommandExecutionResult CommandExecutor::execute(const domain::CancelOrder& order
     return result;
   }
   if (snapshot_top_of_book(book_) != projected.snapshot) {
+    std::terminate();
+  }
+  return result;
+}
+
+CommandExecutionResult CommandExecutor::execute(const domain::ReplaceOrder& order) {
+  const auto admission = admission_.admit(order);
+  if (!admission.processed()) {
+    return admission_failure(admission);
+  }
+  if (admission.rejected()) {
+    return make_rejection(admission.command_sequence, order.instrument_id,
+                          domain::CommandType::replace, admission.reject_reason,
+                          admission.relevant_order_id);
+  }
+
+  const auto before = snapshot_top_of_book(book_);
+  auto* const old_node = book_.find(order.old_order_id);
+  if (old_node == nullptr || old_node->client_id() != order.client_id ||
+      old_node->instrument_id() != order.instrument_id ||
+      book_.find(order.new_order_id) != nullptr) {
+    auto result = fail(CommandExecutionError::passive_binding_failure);
+    result.passive_binding_error = PassiveBindingError::book_mismatch;
+    return result;
+  }
+
+  const domain::NewOrder replacement{
+      .client_id = old_node->client_id(),
+      .order_id = order.new_order_id,
+      .instrument_id = old_node->instrument_id(),
+      .side = old_node->side(),
+      .order_type = domain::OrderType::limit,
+      .time_in_force = domain::TimeInForce::gtc,
+      .limit_price = order.new_limit_price,
+      .quantity = order.new_quantity,
+  };
+  const auto old_target = make_cancel_projection_target(*old_node);
+  const auto old_remaining = old_node->remaining_quantity();
+  const PrevalidatedBookReduction old_reduction{
+      .node = old_node,
+      .order_id = old_node->order_id(),
+      .client_id = old_node->client_id(),
+      .side = old_node->side(),
+      .price = old_node->price(),
+      .remaining_before = old_remaining,
+      .reduction = old_remaining,
+      .remaining_after = {},
+      .priority_sequence = old_node->priority_sequence(),
+  };
+
+  auto planned = plan_matches(replacement, book_);
+  if (!planned) {
+    auto result = fail(CommandExecutionError::match_plan_failure);
+    result.match_plan_error = planned.error;
+    return result;
+  }
+
+  const auto active_projection =
+      project_active_order_count(planned.plan, book_.active_order_count(), true);
+  if (!active_projection) {
+    auto result = fail(CommandExecutionError::active_order_projection_failure);
+    result.active_order_projection_error = active_projection.error;
+    return result;
+  }
+  if (!active_projection.within_limit(admission_.policy().max_active_orders)) {
+    return make_rejection(admission.command_sequence, order.instrument_id,
+                          domain::CommandType::replace, domain::RejectReason::capacity_exceeded,
+                          order.new_order_id);
+  }
+
+  auto bound = bind_match_plan(replacement, planned.plan, book_);
+  if (!bound.has_value()) {
+    auto result = fail(CommandExecutionError::passive_binding_failure);
+    result.passive_binding_error = bound.error;
+    return result;
+  }
+
+  const auto residual = projected_residual(replacement, planned.plan);
+  const auto top_projection =
+      project_replace_top_of_book(book_, old_target, replacement, planned.plan, residual);
+  if (!top_projection) {
+    if (top_projection.error == ExecutionProjectionError::aggregate_overflow) {
+      return make_rejection(admission.command_sequence, order.instrument_id,
+                            domain::CommandType::replace, domain::RejectReason::capacity_exceeded,
+                            order.new_order_id);
+    }
+    auto result = fail(CommandExecutionError::top_of_book_projection_failure);
+    result.top_of_book_projection_error = top_projection.error;
+    return result;
+  }
+
+  std::optional<InstrumentBook::PreparedRest> prepared_rest;
+  if (residual.has_value()) {
+    auto prepared = book_.prepare_replace_rest(
+        {
+            .order_id = replacement.order_id,
+            .client_id = replacement.client_id,
+            .instrument_id = replacement.instrument_id,
+            .side = replacement.side,
+            .price = residual->price,
+            .remaining_quantity = residual->quantity,
+            .priority_sequence = admission.command_sequence,
+        },
+        *old_node);
+    if (!prepared) {
+      if (is_representational_capacity(prepared.status())) {
+        return make_rejection(admission.command_sequence, order.instrument_id,
+                              domain::CommandType::replace, domain::RejectReason::capacity_exceeded,
+                              order.new_order_id);
+      }
+      auto result = fail(CommandExecutionError::residual_preparation_failure);
+      result.residual_preparation_status = prepared.status();
+      return result;
+    }
+    prepared_rest.emplace(std::move(prepared));
+  }
+
+#if defined(ATLAS_ENABLE_TEST_ACCESS) && ATLAS_ENABLE_TEST_ACCESS
+  if (before_event_allocation_hook_ != nullptr) {
+    before_event_allocation_hook_();
+  }
+#endif
+
+  const bool book_changed = before != top_projection.snapshot;
+  std::size_t event_count{};
+  if (!checked_replace_event_count(planned.plan.trades.size(), book_changed, event_count)) {
+    return fail(CommandExecutionError::event_count_overflow);
+  }
+
+  EventBatchBuilder builder{admission.command_sequence, order.instrument_id, event_count};
+  const auto append_error =
+      append_replace_events(builder, order, replacement, old_remaining, planned.plan,
+                            top_projection.snapshot, book_changed);
+  if (append_error != EventBatchBuilderError::none) {
+    auto result = fail(CommandExecutionError::event_batch_failure);
+    result.event_batch_error = append_error;
+    return result;
+  }
+  auto result = finish_events(builder);
+  if (!result) {
+    return result;
+  }
+
+  const auto mutation_status = book_.apply_prevalidated_replace_batch(
+      old_reduction, bound.reductions, prepared_rest.has_value() ? &*prepared_rest : nullptr);
+  if (!mutation_status) {
+    result.batch.reset();
+    result.error = CommandExecutionError::book_mutation_failure;
+    result.book_mutation_error = mutation_status.error;
+    return result;
+  }
+  if (snapshot_top_of_book(book_) != top_projection.snapshot) {
     std::terminate();
   }
   return result;

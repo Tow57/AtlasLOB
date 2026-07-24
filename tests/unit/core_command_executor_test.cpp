@@ -136,6 +136,19 @@ domain::CancelOrder cancel_order(std::uint64_t order_id, std::uint32_t client_id
   };
 }
 
+domain::ReplaceOrder replace_order(std::uint64_t old_order_id, std::uint64_t new_order_id,
+                                   std::uint32_t client_id, std::int64_t price,
+                                   std::uint64_t quantity) {
+  return {
+      .client_id = domain::ClientId{client_id},
+      .old_order_id = domain::OrderId{old_order_id},
+      .new_order_id = domain::OrderId{new_order_id},
+      .instrument_id = instrument_id,
+      .new_limit_price = domain::PriceTicks{price},
+      .new_quantity = domain::Quantity{quantity},
+  };
+}
+
 domain::EventHeader header(std::uint64_t sequence, std::uint32_t index,
                            domain::InstrumentId event_instrument = instrument_id) {
   return {
@@ -597,6 +610,215 @@ TEST(CommandExecutorCancel, CancelsCurrentResidualWithAcceptedCanceledDoneAndBoo
   ASSERT_NE(book.find(domain::OrderId{2U}), nullptr);
   EXPECT_EQ(book.best_ask()->head(), book.find(domain::OrderId{2U}));
   EXPECT_EQ(book.active_order_count(), 1U);
+  expect_valid(book);
+}
+
+TEST(CommandExecutorReplace, SamePriceReplacementResetsPriorityWithoutChangingTop) {
+  InstrumentBook book{instrument_id};
+  ASSERT_TRUE(book.rest(resting_order(1U, 10U, domain::Side::buy, 100, 5U, 1U)));
+  ASSERT_TRUE(book.rest(resting_order(2U, 20U, domain::Side::buy, 100, 7U, 2U)));
+  CommandExecutor executor{book, ExecutionPolicy{}, domain::Sequence{10U}};
+
+  const auto result = executor.execute(replace_order(1U, 3U, 10U, 100, 5U));
+
+  ASSERT_TRUE(result);
+  expect_batch_shape(
+      *result.batch, 10U, instrument_id,
+      {domain::EventType::accepted, domain::EventType::replaced, domain::EventType::canceled,
+       domain::EventType::done, domain::EventType::rested});
+  EXPECT_EQ(std::get<domain::AcceptedEvent>((*result.batch)[0]),
+            (domain::AcceptedEvent{
+                .header = header(10U, 0U),
+                .command_type = domain::CommandType::replace,
+            }));
+  EXPECT_EQ(std::get<domain::ReplacedEvent>((*result.batch)[1]),
+            (domain::ReplacedEvent{
+                .header = header(10U, 1U),
+                .old_order_id = domain::OrderId{1U},
+                .new_order_id = domain::OrderId{3U},
+            }));
+  EXPECT_EQ(std::get<domain::CanceledEvent>((*result.batch)[2]),
+            (domain::CanceledEvent{
+                .header = header(10U, 2U),
+                .order_id = domain::OrderId{1U},
+                .canceled_quantity = domain::Quantity{5U},
+            }));
+  EXPECT_EQ(std::get<domain::DoneEvent>((*result.batch)[3]),
+            (domain::DoneEvent{
+                .header = header(10U, 3U),
+                .order_id = domain::OrderId{1U},
+                .reason = domain::DoneReason::replaced,
+                .remaining_quantity = domain::Quantity{5U},
+            }));
+  EXPECT_EQ(std::get<domain::RestedEvent>((*result.batch)[4]),
+            (domain::RestedEvent{
+                .header = header(10U, 4U),
+                .order_id = domain::OrderId{3U},
+                .client_id = domain::ClientId{10U},
+                .side = domain::Side::buy,
+                .price = domain::PriceTicks{100},
+                .remaining_quantity = domain::Quantity{5U},
+            }));
+
+  EXPECT_EQ(book.find(domain::OrderId{1U}), nullptr);
+  ASSERT_NE(book.find(domain::OrderId{2U}), nullptr);
+  ASSERT_NE(book.find(domain::OrderId{3U}), nullptr);
+  EXPECT_EQ(book.best_bid()->head(), book.find(domain::OrderId{2U}));
+  EXPECT_EQ(book.best_bid()->tail(), book.find(domain::OrderId{3U}));
+  EXPECT_EQ(book.best_bid()->aggregate_quantity(), domain::Quantity{12U});
+  EXPECT_EQ(book.find(domain::OrderId{3U})->priority_sequence(), domain::Sequence{10U});
+  EXPECT_EQ(book.active_order_count(), 2U);
+  expect_valid(book);
+}
+
+TEST(CommandExecutorReplace, WalksOppositeFifoThenRestsResidualAndPublishesFinalTop) {
+  InstrumentBook book{instrument_id};
+  ASSERT_TRUE(book.rest(resting_order(1U, 10U, domain::Side::buy, 99, 4U, 1U)));
+  ASSERT_TRUE(book.rest(resting_order(2U, 20U, domain::Side::sell, 101, 2U, 2U)));
+  ASSERT_TRUE(book.rest(resting_order(3U, 30U, domain::Side::sell, 102, 3U, 3U)));
+  ASSERT_TRUE(book.rest(resting_order(4U, 40U, domain::Side::sell, 103, 4U, 4U)));
+  CommandExecutor executor{book, ExecutionPolicy{}, domain::Sequence{10U}};
+
+  const auto result = executor.execute(replace_order(1U, 100U, 10U, 102, 8U));
+
+  ASSERT_TRUE(result);
+  expect_batch_shape(
+      *result.batch, 10U, instrument_id,
+      {domain::EventType::accepted, domain::EventType::replaced, domain::EventType::canceled,
+       domain::EventType::done, domain::EventType::trade, domain::EventType::trade,
+       domain::EventType::rested, domain::EventType::book_changed});
+  EXPECT_EQ(std::get<domain::CanceledEvent>((*result.batch)[2]).canceled_quantity,
+            domain::Quantity{4U});
+  EXPECT_EQ(std::get<domain::DoneEvent>((*result.batch)[3]).reason, domain::DoneReason::replaced);
+  EXPECT_EQ(std::get<domain::TradeEvent>((*result.batch)[4]),
+            (domain::TradeEvent{
+                .header = header(10U, 4U),
+                .aggressor_order_id = domain::OrderId{100U},
+                .resting_order_id = domain::OrderId{2U},
+                .aggressor_client_id = domain::ClientId{10U},
+                .resting_client_id = domain::ClientId{20U},
+                .aggressor_side = domain::Side::buy,
+                .execution_price = domain::PriceTicks{101},
+                .execution_quantity = domain::Quantity{2U},
+                .aggressor_remaining = domain::Quantity{6U},
+                .resting_remaining = domain::Quantity{},
+            }));
+  EXPECT_EQ(std::get<domain::TradeEvent>((*result.batch)[5]),
+            (domain::TradeEvent{
+                .header = header(10U, 5U),
+                .aggressor_order_id = domain::OrderId{100U},
+                .resting_order_id = domain::OrderId{3U},
+                .aggressor_client_id = domain::ClientId{10U},
+                .resting_client_id = domain::ClientId{30U},
+                .aggressor_side = domain::Side::buy,
+                .execution_price = domain::PriceTicks{102},
+                .execution_quantity = domain::Quantity{3U},
+                .aggressor_remaining = domain::Quantity{3U},
+                .resting_remaining = domain::Quantity{},
+            }));
+  EXPECT_EQ(std::get<domain::RestedEvent>((*result.batch)[6]).remaining_quantity,
+            domain::Quantity{3U});
+  EXPECT_EQ(std::get<domain::BookChangedEvent>((*result.batch)[7]),
+            (domain::BookChangedEvent{
+                .header = header(10U, 7U),
+                .best_bid = top_level(102, 3U),
+                .best_ask = top_level(103, 4U),
+            }));
+
+  EXPECT_EQ(book.find(domain::OrderId{1U}), nullptr);
+  EXPECT_EQ(book.find(domain::OrderId{2U}), nullptr);
+  EXPECT_EQ(book.find(domain::OrderId{3U}), nullptr);
+  ASSERT_NE(book.find(domain::OrderId{4U}), nullptr);
+  ASSERT_NE(book.find(domain::OrderId{100U}), nullptr);
+  EXPECT_EQ(book.find(domain::OrderId{100U})->priority_sequence(), domain::Sequence{10U});
+  EXPECT_EQ(book.active_order_count(), 2U);
+  expect_valid(book);
+}
+
+TEST(CommandExecutorReplace, FullFillMakesBothIdsTerminalAndAllowsReuse) {
+  InstrumentBook book{instrument_id};
+  ASSERT_TRUE(book.rest(resting_order(1U, 10U, domain::Side::buy, 99, 4U, 1U)));
+  ASSERT_TRUE(book.rest(resting_order(2U, 20U, domain::Side::sell, 100, 5U, 2U)));
+  CommandExecutor executor{book, ExecutionPolicy{}, domain::Sequence{10U}};
+
+  const auto replaced = executor.execute(replace_order(1U, 3U, 10U, 100, 5U));
+
+  ASSERT_TRUE(replaced);
+  expect_batch_shape(
+      *replaced.batch, 10U, instrument_id,
+      {domain::EventType::accepted, domain::EventType::replaced, domain::EventType::canceled,
+       domain::EventType::done, domain::EventType::trade, domain::EventType::done,
+       domain::EventType::book_changed});
+  EXPECT_EQ(std::get<domain::DoneEvent>((*replaced.batch)[5]),
+            (domain::DoneEvent{
+                .header = header(10U, 5U),
+                .order_id = domain::OrderId{3U},
+                .reason = domain::DoneReason::filled,
+                .remaining_quantity = domain::Quantity{},
+            }));
+  EXPECT_TRUE(book.empty());
+
+  const auto reused_old = executor.execute(limit_order(1U, 10U, domain::Side::buy, 99, 2U));
+  ASSERT_TRUE(reused_old);
+  const auto reused_new = executor.execute(limit_order(3U, 10U, domain::Side::sell, 101, 2U));
+  ASSERT_TRUE(reused_new);
+  EXPECT_EQ(book.active_order_count(), 2U);
+  expect_valid(book);
+}
+
+TEST(CommandExecutorReplace, RejectsStateFailuresWithoutMutationAndConsumesSequences) {
+  InstrumentBook book{instrument_id};
+  ASSERT_TRUE(book.rest(resting_order(1U, 10U, domain::Side::buy, 100, 5U, 1U)));
+  ASSERT_TRUE(book.rest(resting_order(2U, 20U, domain::Side::sell, 105, 7U, 2U)));
+  CommandExecutor executor{book, ExecutionPolicy{}, domain::Sequence{10U}};
+  const auto original = capture(book);
+
+  const auto unknown = executor.execute(replace_order(99U, 3U, 10U, 101, 5U));
+  expect_rejection(unknown, 10U, instrument_id, domain::CommandType::replace,
+                   domain::RejectReason::unknown_order_id, domain::OrderId{99U});
+  EXPECT_EQ(capture(book), original);
+
+  const auto wrong_owner = executor.execute(replace_order(1U, 3U, 99U, 101, 5U));
+  expect_rejection(wrong_owner, 11U, instrument_id, domain::CommandType::replace,
+                   domain::RejectReason::ownership_mismatch, domain::OrderId{1U});
+  EXPECT_EQ(capture(book), original);
+
+  const auto active_new_id = executor.execute(replace_order(1U, 2U, 10U, 101, 5U));
+  expect_rejection(active_new_id, 12U, instrument_id, domain::CommandType::replace,
+                   domain::RejectReason::invalid_replacement_id, domain::OrderId{2U});
+  EXPECT_EQ(capture(book), original);
+
+  const auto same_id = executor.execute(replace_order(1U, 1U, 10U, 101, 5U));
+  expect_rejection(same_id, 13U, instrument_id, domain::CommandType::replace,
+                   domain::RejectReason::invalid_replacement_id, domain::OrderId{1U});
+  EXPECT_EQ(capture(book), original);
+  EXPECT_EQ(executor.next_sequence(), domain::Sequence{14U});
+  expect_valid(book);
+}
+
+TEST(CommandExecutorReplace, NetNeutralResidualFitsAtCapacityAndUsesOldAggregateRelief) {
+  InstrumentBook book{instrument_id};
+  constexpr auto maximum = std::numeric_limits<std::uint64_t>::max();
+  ASSERT_TRUE(book.rest(resting_order(1U, 10U, domain::Side::buy, 100, 10U, 1U)));
+  ASSERT_TRUE(book.rest(resting_order(2U, 20U, domain::Side::buy, 100, maximum - 10U, 2U)));
+  const ExecutionPolicy policy{
+      .max_order_quantity = domain::Quantity{maximum},
+      .tick_increment = domain::PriceTicks{1},
+      .max_active_orders = 2U,
+  };
+  CommandExecutor executor{book, policy, domain::Sequence{10U}};
+
+  const auto result = executor.execute(replace_order(1U, 3U, 10U, 100, 10U));
+
+  ASSERT_TRUE(result);
+  expect_batch_shape(
+      *result.batch, 10U, instrument_id,
+      {domain::EventType::accepted, domain::EventType::replaced, domain::EventType::canceled,
+       domain::EventType::done, domain::EventType::rested});
+  EXPECT_EQ(book.best_bid()->aggregate_quantity(), domain::Quantity{maximum});
+  EXPECT_EQ(book.best_bid()->head(), book.find(domain::OrderId{2U}));
+  EXPECT_EQ(book.best_bid()->tail(), book.find(domain::OrderId{3U}));
+  EXPECT_EQ(book.active_order_count(), 2U);
   expect_valid(book);
 }
 

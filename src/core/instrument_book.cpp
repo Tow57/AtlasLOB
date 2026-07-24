@@ -106,6 +106,49 @@ namespace {
   return {};
 }
 
+[[nodiscard]] InstrumentBookStatus validate_replace_append_target(
+    const PriceLevel& target, const OrderNode& residual, const OrderNode& old_order) noexcept {
+  if (target.price() != old_order.price() || old_order.price_level() != &target) {
+    return validate_append_target(target, residual);
+  }
+  if (!target.validate_invariants()) {
+    return make_status(InstrumentBookError::book_invariant_violation);
+  }
+  if (target.price() != residual.price()) {
+    return make_status(InstrumentBookError::price_level_failure, StorageError::none,
+                       ActiveOrderIndexError::none, BookSideError::none,
+                       PriceLevelError::price_mismatch);
+  }
+  if (target.order_count() == 0U ||
+      target.aggregate_quantity().value() < old_order.remaining_quantity().value()) {
+    return make_status(InstrumentBookError::book_invariant_violation);
+  }
+
+  const auto projected_count = target.order_count() - 1U;
+  const auto projected_aggregate =
+      target.aggregate_quantity().value() - old_order.remaining_quantity().value();
+  const auto* const projected_tail =
+      target.tail() == &old_order ? old_order.previous() : target.tail();
+  if (projected_tail != nullptr &&
+      residual.priority_sequence() <= projected_tail->priority_sequence()) {
+    return make_status(InstrumentBookError::price_level_failure, StorageError::none,
+                       ActiveOrderIndexError::none, BookSideError::none,
+                       PriceLevelError::nonmonotonic_priority);
+  }
+  if (projected_aggregate >
+      std::numeric_limits<std::uint64_t>::max() - residual.remaining_quantity().value()) {
+    return make_status(InstrumentBookError::price_level_failure, StorageError::none,
+                       ActiveOrderIndexError::none, BookSideError::none,
+                       PriceLevelError::aggregate_overflow);
+  }
+  if (projected_count == std::numeric_limits<std::size_t>::max()) {
+    return make_status(InstrumentBookError::price_level_failure, StorageError::none,
+                       ActiveOrderIndexError::none, BookSideError::none,
+                       PriceLevelError::order_count_overflow);
+  }
+  return {};
+}
+
 [[nodiscard]] const PrevalidatedBookReduction* find_reduction(
     const OrderNode& node, std::span<const PrevalidatedBookReduction> reductions) noexcept {
   for (const auto& reduction : reductions) {
@@ -151,17 +194,20 @@ InstrumentBook::~InstrumentBook() noexcept { drain(); }
 
 InstrumentBook::PreparedRest::PreparedRest(InstrumentBook& owner, OrderNode& node,
                                            std::unique_ptr<PriceLevel> staging_level,
-                                           PreparedLevel prepared_level) noexcept
+                                           PreparedLevel prepared_level,
+                                           OrderNode* replacement_old) noexcept
     : owner_{&owner},
       node_{&node},
       staging_level_{std::move(staging_level)},
-      prepared_level_{std::move(prepared_level)} {}
+      prepared_level_{std::move(prepared_level)},
+      replacement_old_{replacement_old} {}
 
 InstrumentBook::PreparedRest::PreparedRest(PreparedRest&& other) noexcept
     : owner_{std::exchange(other.owner_, nullptr)},
       node_{std::exchange(other.node_, nullptr)},
       staging_level_{std::move(other.staging_level_)},
       prepared_level_{std::move(other.prepared_level_)},
+      replacement_old_{std::exchange(other.replacement_old_, nullptr)},
       status_{std::exchange(other.status_, {})} {}
 
 InstrumentBook::PreparedRest& InstrumentBook::PreparedRest::operator=(
@@ -172,6 +218,7 @@ InstrumentBook::PreparedRest& InstrumentBook::PreparedRest::operator=(
     node_ = std::exchange(other.node_, nullptr);
     staging_level_ = std::move(other.staging_level_);
     prepared_level_ = std::move(other.prepared_level_);
+    replacement_old_ = std::exchange(other.replacement_old_, nullptr);
     status_ = std::exchange(other.status_, {});
   }
   return *this;
@@ -207,6 +254,7 @@ void InstrumentBook::PreparedRest::rollback() noexcept {
   node_ = nullptr;
   staging_level_.reset();
   prepared_level_ = std::monostate{};
+  replacement_old_ = nullptr;
   owner->enforce_postconditions();
 }
 
@@ -216,6 +264,12 @@ RestOrderResult InstrumentBook::PreparedRest::commit() noexcept {
         .node = nullptr,
         .status =
             status_.valid() ? make_status(InstrumentBookError::book_invariant_violation) : status_,
+    };
+  }
+  if (replacement_old_ != nullptr) {
+    return {
+        .node = nullptr,
+        .status = make_status(InstrumentBookError::replacement_transaction_required),
     };
   }
   if (owner_->pending_node_ != node_ || owner_->pending_level_ != staging_level_.get() ||
@@ -291,11 +345,22 @@ RestOrderResult InstrumentBook::PreparedRest::commit() noexcept {
   node_ = nullptr;
   staging_level_.reset();
   prepared_level_ = std::monostate{};
+  replacement_old_ = nullptr;
   owner->enforce_postconditions();
   return {.node = committed_node, .status = {}};
 }
 
 InstrumentBook::PreparedRest InstrumentBook::prepare_rest(const OrderNodeSpec& spec) {
+  return prepare_rest_impl(spec, nullptr);
+}
+
+InstrumentBook::PreparedRest InstrumentBook::prepare_replace_rest(const OrderNodeSpec& spec,
+                                                                  OrderNode& old_order) {
+  return prepare_rest_impl(spec, &old_order);
+}
+
+InstrumentBook::PreparedRest InstrumentBook::prepare_rest_impl(const OrderNodeSpec& spec,
+                                                               OrderNode* replacement_old) {
   const auto spec_status = validate_rest_spec(spec, instrument_id_);
   if (!spec_status) {
     return PreparedRest{spec_status};
@@ -305,6 +370,18 @@ InstrumentBook::PreparedRest InstrumentBook::prepare_rest(const OrderNodeSpec& s
   }
   if (pending_node_ != nullptr || pending_level_ != nullptr) {
     return PreparedRest{make_status(InstrumentBookError::preparation_in_progress)};
+  }
+  if (replacement_old != nullptr) {
+    const auto old_status = preflight_node(*replacement_old);
+    if (!old_status) {
+      return PreparedRest{old_status};
+    }
+    if (spec.order_id == replacement_old->order_id() ||
+        spec.client_id != replacement_old->client_id() ||
+        spec.instrument_id != replacement_old->instrument_id() ||
+        spec.side != replacement_old->side()) {
+      return PreparedRest{make_status(InstrumentBookError::replacement_mismatch)};
+    }
   }
   if (storage_.find(spec.order_id) != nullptr || index_.find(spec.order_id) != nullptr) {
     return PreparedRest{make_status(InstrumentBookError::duplicate_order_id,
@@ -355,7 +432,9 @@ InstrumentBook::PreparedRest InstrumentBook::prepare_rest(const OrderNodeSpec& s
   if (const auto* existing = spec.side == domain::Side::buy ? bids_.find_level(spec.price)
                                                             : asks_.find_level(spec.price);
       existing != nullptr) {
-    const auto target_status = validate_append_target(*existing, *node);
+    const auto target_status = replacement_old == nullptr ? validate_append_target(*existing, *node)
+                                                          : validate_replace_append_target(
+                                                                *existing, *node, *replacement_old);
     if (!target_status) {
       cleanup_node(false);
       return PreparedRest{target_status};
@@ -382,7 +461,8 @@ InstrumentBook::PreparedRest InstrumentBook::prepare_rest(const OrderNodeSpec& s
     throw;
   }
 
-  PreparedRest result{*this, *node, std::move(staging_level), std::move(prepared_level)};
+  PreparedRest result{*this, *node, std::move(staging_level), std::move(prepared_level),
+                      replacement_old};
   pending_node_ = node;
   pending_level_ = result.staging_level_.get();
   enforce_postconditions();
@@ -587,7 +667,8 @@ PrevalidatedBatchStatus InstrumentBook::apply_prevalidated_batch(
   } else {
     if (!prepared_rest->has_value() || prepared_rest->owner_ != this ||
         prepared_rest->node_ != pending_node_ ||
-        prepared_rest->staging_level_.get() != pending_level_) {
+        prepared_rest->staging_level_.get() != pending_level_ ||
+        prepared_rest->replacement_old_ != nullptr) {
       return fail(PrevalidatedBatchError::preparation_mismatch);
     }
 
@@ -702,6 +783,177 @@ PrevalidatedBatchStatus InstrumentBook::apply_prevalidated_batch(
   return {};
 }
 
+PrevalidatedBatchStatus InstrumentBook::apply_prevalidated_replace_batch(
+    const PrevalidatedBookReduction& old_reduction,
+    std::span<const PrevalidatedBookReduction> passive_reductions,
+    PreparedRest* prepared_rest) noexcept {
+  const auto fail = [](PrevalidatedBatchError error, std::size_t failing_reduction = 0U) noexcept {
+    return PrevalidatedBatchStatus{
+        .error = error,
+        .failing_reduction = failing_reduction,
+    };
+  };
+  const auto validate_binding =
+      [this, &fail](const PrevalidatedBookReduction& reduction,
+                    std::size_t failing_reduction) noexcept -> PrevalidatedBatchStatus {
+    const auto* const node = reduction.node;
+    if (node == nullptr || node == pending_node_ || storage_.find(reduction.order_id) != node ||
+        index_.find(reduction.order_id) != node || find(reduction.order_id) != node) {
+      return fail(PrevalidatedBatchError::invalid_binding, failing_reduction);
+    }
+    if (node->order_id() != reduction.order_id || node->client_id() != reduction.client_id ||
+        node->instrument_id() != instrument_id_ || node->side() != reduction.side ||
+        node->price() != reduction.price ||
+        node->remaining_quantity() != reduction.remaining_before ||
+        node->priority_sequence() != reduction.priority_sequence || !node->is_linked() ||
+        node->price_level() == nullptr) {
+      return fail(PrevalidatedBatchError::invalid_binding, failing_reduction);
+    }
+
+    const auto* const expected_level = reduction.side == domain::Side::buy
+                                           ? bids_.find_level(reduction.price)
+                                           : asks_.find_level(reduction.price);
+    if (!domain::is_valid(reduction.side) || expected_level == nullptr ||
+        expected_level != node->price_level()) {
+      return fail(PrevalidatedBatchError::invalid_binding, failing_reduction);
+    }
+    if (reduction.reduction.value() == 0U || reduction.reduction > reduction.remaining_before ||
+        reduction.remaining_after.value() !=
+            reduction.remaining_before.value() - reduction.reduction.value()) {
+      return fail(PrevalidatedBatchError::invalid_reduction, failing_reduction);
+    }
+    return {};
+  };
+
+  if (!validate_invariants()) {
+    return fail(PrevalidatedBatchError::book_invariant_violation);
+  }
+
+  if (prepared_rest == nullptr) {
+    if (pending_node_ != nullptr || pending_level_ != nullptr) {
+      return fail(PrevalidatedBatchError::preparation_mismatch);
+    }
+  } else {
+    if (!prepared_rest->has_value() || prepared_rest->owner_ != this ||
+        prepared_rest->node_ != pending_node_ ||
+        prepared_rest->staging_level_.get() != pending_level_ ||
+        prepared_rest->replacement_old_ != old_reduction.node) {
+      return fail(PrevalidatedBatchError::preparation_mismatch);
+    }
+
+    const auto staging_result = prepared_rest->staging_level_->validate_invariants();
+    if (!staging_result || prepared_rest->staging_level_->order_count() != 1U ||
+        prepared_rest->staging_level_->head() != prepared_rest->node_ ||
+        prepared_rest->staging_level_->tail() != prepared_rest->node_ ||
+        prepared_rest->node_->price_level() != prepared_rest->staging_level_.get()) {
+      return fail(PrevalidatedBatchError::preparation_mismatch);
+    }
+  }
+
+  if (const auto old_status = validate_binding(old_reduction, 0U); !old_status) {
+    return old_status;
+  }
+  if (old_reduction.remaining_after.value() != 0U ||
+      old_reduction.reduction != old_reduction.remaining_before) {
+    return fail(PrevalidatedBatchError::invalid_reduction);
+  }
+
+  for (std::size_t index = 0U; index < passive_reductions.size(); ++index) {
+    const auto& reduction = passive_reductions[index];
+    const auto failing_reduction = index + 1U;
+    if (const auto status = validate_binding(reduction, failing_reduction); !status) {
+      return status;
+    }
+    if (reduction.side == old_reduction.side || reduction.node == old_reduction.node ||
+        reduction.order_id == old_reduction.order_id) {
+      return fail(PrevalidatedBatchError::preparation_mismatch, failing_reduction);
+    }
+    for (std::size_t previous = 0U; previous < index; ++previous) {
+      if (passive_reductions[previous].node == reduction.node ||
+          passive_reductions[previous].order_id == reduction.order_id) {
+        return fail(PrevalidatedBatchError::duplicate_binding, failing_reduction);
+      }
+    }
+  }
+
+  if (prepared_rest != nullptr) {
+    const auto* const residual = prepared_rest->node_;
+    const auto* const old_order = old_reduction.node;
+    if (residual == nullptr || old_order == nullptr || residual->side() != old_order->side() ||
+        residual->client_id() != old_order->client_id() ||
+        residual->instrument_id() != old_order->instrument_id() ||
+        residual->order_id() == old_order->order_id()) {
+      return fail(PrevalidatedBatchError::preparation_mismatch);
+    }
+
+    PriceLevel* visible_target = nullptr;
+    PriceLevel* detached_target = nullptr;
+    if (residual->side() == domain::Side::buy) {
+      if (!std::holds_alternative<BidBookSide::DetachedLevel>(prepared_rest->prepared_level_)) {
+        return fail(PrevalidatedBatchError::preparation_mismatch);
+      }
+      auto& detached = std::get<BidBookSide::DetachedLevel>(prepared_rest->prepared_level_);
+      if (!detached) {
+        return fail(PrevalidatedBatchError::preparation_mismatch);
+      }
+      visible_target = bids_.find_level(residual->price());
+      detached_target = detached.level();
+      const auto projected_ask = projected_best_price(asks_, passive_reductions);
+      if (projected_ask.has_value() && residual->price() >= projected_ask.value()) {
+        return fail(PrevalidatedBatchError::residual_would_cross);
+      }
+    } else if (residual->side() == domain::Side::sell) {
+      if (!std::holds_alternative<AskBookSide::DetachedLevel>(prepared_rest->prepared_level_)) {
+        return fail(PrevalidatedBatchError::preparation_mismatch);
+      }
+      auto& detached = std::get<AskBookSide::DetachedLevel>(prepared_rest->prepared_level_);
+      if (!detached) {
+        return fail(PrevalidatedBatchError::preparation_mismatch);
+      }
+      visible_target = asks_.find_level(residual->price());
+      detached_target = detached.level();
+      const auto projected_bid = projected_best_price(bids_, passive_reductions);
+      if (projected_bid.has_value() && residual->price() <= projected_bid.value()) {
+        return fail(PrevalidatedBatchError::residual_would_cross);
+      }
+    } else {
+      return fail(PrevalidatedBatchError::preparation_mismatch);
+    }
+
+    const bool removes_visible_target = visible_target != nullptr &&
+                                        visible_target == old_order->price_level() &&
+                                        visible_target->order_count() == 1U;
+    InstrumentBookStatus append_status{};
+    if (visible_target == nullptr || removes_visible_target) {
+      append_status = detached_target == nullptr
+                          ? make_status(InstrumentBookError::book_invariant_violation)
+                          : validate_append_target(*detached_target, *residual);
+    } else {
+      append_status = validate_replace_append_target(*visible_target, *residual, *old_order);
+    }
+    if (!append_status) {
+      return fail(PrevalidatedBatchError::residual_append_failure);
+    }
+  }
+
+  // No recoverable error may cross this boundary. The exact old order is
+  // terminally removed first, followed by passive fills and optional residual
+  // publication. Each terminal removal preserves unlink -> index erase ->
+  // empty-level erase -> storage destruction.
+  apply_reduction_no_check(old_reduction);
+  for (const auto& reduction : passive_reductions) {
+    apply_reduction_no_check(reduction);
+  }
+  if (prepared_rest != nullptr) {
+    static_cast<void>(commit_prepared_no_check(*prepared_rest));
+  }
+
+  if (!validate_invariants()) {
+    std::terminate();
+  }
+  return {};
+}
+
 void InstrumentBook::apply_reduction_no_check(const PrevalidatedBookReduction& reduction) noexcept {
   auto& node = *reduction.node;
   auto* const level = reduction.side == domain::Side::buy ? bids_.find_level(reduction.price)
@@ -777,6 +1029,7 @@ OrderNode* InstrumentBook::commit_prepared_no_check(PreparedRest& prepared_rest)
   prepared_rest.node_ = nullptr;
   prepared_rest.staging_level_.reset();
   prepared_rest.prepared_level_ = std::monostate{};
+  prepared_rest.replacement_old_ = nullptr;
   pending_node_ = nullptr;
   pending_level_ = nullptr;
   return node;

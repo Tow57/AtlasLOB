@@ -46,6 +46,19 @@ domain::NewOrder incoming(std::uint64_t order_id, std::uint32_t client_id, domai
   };
 }
 
+domain::ReplaceOrder replacement(std::uint64_t old_order_id, std::uint64_t new_order_id,
+                                 std::uint32_t client_id, std::int64_t price,
+                                 std::uint64_t quantity) {
+  return {
+      .client_id = domain::ClientId{client_id},
+      .old_order_id = domain::OrderId{old_order_id},
+      .new_order_id = domain::OrderId{new_order_id},
+      .instrument_id = instrument_id,
+      .new_limit_price = domain::PriceTicks{price},
+      .new_quantity = domain::Quantity{quantity},
+  };
+}
+
 std::vector<domain::EventType> event_types(const domain::EventBatch& batch) {
   std::vector<domain::EventType> result;
   result.reserve(batch.size());
@@ -413,6 +426,40 @@ TEST(CommandExecutorSmoke, AllocationFailureAfterResidualPreparationRollsBackExa
                                          domain::TimeInForce::gtc, domain::PriceTicks{100}, 8U));
   ASSERT_TRUE(retry);
   EXPECT_EQ(retry.batch->command_sequence(), domain::Sequence{11U});
+  EXPECT_TRUE(book.validate_invariants());
+}
+
+TEST(CommandExecutorSmoke, AllocationFailureAfterReplacementPreparationRollsBackExactly) {
+  InstrumentBook book{instrument_id};
+  ASSERT_TRUE(book.rest(resting(1U, 11U, domain::Side::buy, 99, 4U, 1U)));
+  ASSERT_TRUE(book.rest(resting(2U, 22U, domain::Side::sell, 100, 5U, 2U)));
+  CommandExecutor executor{book, {}, domain::Sequence{10U}};
+  const auto before = snapshot_top_of_book(book);
+  const auto* old_order = book.find(domain::OrderId{1U});
+  const auto* passive = book.find(domain::OrderId{2U});
+  ASSERT_NE(old_order, nullptr);
+  ASSERT_NE(passive, nullptr);
+
+  executor.set_before_event_allocation_hook_for_testing(+[] { throw std::bad_alloc{}; });
+  EXPECT_THROW(static_cast<void>(executor.execute(replacement(1U, 100U, 11U, 100, 8U))),
+               std::bad_alloc);
+
+  EXPECT_EQ(executor.next_sequence(), domain::Sequence{11U});
+  EXPECT_EQ(book.find(domain::OrderId{1U}), old_order);
+  EXPECT_EQ(book.find(domain::OrderId{2U}), passive);
+  EXPECT_EQ(old_order->remaining_quantity(), domain::Quantity{4U});
+  EXPECT_EQ(passive->remaining_quantity(), domain::Quantity{5U});
+  EXPECT_EQ(book.find(domain::OrderId{100U}), nullptr);
+  EXPECT_EQ(book.active_order_count(), 2U);
+  EXPECT_EQ(snapshot_top_of_book(book), before);
+  EXPECT_TRUE(book.validate_invariants());
+
+  executor.set_before_event_allocation_hook_for_testing(nullptr);
+  auto retry = executor.execute(replacement(1U, 100U, 11U, 100, 8U));
+  ASSERT_TRUE(retry);
+  EXPECT_EQ(retry.batch->command_sequence(), domain::Sequence{11U});
+  ASSERT_NE(book.find(domain::OrderId{100U}), nullptr);
+  EXPECT_EQ(book.find(domain::OrderId{100U})->remaining_quantity(), domain::Quantity{3U});
   EXPECT_TRUE(book.validate_invariants());
 }
 
