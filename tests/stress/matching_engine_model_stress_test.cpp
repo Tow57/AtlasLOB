@@ -1160,21 +1160,21 @@ void execute_and_compare(MatchingEngine& engine, ReferenceModel& model,
   const auto expected_sequence = model.next_sequence();
   const auto expected = model.execute(command);
   auto actual = engine.execute(command);
-  ASSERT_EQ(actual.error, EngineError::none);
+  ASSERT_EQ(actual.error(), EngineError::none);
   ASSERT_TRUE(actual.has_value());
   ASSERT_EQ(actual.rejected(), expected.rejected);
   ASSERT_EQ(actual.committed(), !expected.rejected);
-  ASSERT_TRUE(actual.batch.has_value());
-  ASSERT_EQ(actual.batch->size(), expected.events.size());
-  ASSERT_EQ(actual.batch->command_sequence(), expected_sequence);
+  ASSERT_NE(actual.batch(), nullptr);
+  ASSERT_EQ(actual.batch()->size(), expected.events.size());
+  ASSERT_EQ(actual.batch()->command_sequence(), expected_sequence);
   for (std::size_t event_index = 0U; event_index < expected.events.size(); ++event_index) {
-    ASSERT_EQ((*actual.batch)[event_index], expected.events[event_index])
+    ASSERT_EQ((*actual.batch())[event_index], expected.events[event_index])
         << "event_index=" << event_index;
   }
 
   const domain::EventBatch expected_batch{expected.events};
   const auto expected_event_digest = event_digest(expected_batch);
-  const auto actual_event_digest = event_digest(*actual.batch);
+  const auto actual_event_digest = event_digest(*actual.batch());
   ASSERT_EQ(actual_event_digest, expected_event_digest)
       << "actual=" << actual_event_digest.hex() << " expected=" << expected_event_digest.hex();
 

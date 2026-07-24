@@ -20,7 +20,7 @@ codes retain their original numeric values and new reasons are appended.
 
 - `NewOrder` carries client, order, and instrument IDs, side, order type, time in force, optional
   limit price, and quantity.
-- `CancelOrder` carries the client, order, and instrument IDs required for future ownership checks.
+- `CancelOrder` carries the client, order, and instrument IDs used for ownership checks.
 - `ReplaceOrder` carries the client, old and new order IDs, instrument, new limit price, and new
   quantity.
 
@@ -63,7 +63,7 @@ stateful decisions represented in the rejection vocabulary but not produced by t
 - Sequence zero means unassigned. The maximum 64-bit value is issued once; later allocation
   reports sticky internal exhaustion and never rolls over or becomes a client rejection.
 - Order IDs are unique while active and may be reused only after the previous order is terminal.
-- Future cancel/replace handling requires both client and instrument identity to match.
+- Cancel and Replace require both client and instrument identity to match.
 - A default `CommandExecutor` starts at sequence one and therefore requires an empty book. Resumed
   books require an explicit first sequence greater than every active priority; persisted replay
   state must additionally preserve the authoritative next sequence across terminal orders.
@@ -156,7 +156,10 @@ A prepared GTC residual allocates its node, storage/index entries, private stagi
 detached fallback map node before matching mutation. The one pending node is hidden from public
 active lookup/counts but remains fully covered by whole-book invariants. Abandonment restores the
 exact visible state. Commit chooses an existing level or the detached fallback and performs no
-allocation. Preparation guards must not outlive their owning book.
+allocation. A replacement preparation stores the old order's stable ID rather than its address and
+pins that exact active order against direct reduction, removal, or cancellation until transaction
+commit or rollback. Unrelated passive orders remain mutable. Preparation guards must not outlive
+their owning book.
 
 ## Error boundaries
 
@@ -234,9 +237,10 @@ top of book back exactly.
 
 `atlaslob::MatchingEngine` is the supported single-instrument, single-writer facade. It owns the
 private book and executor behind a PImpl and accepts typed New, Cancel, and Replace values or the
-`Command` variant. Its move-only result contains either one complete normalized `EventBatch` or a
-coarse internal `EngineError`; a normal domain rejection is a valid one-event batch, not an engine
-failure.
+`Command` variant. Its move-only result has private mutually exclusive state created through
+validated success/failure factories: either one complete normalized `EventBatch` or a concrete
+internal `EngineError`. A normal domain rejection is a valid one-event batch, not an engine
+failure. A moved-from result is an explicit inert state and cannot appear successful.
 
 Read-only observers expose the configured instrument, active order count, emptiness, current best
 bid/ask price and aggregate, next sequence, and sticky sequence exhaustion. Node addresses,

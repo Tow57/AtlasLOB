@@ -51,7 +51,9 @@ There is no observable canceled-and-empty intermediate state.
   permits a valid net-neutral replacement when the visible level aggregate is already at its
   representational maximum.
 - `prepare_replace_rest` allocates and indexes the hidden replacement node and its detached
-  fallback level before event allocation. It records the exact old-node binding.
+  fallback level before event allocation. It records the old order's stable ID, and the book pins
+  that exact active identity against direct reduction, removal, or cancellation until commit or
+  rollback.
 - A replacement preparation cannot be committed directly and cannot enter the ordinary New batch
   API. Abandonment removes only the hidden replacement and leaves the old order and passives
   exactly unchanged.
@@ -80,6 +82,9 @@ There is no observable canceled-and-empty intermediate state.
 - A sequenced domain rejection is a successful result containing one `RejectedEvent`. Sequence
   exhaustion and other internal failures return no event batch and are distinguished by
   `EngineError`. Allocation failure continues to propagate.
+- `EngineResult` stores a private mutually exclusive batch/error state. Named factories reject
+  invalid error vocabulary, observers are read-only, and move operations leave an explicit inert
+  source rather than an apparently successful result.
 - Read-only observers expose instrument ID, active count, emptiness, final top of book, next
   sequence, and sticky sequence exhaustion.
 - The facade is non-copyable and non-movable. Multi-instrument routing and durable restored
@@ -116,5 +121,7 @@ Local tests cover:
 The final Debug and Release suites pass 235/235 tests; the production-only build, pinned
 formatting gate, and repository hygiene checks pass. Two independent reviews found no blocker or
 high-severity issue. Their one medium finding—a moved-from public result that could still appear
-engaged—was fixed with source-invalidating move operations and direct regression coverage. Hosted
-GCC, Clang, and sanitizer results remain a pull-request requirement and are not claimed locally.
+engaged—was fixed with source-invalidating move operations and direct regression coverage. A later
+hardening review removed public construction of contradictory batch/error states and eliminated a
+raw replacement-old pointer from prepared transactions. The published Phase 2 head passed hosted
+GCC, Clang, ASan/UBSan, and pinned formatting; follow-up commits must repeat those gates.

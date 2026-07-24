@@ -165,6 +165,7 @@ class BookSide final {
       }
 
       owner_ = nullptr;
+      level_ = nullptr;
       created_ = false;
       return BookSideError::none;
     }

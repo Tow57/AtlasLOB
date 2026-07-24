@@ -3,8 +3,10 @@
 #include <cstdint>
 #include <limits>
 #include <span>
+#include <utility>
 #include <vector>
 
+#include "core_test_access.hpp"
 #include "instrument_book.hpp"
 
 namespace {
@@ -256,6 +258,157 @@ TEST(InstrumentBookReplaceTransaction, AbandonmentRollsBackOnlyThePreparedReplac
   EXPECT_EQ(level->order_count(), 2U);
   EXPECT_EQ(level->aggregate_quantity(), domain::Quantity{8U});
   EXPECT_EQ(book.active_order_count(), 2U);
+  EXPECT_TRUE(book.validate_invariants());
+}
+
+TEST(InstrumentBookReplaceTransaction,
+     PinsExactOldAgainstDirectMutationWhileUnrelatedOrdersRemainMutable) {
+  InstrumentBook book{instrument_id};
+  const auto old = book.rest(order_spec(1U, 7U, domain::Side::buy, 90, 5U, 1U));
+  const auto same_level = book.rest(order_spec(2U, 8U, domain::Side::buy, 90, 7U, 2U));
+  const auto passive = book.rest(order_spec(3U, 9U, domain::Side::sell, 100, 9U, 3U));
+  ASSERT_TRUE(old);
+  ASSERT_TRUE(same_level);
+  ASSERT_TRUE(passive);
+
+  auto prepared =
+      book.prepare_replace_rest(order_spec(4U, 7U, domain::Side::buy, 90, 6U, 10U), *old.node);
+  ASSERT_TRUE(prepared);
+  ASSERT_TRUE(book.validate_invariants());
+
+  const auto exact_reduce = book.reduce_remaining(*old.node, domain::Quantity{1U});
+  EXPECT_EQ(exact_reduce.error, InstrumentBookError::replacement_transaction_required);
+  const auto exact_remove = book.remove(*old.node);
+  EXPECT_EQ(exact_remove.status.error, InstrumentBookError::replacement_transaction_required);
+  const auto exact_cancel = book.cancel(old.node->order_id());
+  EXPECT_EQ(exact_cancel.status.error, InstrumentBookError::replacement_transaction_required);
+  EXPECT_EQ(old.node->remaining_quantity(), domain::Quantity{5U});
+
+  EXPECT_TRUE(book.reduce_remaining(*same_level.node, domain::Quantity{2U}));
+  EXPECT_TRUE(book.reduce_remaining(*passive.node, domain::Quantity{3U}));
+  EXPECT_EQ(same_level.node->remaining_quantity(), domain::Quantity{5U});
+  EXPECT_EQ(passive.node->remaining_quantity(), domain::Quantity{6U});
+  EXPECT_TRUE(book.validate_invariants());
+
+  const auto status = book.apply_prevalidated_replace_batch(
+      reduction(*old.node, 5U), std::span<const PrevalidatedBookReduction>{}, &prepared);
+  ASSERT_TRUE(status);
+  EXPECT_FALSE(prepared);
+  EXPECT_EQ(book.find(domain::OrderId{1U}), nullptr);
+  const auto* const replacement = book.find(domain::OrderId{4U});
+  ASSERT_NE(replacement, nullptr);
+  ASSERT_NE(book.best_bid(), nullptr);
+  EXPECT_EQ(book.best_bid()->head(), same_level.node);
+  EXPECT_EQ(book.best_bid()->tail(), replacement);
+  EXPECT_EQ(book.best_bid()->aggregate_quantity(), domain::Quantity{11U});
+  EXPECT_EQ(book.best_ask()->aggregate_quantity(), domain::Quantity{6U});
+  EXPECT_TRUE(book.validate_invariants());
+}
+
+TEST(InstrumentBookReplaceTransaction, UnrelatedTargetRemovalUsesPreparedFallbackLevel) {
+  InstrumentBook book{instrument_id};
+  const auto old = book.rest(order_spec(1U, 7U, domain::Side::buy, 90, 5U, 1U));
+  const auto prior_target = book.rest(order_spec(2U, 8U, domain::Side::buy, 91, 7U, 2U));
+  ASSERT_TRUE(old);
+  ASSERT_TRUE(prior_target);
+
+  auto prepared =
+      book.prepare_replace_rest(order_spec(3U, 7U, domain::Side::buy, 91, 6U, 10U), *old.node);
+  ASSERT_TRUE(prepared);
+
+  const auto unrelated_cancel = book.cancel(domain::OrderId{2U});
+  ASSERT_TRUE(unrelated_cancel);
+  EXPECT_TRUE(prepared);
+  EXPECT_TRUE(book.validate_invariants());
+
+  const auto status = book.apply_prevalidated_replace_batch(
+      reduction(*old.node, 5U), std::span<const PrevalidatedBookReduction>{}, &prepared);
+  ASSERT_TRUE(status);
+  EXPECT_FALSE(prepared);
+  const auto* const replacement = book.find(domain::OrderId{3U});
+  ASSERT_NE(replacement, nullptr);
+  ASSERT_NE(book.best_bid(), nullptr);
+  EXPECT_EQ(book.best_bid()->price(), domain::PriceTicks{91});
+  EXPECT_EQ(book.best_bid()->head(), replacement);
+  EXPECT_EQ(book.best_bid()->tail(), replacement);
+  EXPECT_EQ(book.best_bid()->aggregate_quantity(), domain::Quantity{6U});
+  EXPECT_TRUE(book.validate_invariants());
+}
+
+TEST(InstrumentBookReplaceTransaction, MovingAndAbandoningGuardTransfersAndReleasesOldPin) {
+  InstrumentBook book{instrument_id};
+  const auto old = book.rest(order_spec(1U, 7U, domain::Side::sell, 100, 5U, 1U));
+  ASSERT_TRUE(old);
+
+  {
+    auto original =
+        book.prepare_replace_rest(order_spec(2U, 7U, domain::Side::sell, 101, 6U, 10U), *old.node);
+    ASSERT_TRUE(original);
+    auto moved = std::move(original);
+    EXPECT_FALSE(original);
+    ASSERT_TRUE(moved);
+    EXPECT_EQ(book.cancel(old.node->order_id()).status.error,
+              InstrumentBookError::replacement_transaction_required);
+    EXPECT_TRUE(book.validate_invariants());
+  }
+
+  EXPECT_FALSE(book.has_pending_preparation());
+  EXPECT_EQ(book.find(domain::OrderId{2U}), nullptr);
+  EXPECT_TRUE(book.reduce_remaining(*old.node, domain::Quantity{1U}));
+  EXPECT_EQ(old.node->remaining_quantity(), domain::Quantity{4U});
+  EXPECT_TRUE(book.validate_invariants());
+}
+
+TEST(InstrumentBookReplaceTransaction, MoveAssignmentReleasesPriorPinAndTransfersSourcePin) {
+  InstrumentBook first_book{instrument_id};
+  InstrumentBook second_book{instrument_id};
+  const auto first_old = first_book.rest(order_spec(1U, 7U, domain::Side::buy, 90, 5U, 1U));
+  const auto second_old = second_book.rest(order_spec(11U, 8U, domain::Side::sell, 100, 6U, 2U));
+  ASSERT_TRUE(first_old);
+  ASSERT_TRUE(second_old);
+
+  {
+    auto target = first_book.prepare_replace_rest(
+        order_spec(2U, 7U, domain::Side::buy, 91, 7U, 10U), *first_old.node);
+    auto source = second_book.prepare_replace_rest(
+        order_spec(12U, 8U, domain::Side::sell, 101, 8U, 11U), *second_old.node);
+    ASSERT_TRUE(target);
+    ASSERT_TRUE(source);
+
+    target = std::move(source);
+
+    EXPECT_FALSE(source);
+    ASSERT_TRUE(target);
+    EXPECT_FALSE(first_book.has_pending_preparation());
+    EXPECT_TRUE(second_book.has_pending_preparation());
+    EXPECT_TRUE(first_book.cancel(first_old.node->order_id()));
+    EXPECT_EQ(second_book.cancel(second_old.node->order_id()).status.error,
+              InstrumentBookError::replacement_transaction_required);
+    EXPECT_TRUE(first_book.validate_invariants());
+    EXPECT_TRUE(second_book.validate_invariants());
+  }
+
+  EXPECT_FALSE(second_book.has_pending_preparation());
+  EXPECT_TRUE(second_book.reduce_remaining(*second_old.node, domain::Quantity{1U}));
+  EXPECT_EQ(second_old.node->remaining_quantity(), domain::Quantity{5U});
+  EXPECT_TRUE(second_book.validate_invariants());
+}
+
+TEST(InstrumentBookReplaceTransaction, InvariantsRejectUnknownPinnedReplacementIdentity) {
+  InstrumentBook book{instrument_id};
+  const auto old = book.rest(order_spec(1U, 7U, domain::Side::buy, 90, 5U, 1U));
+  ASSERT_TRUE(old);
+  auto prepared =
+      book.prepare_replace_rest(order_spec(2U, 7U, domain::Side::buy, 91, 6U, 10U), *old.node);
+  ASSERT_TRUE(prepared);
+  ASSERT_TRUE(book.validate_invariants());
+
+  core::test::CoreAccess::set_pending_replacement_old_id(book, domain::OrderId{999U});
+  const auto corrupted = book.validate_invariants();
+  EXPECT_EQ(corrupted.error, InstrumentBookInvariantError::pending_replacement_invariant);
+  EXPECT_EQ(corrupted.order_id, domain::OrderId{999U});
+
+  core::test::CoreAccess::set_pending_replacement_old_id(book, old.node->order_id());
   EXPECT_TRUE(book.validate_invariants());
 }
 

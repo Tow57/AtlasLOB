@@ -21,6 +21,7 @@ static_assert(!std::is_copy_assignable_v<MatchingEngine>);
 static_assert(!std::is_move_constructible_v<MatchingEngine>);
 static_assert(!std::is_move_assignable_v<MatchingEngine>);
 static_assert(!std::is_copy_constructible_v<EngineResult>);
+static_assert(!std::is_default_constructible_v<EngineResult>);
 static_assert(std::is_nothrow_move_constructible_v<EngineResult>);
 static_assert(std::is_nothrow_move_assignable_v<EngineResult>);
 
@@ -81,12 +82,12 @@ TEST(MatchingEngineExecution, RestsAndCancelsThroughTypedAndVariantCommands) {
   ASSERT_TRUE(rested);
   EXPECT_TRUE(rested.committed());
   EXPECT_FALSE(rested.rejected());
-  ASSERT_TRUE(rested.batch.has_value());
-  EXPECT_EQ(rested.batch->command_sequence(), domain::Sequence{1U});
-  ASSERT_EQ(rested.batch->size(), 3U);
-  EXPECT_EQ(domain::event_type((*rested.batch)[0]), domain::EventType::accepted);
-  EXPECT_EQ(domain::event_type((*rested.batch)[1]), domain::EventType::rested);
-  EXPECT_EQ(domain::event_type((*rested.batch)[2]), domain::EventType::book_changed);
+  ASSERT_NE(rested.batch(), nullptr);
+  EXPECT_EQ(rested.batch()->command_sequence(), domain::Sequence{1U});
+  ASSERT_EQ(rested.batch()->size(), 3U);
+  EXPECT_EQ(domain::event_type((*rested.batch())[0]), domain::EventType::accepted);
+  EXPECT_EQ(domain::event_type((*rested.batch())[1]), domain::EventType::rested);
+  EXPECT_EQ(domain::event_type((*rested.batch())[2]), domain::EventType::book_changed);
   EXPECT_EQ(engine.active_order_count(), 1U);
   EXPECT_FALSE(engine.empty());
   EXPECT_EQ(engine.top().best_bid, (domain::TopOfBookLevel{
@@ -100,13 +101,13 @@ TEST(MatchingEngineExecution, RestsAndCancelsThroughTypedAndVariantCommands) {
   auto canceled = engine.execute(cancel);
   ASSERT_TRUE(canceled);
   EXPECT_TRUE(canceled.committed());
-  ASSERT_TRUE(canceled.batch.has_value());
-  EXPECT_EQ(canceled.batch->command_sequence(), domain::Sequence{2U});
-  ASSERT_EQ(canceled.batch->size(), 4U);
-  EXPECT_EQ(domain::event_type((*canceled.batch)[0]), domain::EventType::accepted);
-  EXPECT_EQ(domain::event_type((*canceled.batch)[1]), domain::EventType::canceled);
-  EXPECT_EQ(domain::event_type((*canceled.batch)[2]), domain::EventType::done);
-  EXPECT_EQ(domain::event_type((*canceled.batch)[3]), domain::EventType::book_changed);
+  ASSERT_NE(canceled.batch(), nullptr);
+  EXPECT_EQ(canceled.batch()->command_sequence(), domain::Sequence{2U});
+  ASSERT_EQ(canceled.batch()->size(), 4U);
+  EXPECT_EQ(domain::event_type((*canceled.batch())[0]), domain::EventType::accepted);
+  EXPECT_EQ(domain::event_type((*canceled.batch())[1]), domain::EventType::canceled);
+  EXPECT_EQ(domain::event_type((*canceled.batch())[2]), domain::EventType::done);
+  EXPECT_EQ(domain::event_type((*canceled.batch())[3]), domain::EventType::book_changed);
   EXPECT_TRUE(engine.empty());
   EXPECT_EQ(engine.active_order_count(), 0U);
   EXPECT_EQ(engine.top(), BookTop{});
@@ -122,10 +123,10 @@ TEST(MatchingEngineExecution, ReturnsSequencedDomainRejectionsWithoutMutation) {
   ASSERT_TRUE(result);
   EXPECT_TRUE(result.rejected());
   EXPECT_FALSE(result.committed());
-  ASSERT_TRUE(result.batch.has_value());
-  ASSERT_EQ(result.batch->size(), 1U);
-  EXPECT_EQ(result.batch->command_sequence(), domain::Sequence{1U});
-  const auto& rejected = std::get<domain::RejectedEvent>((*result.batch)[0]);
+  ASSERT_NE(result.batch(), nullptr);
+  ASSERT_EQ(result.batch()->size(), 1U);
+  EXPECT_EQ(result.batch()->command_sequence(), domain::Sequence{1U});
+  const auto& rejected = std::get<domain::RejectedEvent>((*result.batch())[0]);
   EXPECT_EQ(rejected.reason, domain::RejectReason::invalid_quantity);
   EXPECT_EQ(rejected.order_id, domain::OrderId{1U});
   EXPECT_TRUE(engine.empty());
@@ -142,18 +143,18 @@ TEST(MatchingEngineExecution, AppliesThePublicQuantityTickAndCapacityConfigurati
 
   auto invalid_tick = engine.execute(limit_order(1U, domain::Side::buy, 101, 5U));
   ASSERT_TRUE(invalid_tick.rejected());
-  EXPECT_EQ(std::get<domain::RejectedEvent>((*invalid_tick.batch)[0]).reason,
+  EXPECT_EQ(std::get<domain::RejectedEvent>((*invalid_tick.batch())[0]).reason,
             domain::RejectReason::invalid_tick);
 
   auto excessive_quantity = engine.execute(limit_order(2U, domain::Side::buy, 100, 11U));
   ASSERT_TRUE(excessive_quantity.rejected());
-  EXPECT_EQ(std::get<domain::RejectedEvent>((*excessive_quantity.batch)[0]).reason,
+  EXPECT_EQ(std::get<domain::RejectedEvent>((*excessive_quantity.batch())[0]).reason,
             domain::RejectReason::quantity_out_of_range);
 
   ASSERT_TRUE(engine.execute(limit_order(3U, domain::Side::buy, 100, 5U)).committed());
   auto over_capacity = engine.execute(limit_order(4U, domain::Side::buy, 95, 5U));
   ASSERT_TRUE(over_capacity.rejected());
-  EXPECT_EQ(std::get<domain::RejectedEvent>((*over_capacity.batch)[0]).reason,
+  EXPECT_EQ(std::get<domain::RejectedEvent>((*over_capacity.batch())[0]).reason,
             domain::RejectReason::capacity_exceeded);
 
   EXPECT_EQ(engine.active_order_count(), 1U);
@@ -182,19 +183,49 @@ TEST(MatchingEngineExecution, MatchesMarketOrdersAndExposesTheFinalTop) {
 
   ASSERT_TRUE(result);
   EXPECT_TRUE(result.committed());
-  ASSERT_TRUE(result.batch.has_value());
-  ASSERT_EQ(result.batch->size(), 4U);
-  EXPECT_EQ(domain::event_type((*result.batch)[0]), domain::EventType::accepted);
-  EXPECT_EQ(domain::event_type((*result.batch)[1]), domain::EventType::trade);
-  EXPECT_EQ(domain::event_type((*result.batch)[2]), domain::EventType::done);
-  EXPECT_EQ(domain::event_type((*result.batch)[3]), domain::EventType::book_changed);
-  const auto& trade = std::get<domain::TradeEvent>((*result.batch)[1]);
+  ASSERT_NE(result.batch(), nullptr);
+  ASSERT_EQ(result.batch()->size(), 4U);
+  EXPECT_EQ(domain::event_type((*result.batch())[0]), domain::EventType::accepted);
+  EXPECT_EQ(domain::event_type((*result.batch())[1]), domain::EventType::trade);
+  EXPECT_EQ(domain::event_type((*result.batch())[2]), domain::EventType::done);
+  EXPECT_EQ(domain::event_type((*result.batch())[3]), domain::EventType::book_changed);
+  const auto& trade = std::get<domain::TradeEvent>((*result.batch())[1]);
   EXPECT_EQ(trade.execution_price, domain::PriceTicks{100});
   EXPECT_EQ(trade.execution_quantity, domain::Quantity{5U});
   EXPECT_EQ(trade.aggressor_remaining, domain::Quantity{2U});
   EXPECT_EQ(trade.resting_remaining, domain::Quantity{});
   EXPECT_TRUE(engine.empty());
   EXPECT_EQ(engine.top(), BookTop{});
+}
+
+TEST(MatchingEngineExecution, ReusesAPassiveIdAfterItsFullFillBecomesTerminal) {
+  MatchingEngine engine{instrument_id};
+  ASSERT_TRUE(engine.execute(limit_order(1U, domain::Side::sell, 100, 5U)).committed());
+
+  const domain::NewOrder market{
+      .client_id = domain::ClientId{22U},
+      .order_id = domain::OrderId{2U},
+      .instrument_id = instrument_id,
+      .side = domain::Side::buy,
+      .order_type = domain::OrderType::market,
+      .time_in_force = domain::TimeInForce::ioc,
+      .limit_price = std::nullopt,
+      .quantity = domain::Quantity{5U},
+  };
+  auto fill = engine.execute(market);
+  ASSERT_TRUE(fill.committed());
+  ASSERT_NE(fill.batch(), nullptr);
+  ASSERT_EQ(fill.batch()->size(), 4U);
+  EXPECT_EQ(std::get<domain::TradeEvent>((*fill.batch())[1]).resting_remaining, domain::Quantity{});
+  ASSERT_TRUE(engine.empty());
+
+  auto reused = engine.execute(limit_order(1U, domain::Side::buy, 90, 7U));
+  ASSERT_TRUE(reused.committed());
+  EXPECT_EQ(engine.active_order_count(), 1U);
+  EXPECT_EQ(engine.top().best_bid, (domain::TopOfBookLevel{
+                                       .price = domain::PriceTicks{90},
+                                       .aggregate_quantity = domain::Quantity{7U},
+                                   }));
 }
 
 TEST(MatchingEngineExecution, ReplacesThroughThePublicVariant) {
@@ -213,22 +244,22 @@ TEST(MatchingEngineExecution, ReplacesThroughThePublicVariant) {
 
   ASSERT_TRUE(result);
   EXPECT_TRUE(result.committed());
-  ASSERT_TRUE(result.batch.has_value());
-  ASSERT_EQ(result.batch->size(), 6U);
+  ASSERT_NE(result.batch(), nullptr);
+  ASSERT_EQ(result.batch()->size(), 6U);
   const std::array expected_types{
       domain::EventType::accepted, domain::EventType::replaced, domain::EventType::canceled,
       domain::EventType::done,     domain::EventType::rested,   domain::EventType::book_changed,
   };
   for (std::size_t index = 0U; index < expected_types.size(); ++index) {
-    EXPECT_EQ(domain::event_type((*result.batch)[index]), expected_types[index]);
-    EXPECT_EQ(domain::event_header((*result.batch)[index]),
+    EXPECT_EQ(domain::event_type((*result.batch())[index]), expected_types[index]);
+    EXPECT_EQ(domain::event_header((*result.batch())[index]),
               (domain::EventHeader{
                   .command_sequence = domain::Sequence{2U},
                   .event_index = static_cast<std::uint32_t>(index),
                   .instrument_id = instrument_id,
               }));
   }
-  EXPECT_EQ(std::get<domain::ReplacedEvent>((*result.batch)[1]),
+  EXPECT_EQ(std::get<domain::ReplacedEvent>((*result.batch())[1]),
             (domain::ReplacedEvent{
                 .header =
                     {
@@ -239,10 +270,10 @@ TEST(MatchingEngineExecution, ReplacesThroughThePublicVariant) {
                 .old_order_id = domain::OrderId{1U},
                 .new_order_id = domain::OrderId{2U},
             }));
-  EXPECT_EQ(std::get<domain::CanceledEvent>((*result.batch)[2]).canceled_quantity,
+  EXPECT_EQ(std::get<domain::CanceledEvent>((*result.batch())[2]).canceled_quantity,
             domain::Quantity{5U});
-  EXPECT_EQ(std::get<domain::DoneEvent>((*result.batch)[3]).reason, domain::DoneReason::replaced);
-  EXPECT_EQ(std::get<domain::RestedEvent>((*result.batch)[4]).remaining_quantity,
+  EXPECT_EQ(std::get<domain::DoneEvent>((*result.batch())[3]).reason, domain::DoneReason::replaced);
+  EXPECT_EQ(std::get<domain::RestedEvent>((*result.batch())[4]).remaining_quantity,
             domain::Quantity{7U});
   EXPECT_EQ(engine.active_order_count(), 1U);
   EXPECT_EQ(engine.top().best_bid, (domain::TopOfBookLevel{
@@ -274,14 +305,14 @@ TEST(MatchingEngineExecution, FullyFilledReplacementPartiallyReducesItsPassive) 
   });
 
   ASSERT_TRUE(result.committed());
-  ASSERT_TRUE(result.batch.has_value());
-  ASSERT_EQ(result.batch->size(), 7U);
-  EXPECT_EQ(domain::event_type((*result.batch)[4]), domain::EventType::trade);
-  const auto& trade = std::get<domain::TradeEvent>((*result.batch)[4]);
+  ASSERT_NE(result.batch(), nullptr);
+  ASSERT_EQ(result.batch()->size(), 7U);
+  EXPECT_EQ(domain::event_type((*result.batch())[4]), domain::EventType::trade);
+  const auto& trade = std::get<domain::TradeEvent>((*result.batch())[4]);
   EXPECT_EQ(trade.execution_quantity, domain::Quantity{6U});
   EXPECT_EQ(trade.aggressor_remaining, domain::Quantity{});
   EXPECT_EQ(trade.resting_remaining, domain::Quantity{4U});
-  const auto& done = std::get<domain::DoneEvent>((*result.batch)[5]);
+  const auto& done = std::get<domain::DoneEvent>((*result.batch())[5]);
   EXPECT_EQ(done.order_id, domain::OrderId{3U});
   EXPECT_EQ(done.reason, domain::DoneReason::filled);
   EXPECT_EQ(done.remaining_quantity, domain::Quantity{});
@@ -302,16 +333,29 @@ TEST(MatchingEngineResult, MoveInvalidatesTheSourceWithoutUnsafeObservers) {
   EXPECT_FALSE(source.has_value());
   EXPECT_FALSE(source.committed());
   EXPECT_FALSE(source.rejected());
-  EXPECT_FALSE(source.batch.has_value());
+  EXPECT_EQ(source.batch(), nullptr);
   ASSERT_TRUE(moved.committed());
 
-  EngineResult assigned;
+  auto assigned = EngineResult::failure(EngineError::internal_failure);
   assigned = std::move(moved);
   EXPECT_FALSE(moved.has_value());
   EXPECT_FALSE(moved.committed());
   EXPECT_FALSE(moved.rejected());
-  EXPECT_FALSE(moved.batch.has_value());
+  EXPECT_EQ(moved.batch(), nullptr);
   ASSERT_TRUE(assigned.committed());
+}
+
+TEST(MatchingEngineResult, FactoriesRejectInvalidErrorVocabularyAndExposeOneOutcome) {
+  EXPECT_THROW(static_cast<void>(EngineResult::failure(EngineError::none)), std::invalid_argument);
+  EXPECT_THROW(static_cast<void>(EngineResult::failure(static_cast<EngineError>(255U))),
+               std::invalid_argument);
+
+  auto failure = EngineResult::failure(EngineError::sequence_exhausted);
+  EXPECT_FALSE(failure);
+  EXPECT_EQ(failure.batch(), nullptr);
+  EXPECT_EQ(failure.error(), EngineError::sequence_exhausted);
+  EXPECT_FALSE(failure.committed());
+  EXPECT_FALSE(failure.rejected());
 }
 
 TEST(MatchingEngineVocabulary, HasStableStrings) {

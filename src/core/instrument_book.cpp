@@ -195,19 +195,19 @@ InstrumentBook::~InstrumentBook() noexcept { drain(); }
 InstrumentBook::PreparedRest::PreparedRest(InstrumentBook& owner, OrderNode& node,
                                            std::unique_ptr<PriceLevel> staging_level,
                                            PreparedLevel prepared_level,
-                                           OrderNode* replacement_old) noexcept
+                                           domain::OrderId replacement_old_id) noexcept
     : owner_{&owner},
       node_{&node},
       staging_level_{std::move(staging_level)},
       prepared_level_{std::move(prepared_level)},
-      replacement_old_{replacement_old} {}
+      replacement_old_id_{replacement_old_id} {}
 
 InstrumentBook::PreparedRest::PreparedRest(PreparedRest&& other) noexcept
     : owner_{std::exchange(other.owner_, nullptr)},
       node_{std::exchange(other.node_, nullptr)},
       staging_level_{std::move(other.staging_level_)},
       prepared_level_{std::move(other.prepared_level_)},
-      replacement_old_{std::exchange(other.replacement_old_, nullptr)},
+      replacement_old_id_{std::exchange(other.replacement_old_id_, {})},
       status_{std::exchange(other.status_, {})} {}
 
 InstrumentBook::PreparedRest& InstrumentBook::PreparedRest::operator=(
@@ -218,7 +218,7 @@ InstrumentBook::PreparedRest& InstrumentBook::PreparedRest::operator=(
     node_ = std::exchange(other.node_, nullptr);
     staging_level_ = std::move(other.staging_level_);
     prepared_level_ = std::move(other.prepared_level_);
-    replacement_old_ = std::exchange(other.replacement_old_, nullptr);
+    replacement_old_id_ = std::exchange(other.replacement_old_id_, {});
     status_ = std::exchange(other.status_, {});
   }
   return *this;
@@ -231,7 +231,8 @@ void InstrumentBook::PreparedRest::rollback() noexcept {
     return;
   }
   if (node_ == nullptr || staging_level_ == nullptr || owner_->pending_node_ != node_ ||
-      owner_->pending_level_ != staging_level_.get()) {
+      owner_->pending_level_ != staging_level_.get() ||
+      owner_->pending_replacement_old_id_ != replacement_old_id_) {
     std::terminate();
   }
 
@@ -251,10 +252,11 @@ void InstrumentBook::PreparedRest::rollback() noexcept {
   auto* const owner = std::exchange(owner_, nullptr);
   owner->pending_node_ = nullptr;
   owner->pending_level_ = nullptr;
+  owner->pending_replacement_old_id_ = {};
   node_ = nullptr;
   staging_level_.reset();
   prepared_level_ = std::monostate{};
-  replacement_old_ = nullptr;
+  replacement_old_id_ = {};
   owner->enforce_postconditions();
 }
 
@@ -266,7 +268,7 @@ RestOrderResult InstrumentBook::PreparedRest::commit() noexcept {
             status_.valid() ? make_status(InstrumentBookError::book_invariant_violation) : status_,
     };
   }
-  if (replacement_old_ != nullptr) {
+  if (replacement_old_id_.value() != 0U) {
     return {
         .node = nullptr,
         .status = make_status(InstrumentBookError::replacement_transaction_required),
@@ -342,10 +344,11 @@ RestOrderResult InstrumentBook::PreparedRest::commit() noexcept {
   auto* const owner = std::exchange(owner_, nullptr);
   owner->pending_node_ = nullptr;
   owner->pending_level_ = nullptr;
+  owner->pending_replacement_old_id_ = {};
   node_ = nullptr;
   staging_level_.reset();
   prepared_level_ = std::monostate{};
-  replacement_old_ = nullptr;
+  replacement_old_id_ = {};
   owner->enforce_postconditions();
   return {.node = committed_node, .status = {}};
 }
@@ -389,6 +392,12 @@ InstrumentBook::PreparedRest InstrumentBook::prepare_rest_impl(const OrderNodeSp
                                     ActiveOrderIndexError::duplicate_order_id)};
   }
 
+#if defined(ATLAS_ENABLE_TEST_ACCESS) && ATLAS_ENABLE_TEST_ACCESS
+  if (preparation_allocation_hook_ != nullptr) {
+    preparation_allocation_hook_(PreparationAllocationStage::detached_level);
+  }
+#endif
+
   PreparedRest::PreparedLevel prepared_level;
   if (spec.side == domain::Side::buy) {
     auto prepared = bids_.prepare_detached_level(spec.price);
@@ -406,7 +415,18 @@ InstrumentBook::PreparedRest InstrumentBook::prepare_rest_impl(const OrderNodeSp
     prepared_level.emplace<AskBookSide::DetachedLevel>(std::move(prepared));
   }
 
+#if defined(ATLAS_ENABLE_TEST_ACCESS) && ATLAS_ENABLE_TEST_ACCESS
+  if (preparation_allocation_hook_ != nullptr) {
+    preparation_allocation_hook_(PreparationAllocationStage::staging_level);
+  }
+#endif
   auto staging_level = std::make_unique<PriceLevel>(spec.price);
+
+#if defined(ATLAS_ENABLE_TEST_ACCESS) && ATLAS_ENABLE_TEST_ACCESS
+  if (preparation_allocation_hook_ != nullptr) {
+    preparation_allocation_hook_(PreparationAllocationStage::storage_node);
+  }
+#endif
   const auto created = storage_.create(spec);
   if (!created) {
     const auto error = created.error == StorageError::duplicate_order_id
@@ -450,6 +470,11 @@ InstrumentBook::PreparedRest InstrumentBook::prepare_rest_impl(const OrderNodeSp
   }
 
   try {
+#if defined(ATLAS_ENABLE_TEST_ACCESS) && ATLAS_ENABLE_TEST_ACCESS
+    if (preparation_allocation_hook_ != nullptr) {
+      preparation_allocation_hook_(PreparationAllocationStage::active_index);
+    }
+#endif
     const auto index_error = index_.insert(*node);
     if (index_error != ActiveOrderIndexError::none) {
       cleanup_node(false);
@@ -461,10 +486,13 @@ InstrumentBook::PreparedRest InstrumentBook::prepare_rest_impl(const OrderNodeSp
     throw;
   }
 
+  const auto replacement_old_id =
+      replacement_old == nullptr ? domain::OrderId{} : replacement_old->order_id();
   PreparedRest result{*this, *node, std::move(staging_level), std::move(prepared_level),
-                      replacement_old};
+                      replacement_old_id};
   pending_node_ = node;
   pending_level_ = result.staging_level_.get();
+  pending_replacement_old_id_ = replacement_old_id;
   enforce_postconditions();
   return result;
 }
@@ -528,6 +556,9 @@ InstrumentBookStatus InstrumentBook::preflight_node(const OrderNode& node) const
   const auto* const indexed = index_.find(node.order_id());
   if (indexed == nullptr || indexed != &node) {
     return make_status(InstrumentBookError::node_not_indexed);
+  }
+  if (pending_replacement_old_id_.value() != 0U && node.order_id() == pending_replacement_old_id_) {
+    return make_status(InstrumentBookError::replacement_transaction_required);
   }
   if (node.instrument_id() != instrument_id_) {
     return make_status(InstrumentBookError::instrument_mismatch);
@@ -644,6 +675,12 @@ RemoveOrderResult InstrumentBook::cancel(domain::OrderId order_id) noexcept {
         .status = make_status(InstrumentBookError::unknown_order_id),
     };
   }
+  if (order_id == pending_replacement_old_id_) {
+    return {
+        .order = {},
+        .status = make_status(InstrumentBookError::replacement_transaction_required),
+    };
+  }
   return remove_prevalidated(*node);
 }
 
@@ -668,7 +705,8 @@ PrevalidatedBatchStatus InstrumentBook::apply_prevalidated_batch(
     if (!prepared_rest->has_value() || prepared_rest->owner_ != this ||
         prepared_rest->node_ != pending_node_ ||
         prepared_rest->staging_level_.get() != pending_level_ ||
-        prepared_rest->replacement_old_ != nullptr) {
+        prepared_rest->replacement_old_id_.value() != 0U ||
+        pending_replacement_old_id_.value() != 0U) {
       return fail(PrevalidatedBatchError::preparation_mismatch);
     }
 
@@ -830,14 +868,16 @@ PrevalidatedBatchStatus InstrumentBook::apply_prevalidated_replace_batch(
   }
 
   if (prepared_rest == nullptr) {
-    if (pending_node_ != nullptr || pending_level_ != nullptr) {
+    if (pending_node_ != nullptr || pending_level_ != nullptr ||
+        pending_replacement_old_id_.value() != 0U) {
       return fail(PrevalidatedBatchError::preparation_mismatch);
     }
   } else {
     if (!prepared_rest->has_value() || prepared_rest->owner_ != this ||
         prepared_rest->node_ != pending_node_ ||
         prepared_rest->staging_level_.get() != pending_level_ ||
-        prepared_rest->replacement_old_ != old_reduction.node) {
+        prepared_rest->replacement_old_id_ != old_reduction.order_id ||
+        pending_replacement_old_id_ != old_reduction.order_id) {
       return fail(PrevalidatedBatchError::preparation_mismatch);
     }
 
@@ -1029,9 +1069,10 @@ OrderNode* InstrumentBook::commit_prepared_no_check(PreparedRest& prepared_rest)
   prepared_rest.node_ = nullptr;
   prepared_rest.staging_level_.reset();
   prepared_rest.prepared_level_ = std::monostate{};
-  prepared_rest.replacement_old_ = nullptr;
+  prepared_rest.replacement_old_id_ = {};
   pending_node_ = nullptr;
   pending_level_ = nullptr;
+  pending_replacement_old_id_ = {};
   return node;
 }
 
@@ -1057,7 +1098,8 @@ InstrumentBookInvariantResult InstrumentBook::validate_invariants() const noexce
   }
   const bool has_pending_node = pending_node_ != nullptr;
   const bool has_pending_level = pending_level_ != nullptr;
-  if (has_pending_node != has_pending_level) {
+  const bool has_pending_replacement = pending_replacement_old_id_.value() != 0U;
+  if (has_pending_node != has_pending_level || (has_pending_replacement && !has_pending_node)) {
     return fail(InstrumentBookInvariantError::pending_state_mismatch, pending_node_);
   }
 
@@ -1097,6 +1139,27 @@ InstrumentBookInvariantResult InstrumentBook::validate_invariants() const noexce
         pending_level_->tail() != pending_node_) {
       return fail(InstrumentBookInvariantError::pending_node_invariant, pending_node_,
                   pending_node_->order_id(), pending_node_->price());
+    }
+  }
+  if (has_pending_replacement) {
+    const auto* const old_order = index_.find(pending_replacement_old_id_);
+    if (old_order == nullptr || old_order == pending_node_ ||
+        storage_.find(pending_replacement_old_id_) != old_order ||
+        old_order->order_id() != pending_replacement_old_id_ ||
+        old_order->instrument_id() != instrument_id_ ||
+        old_order->instrument_id() != pending_node_->instrument_id() ||
+        old_order->client_id() != pending_node_->client_id() ||
+        old_order->side() != pending_node_->side() || !domain::is_valid(old_order->side()) ||
+        !old_order->is_linked() || old_order->price_level() == nullptr) {
+      return fail(InstrumentBookInvariantError::pending_replacement_invariant, old_order,
+                  pending_replacement_old_id_);
+    }
+    const auto* const visible_level = old_order->side() == domain::Side::buy
+                                          ? bids_.find_level(old_order->price())
+                                          : asks_.find_level(old_order->price());
+    if (visible_level == nullptr || visible_level != old_order->price_level()) {
+      return fail(InstrumentBookInvariantError::pending_replacement_invariant, old_order,
+                  pending_replacement_old_id_, old_order->price());
     }
   }
 
@@ -1183,7 +1246,8 @@ void InstrumentBook::enforce_postconditions() const noexcept {
 }
 
 void InstrumentBook::drain() noexcept {
-  if (pending_node_ != nullptr || pending_level_ != nullptr) {
+  if (pending_node_ != nullptr || pending_level_ != nullptr ||
+      pending_replacement_old_id_.value() != 0U) {
     std::terminate();
   }
   while (!index_.empty()) {

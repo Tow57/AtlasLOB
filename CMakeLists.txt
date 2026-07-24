@@ -96,7 +96,7 @@ function(atlas_configure_core target_name)
   target_compile_features(${target_name} PUBLIC cxx_std_20)
   target_compile_definitions(
     ${target_name}
-    PUBLIC ATLAS_ENABLE_INVARIANTS=$<BOOL:${ATLAS_ENABLE_INVARIANTS}>
+    PRIVATE ATLAS_ENABLE_INVARIANTS=$<BOOL:${ATLAS_ENABLE_INVARIANTS}>
   )
   set_target_properties(${target_name} PROPERTIES CXX_EXTENSIONS OFF)
   atlas_set_project_warnings(${target_name})

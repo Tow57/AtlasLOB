@@ -6,6 +6,16 @@ The format is based on Keep a Changelog, and public releases will follow semanti
 
 ## [Unreleased]
 
+### Changed
+
+- Made public `EngineResult` states mutually exclusive through validated factories and read-only
+  observers.
+- Replaced prepared replacement raw-pointer identity with a pinned active `OrderId`; direct
+  mutation of the old order is rejected until commit or rollback.
+- Successful `BookSide::PreparedLevel` commit now invalidates its guard completely.
+- Kept the expensive invariant toggle private to the core build instead of exporting it to
+  consumers.
+
 ### Added
 
 - C++20 domain library, CLI, and unit-test foundation.
@@ -51,6 +61,8 @@ The format is based on Keep a Changelog, and public releases will follow semanti
   strict instrument parsing, and explicit exit-code precedence.
 - Independent map/deque matching model coverage for 10,000 mixed commands plus a 2,500-command
   deterministic transcript rerun.
+- Regression coverage for preparation-stage allocation failures, replacement pin move/rollback,
+  passive terminal-ID reuse, SHA-256 padding boundaries, and signed-price canonical encoding.
 - ADR 0003 documenting node ownership, pointer invalidation, and internal error boundaries.
 - ADRs 0004 through 0009 documenting ordered-side, indexed-book, admission, planning,
   execution-preparation, atomic New/Cancel, atomic Replace, and public API boundaries.

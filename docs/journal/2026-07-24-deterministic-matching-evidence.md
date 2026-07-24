@@ -45,7 +45,7 @@ mutable implementation details.
 | Release CTest suite | Passed, 254/254 |
 | Production-only build | Passed |
 | Local Clang and ASan/UBSan | Unavailable unless a compatible compiler is installed |
-| Hosted GCC, Clang, and ASan/UBSan jobs | Pending publication |
+| Hosted GCC, Clang, ASan/UBSan, and formatting | Passed at `98f02dc` in run `30068791327` |
 
 An independent review found no blocker or high-severity issue. Its medium finding—that the random
 stream deliberately bounded the book below the configured capacity—was closed with the directed

@@ -1,10 +1,13 @@
 #include <gtest/gtest.h>
 
+#include <array>
 #include <cstdint>
 #include <limits>
+#include <new>
 #include <type_traits>
 #include <utility>
 
+#include "core_test_access.hpp"
 #include "instrument_book.hpp"
 
 namespace {
@@ -13,6 +16,16 @@ using namespace atlaslob;
 using namespace atlaslob::core;
 
 constexpr domain::InstrumentId instrument_id{11U};
+
+PreparationAllocationStage armed_allocation_stage{PreparationAllocationStage::detached_level};
+bool allocation_failure_armed{};
+
+void fail_at_armed_allocation_stage(PreparationAllocationStage stage) {
+  if (allocation_failure_armed && stage == armed_allocation_stage) {
+    allocation_failure_armed = false;
+    throw std::bad_alloc{};
+  }
+}
 
 static_assert(!std::is_copy_constructible_v<InstrumentBook::PreparedRest>);
 static_assert(!std::is_copy_assignable_v<InstrumentBook::PreparedRest>);
@@ -278,6 +291,46 @@ TEST(InstrumentBookPreparedRest, SecondPreparationAndOrdinaryCrossingRestFailAto
   EXPECT_EQ(book.best_ask(), ask.node->price_level());
   EXPECT_EQ(book.find(domain::OrderId{4U}), nullptr);
   EXPECT_TRUE(book.validate_invariants());
+}
+
+TEST(InstrumentBookPreparedRest, AllocationFailuresLeaveNoHiddenOrVisibleMutation) {
+  constexpr std::array stages{
+      PreparationAllocationStage::detached_level,
+      PreparationAllocationStage::staging_level,
+      PreparationAllocationStage::storage_node,
+      PreparationAllocationStage::active_index,
+  };
+
+  for (const auto stage : stages) {
+    SCOPED_TRACE(static_cast<std::uint8_t>(stage));
+    InstrumentBook book{instrument_id};
+    const auto original = book.rest(order_spec(1U, domain::Side::buy, 10'000, 5U, 1U));
+    ASSERT_TRUE(original);
+    auto* const original_level = original.node->price_level();
+    ASSERT_NE(original_level, nullptr);
+
+    armed_allocation_stage = stage;
+    allocation_failure_armed = true;
+    core::test::CoreAccess::set_preparation_allocation_hook(book, fail_at_armed_allocation_stage);
+    EXPECT_THROW(
+        {
+          auto prepared = book.prepare_rest(order_spec(2U, domain::Side::buy, 9'900, 7U, 2U));
+          static_cast<void>(prepared);
+        },
+        std::bad_alloc);
+    core::test::CoreAccess::set_preparation_allocation_hook(book, nullptr);
+
+    EXPECT_FALSE(allocation_failure_armed);
+    EXPECT_FALSE(book.has_pending_preparation());
+    EXPECT_EQ(book.active_order_count(), 1U);
+    EXPECT_EQ(book.find(domain::OrderId{2U}), nullptr);
+    EXPECT_EQ(book.best_bid(), original_level);
+    EXPECT_EQ(original_level->head(), original.node);
+    EXPECT_EQ(original_level->tail(), original.node);
+    EXPECT_EQ(original_level->aggregate_quantity(), domain::Quantity{5U});
+    EXPECT_EQ(original_level->order_count(), 1U);
+    EXPECT_TRUE(book.validate_invariants());
+  }
 }
 
 }  // namespace

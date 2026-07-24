@@ -179,6 +179,27 @@ TEST(Sha256, MatchesPublishedEmptyAndAbcVectors) {
             "b00361a396177a9cb410ff61f20015ad");
 }
 
+TEST(Sha256, CoversPaddingAndMultipleBlockBoundaries) {
+  struct Vector final {
+    std::size_t length;
+    const char* digest;
+  };
+  constexpr std::array vectors{
+      Vector{55U, "9f4390f8d30c2dd92ec9f095b65e2b9ae9b0a925a5258e241c9f1e910f734318"},
+      Vector{56U, "b35439a4ac6f0948b6d6f9e3c6af0f5f590ce20f1bde7090ef7970686ec6738a"},
+      Vector{63U, "7d3e74a05d7db15bce4ad9ec0658ea98e3f06eeecf16b4c6fff2da457ddc2f34"},
+      Vector{64U, "ffe054fe7ae0cb6dc65c3af9b61d5209f439851db43d0ba5997337df154668eb"},
+      Vector{65U, "635361c48bb9eab14198e76ea8ab7f1a41685d6ad62aa9146d301d4f17eb0ae0"},
+      Vector{1'000U, "41edece42d63e8d9bf515a9ba6932e1c20cbc9f5a5d134645adb5db1b9737ea3"},
+  };
+
+  for (const auto& vector : vectors) {
+    const std::vector<std::uint8_t> input(vector.length, static_cast<std::uint8_t>('a'));
+    EXPECT_EQ(core::test::sha256_for_testing(input).hex(), vector.digest)
+        << "length=" << vector.length;
+  }
+}
+
 TEST(Digest256, RendersLowercaseFixedWidthHex) {
   Digest256 digest;
   for (std::size_t index = 0U; index < digest.bytes.size(); ++index) {
@@ -205,6 +226,41 @@ TEST(CanonicalStateDigest, MatchesIndependentEmptyAndRepresentativeGoldens) {
   EXPECT_EQ(state_digest(representative_snapshot()).hex(),
             "fe84a7515664b05af4f390ea77f04088"
             "3c13b2ac5ce1867f8d69b8a37ccbd16f");
+}
+
+TEST(CanonicalStateDigest, EncodesSignedPricesAsTwosComplement) {
+  const BookSnapshot snapshot{
+      .semantics_version = atlaslob_semantics_version,
+      .instrument_id = instrument_id,
+      .last_sequence = domain::Sequence{1U},
+      .sequence_exhausted = false,
+      .active_order_count = 1U,
+      .bids =
+          {
+              PriceLevelSnapshot{
+                  .price = domain::PriceTicks{-1},
+                  .aggregate_quantity = domain::Quantity{2U},
+                  .orders =
+                      {
+                          OrderSnapshot{
+                              .order_id = domain::OrderId{1U},
+                              .client_id = domain::ClientId{1U},
+                              .instrument_id = instrument_id,
+                              .side = domain::Side::buy,
+                              .price = domain::PriceTicks{-1},
+                              .remaining_quantity = domain::Quantity{2U},
+                              .priority_sequence = domain::Sequence{1U},
+                          },
+                      },
+              },
+          },
+      .asks = {},
+  };
+
+  // Independently generated from the ADR 0009 byte layout with Node's big-endian Buffer writes.
+  EXPECT_EQ(state_digest(snapshot).hex(),
+            "b5880e8068c991792de0b598f6afb3b5"
+            "7c7cd35ffce405275008c9e503d54ad6");
 }
 
 TEST(CanonicalStateDigest, CoversEverySnapshotFieldAndFifoOrder) {
@@ -416,7 +472,7 @@ TEST(MatchingEngineSnapshot, RejectionAdvancesCanonicalSequenceOnly) {
   expected.last_sequence = domain::Sequence{2U};
   EXPECT_EQ(after, expected);
   EXPECT_NE(engine.state_digest(), before_digest);
-  EXPECT_EQ(event_digest(*rejected.batch), event_digest(*rejected.batch));
+  EXPECT_EQ(event_digest(*rejected.batch()), event_digest(*rejected.batch()));
 }
 
 }  // namespace

@@ -53,6 +53,16 @@ class CoreAccess final {
     book.instrument_id_ = instrument_id;
   }
 
+  static void set_pending_replacement_old_id(InstrumentBook& book,
+                                             domain::OrderId order_id) noexcept {
+    book.pending_replacement_old_id_ = order_id;
+  }
+
+  static void set_preparation_allocation_hook(InstrumentBook& book,
+                                              PreparationAllocationHook hook) noexcept {
+    book.preparation_allocation_hook_ = hook;
+  }
+
   [[nodiscard]] static OrderNode* replace_index_entry(ActiveOrderIndex& index,
                                                       domain::OrderId order_id,
                                                       OrderNode* replacement) noexcept {

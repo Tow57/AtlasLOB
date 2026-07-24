@@ -192,7 +192,12 @@ TEST(BookSidePreparedLevel, AppendAndCommitPublishAValidLevel) {
   ASSERT_EQ(prepared.commit(), BookSideError::none);
   tracked.push_back({.level = level, .node = created.node});
 
+  EXPECT_FALSE(prepared);
+  EXPECT_FALSE(prepared.has_value());
+  EXPECT_EQ(prepared.level(), nullptr);
   EXPECT_FALSE(prepared.created());
+  EXPECT_EQ(prepared.error(), BookSideError::none);
+  EXPECT_EQ(prepared.commit(), BookSideError::level_invariant_violation);
   EXPECT_EQ(bids.find_level(domain::PriceTicks{10'250}), level);
   EXPECT_EQ(bids.best_level(), level);
   EXPECT_TRUE(bids.validate_invariants());
@@ -382,6 +387,12 @@ TEST(BookSide, PrepareAndFindExposeTheSameStableExistingLevel) {
   EXPECT_FALSE(duplicate.created());
   EXPECT_EQ(duplicate.error(), BookSideError::none);
   EXPECT_EQ(duplicate.commit(), BookSideError::none);
+  EXPECT_FALSE(duplicate);
+  EXPECT_FALSE(duplicate.has_value());
+  EXPECT_EQ(duplicate.level(), nullptr);
+  EXPECT_FALSE(duplicate.created());
+  EXPECT_EQ(duplicate.error(), BookSideError::none);
+  EXPECT_EQ(duplicate.commit(), BookSideError::level_invariant_violation);
   EXPECT_EQ(bids.level_count(), 1U);
 
   const auto& const_bids = std::as_const(bids);

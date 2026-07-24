@@ -158,4 +158,5 @@ throughput or latency claim is attached to them.
 - The reference model compares 12,566 executed commands including the deterministic rerun and
   directed exact-capacity scenario.
 - Local Debug and Release suites pass 254/254 tests, and the production-only build succeeds.
-  Hosted GCC, Clang, ASan, and UBSan results remain a pull-request requirement.
+- The published Phase 2 head passed hosted GCC, Clang, ASan/UBSan, and pinned formatting in
+  GitHub Actions run `30068791327`.

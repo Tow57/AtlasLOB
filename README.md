@@ -15,9 +15,11 @@ latency claims.
 
 ## Current status
 
-**Phase 2 matching MVP complete locally on the current development branch: price-time New,
-Cancel, and atomic Replace execution, a public single-instrument engine, canonical state/event
-digests, and independent command-stream comparison are implemented; hosted PR gates remain**
+**Phase 2 matching MVP complete on the current development branch: price-time New, Cancel, and
+atomic Replace execution, a public single-instrument engine, canonical state/event digests, and
+independent command-stream comparison are implemented. The published Phase 2 head passed GCC,
+Clang, ASan/UBSan, and pinned-formatting CI; every follow-up commit must pass the same gates before
+merge.**
 
 | Capability | Status | Evidence |
 | --- | --- | --- |
@@ -31,22 +33,22 @@ digests, and independent command-stream comparison are implemented; hosted PR ga
 | Stable owning order-node storage | Complete | `atlas_core_tests`, ADR 0003 |
 | Checked intrusive FIFO price levels | Complete | Core mutation, invariant, and stress tests |
 | Ordered bid/ask sides and best-price access | Complete | `core.BookSide*` tests, ADR 0004 |
-| Active-order index and direct cancellation | Complete locally; hosted gates pending | `core.ActiveOrderIndex*`, `core.InstrumentBook*`, ADR 0005 |
-| Sequenced command admission and state validation | Complete locally; hosted gates pending | `core.CommandAdmission*`, ADR 0006 |
-| Read-only match planning and final-capacity projection | Complete locally; hosted gates pending | `core.MatchPlan*`, ADR 0006 |
-| Owned normalized event batches and prepared residuals | Complete locally; hosted gates pending | `core.EventBatchBuilder*`, `core.InstrumentBookPreparedRest*` |
-| Atomic limit/market New execution | Complete locally; hosted gates pending | `core.CommandExecutor*`, ADR 0007 |
-| Sequenced Cancel execution and normalized events | Complete locally; hosted gates pending | `core.CommandExecutorCancel*`, ADR 0007 |
-| Atomic Replace with priority reset | Complete locally; hosted gates pending | `core.CommandExecutorReplace*`, ADR 0008 |
-| Public single-instrument matching facade | Complete locally; hosted gates pending | `atlaslob::MatchingEngine`, ADR 0008 |
-| Canonical snapshots and state/event digests | Complete locally; hosted gates pending | `core.Canonical*`, ADR 0009 |
-| Executable matching fixture | Complete locally; hosted gates pending | `atlas_cli engine-fixture`, golden integration fixtures |
-| Independent command-stream comparison | Complete locally; hosted gates pending | 10,000 mixed commands plus deterministic rerun |
-| GCC and Clang CI | Passing on `main`; required per PR | `.github/workflows/ci.yml` |
-| ASan and UBSan CI | Passing on `main`; required per PR | `asan-ubsan` preset and CI job |
-| Pinned clang-format gate | Passing on `main`; required per PR | `format-check` CI job |
-| Resting book structure | Complete locally; hosted gates pending | `stress.InstrumentBookStress*` |
-| Matching and normalized command execution | Complete locally; hosted gates pending | Phase 2 |
+| Active-order index and direct cancellation | Complete | `core.ActiveOrderIndex*`, `core.InstrumentBook*`, ADR 0005 |
+| Sequenced command admission and state validation | Complete | `core.CommandAdmission*`, ADR 0006 |
+| Read-only match planning and final-capacity projection | Complete | `core.MatchPlan*`, ADR 0006 |
+| Owned normalized event batches and prepared residuals | Complete | `core.EventBatchBuilder*`, `core.InstrumentBookPreparedRest*` |
+| Atomic limit/market New execution | Complete | `core.CommandExecutor*`, ADR 0007 |
+| Sequenced Cancel execution and normalized events | Complete | `core.CommandExecutorCancel*`, ADR 0007 |
+| Atomic Replace with priority reset | Complete | `core.CommandExecutorReplace*`, ADR 0008 |
+| Public single-instrument matching facade | Complete | `atlaslob::MatchingEngine`, ADR 0008 |
+| Canonical snapshots and state/event digests | Complete | `core.Canonical*`, ADR 0009 |
+| Executable matching fixture | Complete | `atlas_cli engine-fixture`, golden integration fixtures |
+| Independent command-stream comparison | Complete | 10,000 mixed commands plus deterministic rerun |
+| GCC and Clang CI | Passing on `main` and published Phase 2 head; required per PR | `.github/workflows/ci.yml` |
+| ASan and UBSan CI | Passing on `main` and published Phase 2 head; required per PR | `asan-ubsan` preset and CI job |
+| Pinned clang-format gate | Passing on `main` and published Phase 2 head; required per PR | `format-check` CI job |
+| Resting book structure | Complete | `stress.InstrumentBookStress*` |
+| Matching and normalized command execution | Complete | Phase 2 |
 | Replay, Python bindings, benchmarks, gateway | Planned | Later gated phases |
 
 ## Quick start

@@ -13,6 +13,15 @@
 
 namespace atlaslob::core {
 
+enum class PreparationAllocationStage : std::uint8_t {
+  detached_level = 1,
+  staging_level = 2,
+  storage_node = 3,
+  active_index = 4,
+};
+
+using PreparationAllocationHook = void (*)(PreparationAllocationStage);
+
 enum class InstrumentBookError : std::uint8_t {
   none = 0,
   invalid_instrument_id = 1,
@@ -212,6 +221,7 @@ enum class InstrumentBookInvariantError : std::uint8_t {
   crossed_book = 15,
   pending_state_mismatch = 16,
   pending_node_invariant = 17,
+  pending_replacement_invariant = 18,
 };
 
 [[nodiscard]] constexpr std::string_view to_string(InstrumentBookInvariantError error) noexcept {
@@ -252,6 +262,8 @@ enum class InstrumentBookInvariantError : std::uint8_t {
       return "pending_state_mismatch";
     case InstrumentBookInvariantError::pending_node_invariant:
       return "pending_node_invariant";
+    case InstrumentBookInvariantError::pending_replacement_invariant:
+      return "pending_replacement_invariant";
   }
   return "unknown";
 }
@@ -308,7 +320,7 @@ class InstrumentBook final {
 
     explicit PreparedRest(InstrumentBookStatus status) noexcept : status_{status} {}
     PreparedRest(InstrumentBook& owner, OrderNode& node, std::unique_ptr<PriceLevel> staging_level,
-                 PreparedLevel prepared_level, OrderNode* replacement_old) noexcept;
+                 PreparedLevel prepared_level, domain::OrderId replacement_old_id) noexcept;
 
     void rollback() noexcept;
 
@@ -316,10 +328,11 @@ class InstrumentBook final {
     OrderNode* node_{};
     std::unique_ptr<PriceLevel> staging_level_;
     PreparedLevel prepared_level_;
-    // Non-null only for prepare_replace_rest(). The pointer remains owned by
-    // the visible book until apply_prevalidated_replace_batch() crosses its
-    // no-fail mutation boundary.
-    OrderNode* replacement_old_{};
+    // Nonzero only for prepare_replace_rest(). The book pins this active ID
+    // against direct mutation until the guard commits or rolls back. Keeping
+    // identity rather than an owning object's address makes failed preflight
+    // safe even if an internal contract violation removed the binding.
+    domain::OrderId replacement_old_id_{};
     InstrumentBookStatus status_{};
   };
 
@@ -338,7 +351,8 @@ class InstrumentBook final {
   }
   [[nodiscard]] bool empty() const noexcept { return active_order_count() == 0U; }
   [[nodiscard]] bool has_pending_preparation() const noexcept {
-    return pending_node_ != nullptr || pending_level_ != nullptr;
+    return pending_node_ != nullptr || pending_level_ != nullptr ||
+           pending_replacement_old_id_.value() != 0U;
   }
 
   [[nodiscard]] PreparedRest prepare_rest(const OrderNodeSpec& spec);
@@ -380,6 +394,7 @@ class InstrumentBook final {
  private:
 #if defined(ATLAS_ENABLE_TEST_ACCESS) && ATLAS_ENABLE_TEST_ACCESS
   friend class test::CoreAccess;
+  PreparationAllocationHook preparation_allocation_hook_{};
 #endif
 
   [[nodiscard]] InstrumentBookStatus preflight_node(const OrderNode& node) const noexcept;
@@ -398,6 +413,10 @@ class InstrumentBook final {
   ActiveOrderIndex index_;
   OrderNode* pending_node_{};
   PriceLevel* pending_level_{};
+  // Nonzero only while a prepared replacement residual is outstanding.
+  // Public direct mutation paths reject this exact active ID; unrelated
+  // passive orders remain mutable.
+  domain::OrderId pending_replacement_old_id_{};
 };
 
 }  // namespace atlaslob::core

@@ -5,8 +5,8 @@
 
 #include "checked_arithmetic.hpp"
 
-#ifndef ATLAS_ENABLE_INVARIANTS
-#error "atlas_core must publish ATLAS_ENABLE_INVARIANTS to its consumers"
+#ifdef ATLAS_ENABLE_INVARIANTS
+#error "ATLAS_ENABLE_INVARIANTS is an atlas_core implementation detail"
 #endif
 
 namespace {
@@ -14,9 +14,7 @@ namespace {
 using atlaslob::core::detail::checked_add;
 using atlaslob::core::detail::checked_subtract;
 
-TEST(CoreConfiguration, InvariantDefinitionIsBoolean) {
-  EXPECT_TRUE(ATLAS_ENABLE_INVARIANTS == 0 || ATLAS_ENABLE_INVARIANTS == 1);
-}
+TEST(CoreConfiguration, InvariantDefinitionIsPrivateToCore) { SUCCEED(); }
 
 TEST(CheckedArithmetic, AddsWithoutOverflow) {
   std::uint64_t result = 99U;

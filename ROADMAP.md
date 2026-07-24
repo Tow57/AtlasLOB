@@ -20,13 +20,13 @@ satisfied.
 - [x] Ordered bid and ask sides with best-price access.
 - [x] Direct indexed cancellation without level scans.
 - [x] Full structural invariants and fixed-seed stress tests.
-- [ ] Hosted sanitizer evidence for the completed indexed-book slice.
+- [x] Hosted sanitizer evidence for the completed indexed-book slice.
 
 The resting-book structure now provides ordered sides, stable level addresses, guarded level
 preparation, a checked active-order index, direct cancellation, active-only ID reuse, safe
 teardown, and cross-structure invariants. A 10,000-operation fixed-seed model stress test checks
-the complete book after every mutation. Hosted sanitizer evidence remains open until the branch
-can be published; matching begins as a separate Phase 2 layer.
+the complete book after every mutation. The published Phase 2 head passed hosted GCC, Clang, and
+ASan/UBSan with the indexed-book slice included.
 
 ADR 0005 records the accepted ownership boundary: storage remains the sole node owner, a checked
 non-owning index provides direct identity lookup, and one centralized path performs level unlink,
@@ -71,8 +71,10 @@ event digests, committed/rejected/malformed golden engine fixtures, and a struct
 map/deque reference model. Four fixed seeds compare 10,000 mixed commands after every transition;
 a further 2,500-command rerun verifies the complete digest transcript, and 66 directed commands
 prove exact-capacity rejection and terminal execution. Local Debug and Release suites pass
-254/254 tests and the production-only build passes. Hosted compiler and sanitizer evidence remains
-a pull-request gate.
+254/254 tests and the production-only build passes. The published Phase 2 head subsequently passed
+hosted GCC, Clang, ASan/UBSan, and pinned formatting. A hardening follow-up makes public result
+states mutually exclusive, pins prepared replacement identity safely, and expands the local suite
+to 264 tests; that follow-up must rerun the same hosted gates before merge.
 
 ## Phase 3 - Independent correctness evidence
 

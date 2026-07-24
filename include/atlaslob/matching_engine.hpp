@@ -5,8 +5,10 @@
 #include <limits>
 #include <memory>
 #include <optional>
+#include <stdexcept>
 #include <string_view>
 #include <utility>
+#include <variant>
 
 #include "atlaslob/book_snapshot.hpp"
 #include "atlaslob/digest.hpp"
@@ -53,41 +55,63 @@ struct BookTop final {
   bool operator==(const BookTop&) const = default;
 };
 
-struct EngineResult final {
-  std::optional<domain::EventBatch> batch{};
-  EngineError error{EngineError::none};
+class EngineResult final {
+ public:
+  [[nodiscard]] static EngineResult success(domain::EventBatch batch) noexcept {
+    return EngineResult{std::move(batch)};
+  }
 
-  EngineResult() = default;
+  [[nodiscard]] static EngineResult failure(EngineError error) {
+    if (error != EngineError::sequence_exhausted && error != EngineError::internal_failure) {
+      throw std::invalid_argument{"EngineResult failure requires a concrete engine error"};
+    }
+    return EngineResult{error};
+  }
+
   EngineResult(const EngineResult&) = delete;
   EngineResult& operator=(const EngineResult&) = delete;
-  EngineResult(EngineResult&& other) noexcept : batch{std::move(other.batch)}, error{other.error} {
-    other.batch.reset();
-    other.error = EngineError::none;
+  EngineResult(EngineResult&& other) noexcept : state_{std::move(other.state_)} {
+    other.state_.template emplace<MovedFrom>();
   }
   EngineResult& operator=(EngineResult&& other) noexcept {
     if (this != &other) {
-      batch = std::move(other.batch);
-      error = other.error;
-      other.batch.reset();
-      other.error = EngineError::none;
+      state_ = std::move(other.state_);
+      other.state_.template emplace<MovedFrom>();
     }
     return *this;
   }
   ~EngineResult() = default;
 
-  [[nodiscard]] bool has_value() const noexcept {
-    return batch.has_value() && !batch->empty() && error == EngineError::none;
+  [[nodiscard]] const domain::EventBatch* batch() const noexcept {
+    return std::get_if<domain::EventBatch>(&state_);
   }
 
+  [[nodiscard]] EngineError error() const noexcept {
+    const auto* value = std::get_if<EngineError>(&state_);
+    return value == nullptr ? EngineError::none : *value;
+  }
+
+  [[nodiscard]] bool has_value() const noexcept { return batch() != nullptr; }
+
   [[nodiscard]] bool rejected() const noexcept {
-    return has_value() && domain::event_type((*batch)[0]) == domain::EventType::rejected;
+    const auto* value = batch();
+    return value != nullptr && domain::event_type((*value)[0]) == domain::EventType::rejected;
   }
 
   [[nodiscard]] bool committed() const noexcept {
-    return has_value() && domain::event_type((*batch)[0]) == domain::EventType::accepted;
+    const auto* value = batch();
+    return value != nullptr && domain::event_type((*value)[0]) == domain::EventType::accepted;
   }
 
   [[nodiscard]] explicit operator bool() const noexcept { return has_value(); }
+
+ private:
+  struct MovedFrom final {};
+
+  explicit EngineResult(domain::EventBatch batch) noexcept : state_{std::move(batch)} {}
+  explicit EngineResult(EngineError error) noexcept : state_{error} {}
+
+  std::variant<MovedFrom, domain::EventBatch, EngineError> state_;
 };
 
 class MatchingEngine final {

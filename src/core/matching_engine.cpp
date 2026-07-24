@@ -28,16 +28,14 @@ namespace {
 }
 
 [[nodiscard]] EngineResult translate(core::CommandExecutionResult result) {
-  EngineResult translated;
   if (result) {
-    translated.batch.emplace(std::move(*result.batch));
-    return translated;
+    return EngineResult::success(std::move(*result.batch));
   }
 
-  translated.error = result.admission_error == core::CommandAdmissionError::sequence_exhausted
-                         ? EngineError::sequence_exhausted
-                         : EngineError::internal_failure;
-  return translated;
+  return EngineResult::failure(result.admission_error ==
+                                       core::CommandAdmissionError::sequence_exhausted
+                                   ? EngineError::sequence_exhausted
+                                   : EngineError::internal_failure);
 }
 
 template <domain::Side RestingSide>

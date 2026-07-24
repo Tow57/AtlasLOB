@@ -95,10 +95,10 @@ void write_summary(std::ostream& output, const MatchingEngine& engine,
     if (!result) {
       ++counts.engine_errors;
       output << "line=" << line_number << " ENGINE_ERROR reason=";
-      if (result.error == EngineError::none) {
+      if (result.error() == EngineError::none) {
         output << "invalid_result";
       } else {
-        output << to_string(result.error);
+        output << to_string(result.error());
       }
       output << " state_digest=" << engine.state_digest().hex() << '\n';
       continue;
@@ -117,7 +117,7 @@ void write_summary(std::ostream& output, const MatchingEngine& engine,
       continue;
     }
 
-    const auto& batch = *result.batch;
+    const auto& batch = *result.batch();
     output << "line=" << line_number << " batch_sequence=" << batch.command_sequence().value()
            << " outcome=" << outcome << " events=";
     write_event_types(output, batch);
