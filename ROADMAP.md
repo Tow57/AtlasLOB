@@ -121,21 +121,21 @@ passes 10 exact 5,000-command cases. Checked evidence records a passing epoch-0 
 build, pinned clang-format, Ruff, strict mypy, and wheel build/install smoke gates also pass
 locally. Published PR #5 head `29049756` passed every required hosted GCC/Clang Release,
 ASan/UBSan, Python 3.11-3.14, formatting, wheel, PR-corpus, and Linux link-safety gate. This closes
-the Phase 3 implementation and evidence gate. PR #5 remains open rather than remotely merged
-because GitHub authentication is unavailable in this session; remote `main` therefore still ends
-at Phase 2.
+the Phase 3 implementation and evidence gate. PR #5 remains open rather than remotely merged, so
+remote `main` still ends at Phase 2.
 
 ## Phase 4 - Deterministic infrastructure and Python
 
-- [ ] Multi-instrument routing and global sequencing - implemented and locally validated; hosted
-  validation and merge pending.
-- [ ] Explicit append-only command log codec - implemented and locally validated; hosted validation
-  and merge pending.
-- [ ] Inspector, replay, corruption, and truncated-tail tests - implemented and locally validated;
-  hosted sanitizer/libFuzzer validation and merge pending.
+- [ ] Multi-instrument routing and global sequencing - implemented and green on the hosted PR3
+  stack; merge pending.
+- [ ] Explicit append-only command log codec - implemented and green on the hosted PR3 stack;
+  merge pending.
+- [ ] Inspector, replay, corruption, and truncated-tail tests - implemented and green in hosted
+  sanitizer/libFuzzer smoke on the PR3 stack; merge pending.
 - [ ] Canonical persisted snapshot plus log-suffix recovery - implemented and validated by the
-  full local GCC/Python/production gates; hosted validation and merge pending.
-- [ ] pybind11 batch API and distributable native-backed Python package.
+  full local gates and green hosted PR3 checks; merge pending.
+- [ ] pybind11 batch API and distributable native-backed Python package - implemented and locally
+  validated; hosted PR4 validation and merge pending.
 
 [ADR 0012](docs/decisions/0012-multi-instrument-routing-and-global-sequencing.md) defines the first
 Phase 4 slice. The local `codex/phase4-router` work adds an immutable, eagerly constructed
@@ -166,11 +166,11 @@ recovery rather than permitting the session to continue. Since the log stores ev
 digest rather than complete expected events, diagnostic replay cannot reconstruct an expected
 field-level event body without a separate transcript.
 
-PR1 and PR2 are locally validated with hosted integration pending. The stacked PR3 working branch
-passes 482/482 GCC Debug and Release CTest cases, the production-only build, the 288-test
-non-campaign and 11-test marked Python selections, and the CLI process-boundary check. The local
-Windows toolchain lacks ASan/UBSan runtimes and Clang libFuzzer, so those authoritative hosted
-gates remain pending.
+PR1 and PR2 are locally validated and revalidated as part of the green hosted PR3 stack; their
+individual integration remains pending. PR3 passes 482/482 GCC Debug and Release CTest cases, the
+production-only build, the 288-test non-campaign and 11-test marked Python selections, and the CLI
+process-boundary check. Its 13 hosted compiler, sanitizer, decoder-fuzz-smoke, Python, formatting,
+wheel, and differential checks are green.
 
 [ADR 0014](docs/decisions/0014-persisted-snapshots-and-log-suffix-recovery.md) and the
 [snapshot format reference](docs/snapshot-format.md) define the implemented `ATLSSN01` V1 slice.
@@ -184,9 +184,26 @@ remains read-only until copy-only repair creates a new clean log.
 
 The focused 60-case recovery selection reports 59 passes and one expected Windows
 canonical-symlink skip. GCC Debug and Release each pass 482/482 CTest cases, the production-only
-build passes, and both Python selections above pass. Hosted Clang, ASan/UBSan, actual Clang
-libFuzzer execution, publication, and merge remain pending. Native bindings remain the final
-Phase 4 slice. Current evidence status is indexed in
+build passes, both Python selections above pass, and the published PR3 head passes all 13 hosted
+checks. Merge remains pending.
+
+[ADR 0015](docs/decisions/0015-native-python-bindings-and-packaging.md) defines the implemented
+final Phase 4 slice. Version 0.2.0 exposes `atlaslob.Engine` lazily over the private
+`atlaslob._native_engine` pybind11 module while preserving import isolation for the independent
+oracle. It provides strict full-batch preflight, immutable owned results, object/column/summary
+batch modes, live and logged engines, clean writable recovery, torn valid-prefix read-only
+recovery, and snapshot publication. Python conversion occurs before taking the per-engine mutex;
+Python-free execution releases the GIL, and each batch holds one engine mutex so calls on that
+engine cannot interleave.
+
+PR4's local gate passes 482/482 CTest cases in both GCC Debug and Release, 354 Python tests with
+two expected Windows canonical-symlink skips, the 11 campaign/fuzz tests, Ruff, strict mypy, and
+formatting. `cibuildwheel==4.1.0` builds CPython 3.11-3.14 manylinux x86-64 wheels that pass
+contents, auditwheel, and clean-container smoke checks. The PEP 517 source distribution also
+builds, installs, and smokes in a clean environment. Real-binding tests cover batch-mode parity,
+Unicode persistence paths, clean and torn recovery, same-engine noninterleaving, released-GIL
+thread progress, and ownership after later mutation. Hosted PR4 validation and integration remain
+pending. Current evidence status is indexed in
 [the Phase 4 evidence record](docs/evidence/phase4/README.md).
 
 ## Phase 5 - Measured portfolio release

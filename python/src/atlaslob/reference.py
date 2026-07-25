@@ -49,14 +49,7 @@ from atlaslob.domain import (
     TopOfBookLevel,
     TradeEvent,
 )
-
-
-@dataclass(frozen=True, slots=True)
-class BookTop:
-    """Value-only best bid and ask view."""
-
-    best_bid: TopOfBookLevel | None
-    best_ask: TopOfBookLevel | None
+from atlaslob.domain import BookTop as BookTop
 
 
 @dataclass(slots=True)

@@ -2,7 +2,7 @@ cmake_minimum_required(VERSION 3.25)
 
 project(
   AtlasLOB
-  VERSION 0.1.0
+  VERSION 0.2.0
   DESCRIPTION "Deterministic C++20 limit order book and matching engine"
   LANGUAGES CXX
 )
@@ -19,6 +19,16 @@ option(ATLAS_ENABLE_UBSAN "Enable UndefinedBehaviorSanitizer" OFF)
 option(ATLAS_ENABLE_TSAN "Enable ThreadSanitizer" OFF)
 option(ATLAS_ENABLE_INVARIANTS "Enable expensive internal invariant checks" ON)
 option(ATLAS_BUILD_FUZZERS "Build Clang libFuzzer decoder targets" OFF)
+option(ATLAS_BUILD_PYTHON "Build the private CPython extension module" OFF)
+
+if(ATLAS_BUILD_PYTHON)
+  # The native extension links the project libraries into a shared module.
+  # Ordinary C++ builds remain unaffected when the option is disabled.
+  set(BUILD_SHARED_LIBS OFF CACHE BOOL "Build AtlasLOB project libraries as shared" FORCE)
+  set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+  set(CMAKE_CXX_VISIBILITY_PRESET hidden)
+  set(CMAKE_VISIBILITY_INLINES_HIDDEN ON)
+endif()
 
 add_library(atlas_domain)
 add_library(AtlasLOB::domain ALIAS atlas_domain)
@@ -189,6 +199,59 @@ target_compile_features(atlas_persistence PUBLIC cxx_std_20)
 set_target_properties(atlas_persistence PROPERTIES CXX_EXTENSIONS OFF)
 atlas_set_project_warnings(atlas_persistence)
 atlas_enable_sanitizers(atlas_persistence)
+
+if(ATLAS_BUILD_PYTHON)
+  set(PYBIND11_FINDPYTHON ON)
+  find_package(Python 3.11 REQUIRED COMPONENTS Interpreter Development.Module)
+  find_package(pybind11 3.0.4 CONFIG REQUIRED)
+
+  pybind11_add_module(
+    atlas_native_engine
+    MODULE
+    src/python/native_engine_module.cpp
+  )
+  target_link_libraries(atlas_native_engine PRIVATE AtlasLOB::persistence)
+  target_include_directories(
+    atlas_native_engine
+    PRIVATE
+      "${CMAKE_CURRENT_SOURCE_DIR}/src/core"
+      "${CMAKE_CURRENT_SOURCE_DIR}/src/persistence"
+  )
+  target_compile_features(atlas_native_engine PRIVATE cxx_std_20)
+  set_target_properties(
+    atlas_native_engine
+    PROPERTIES
+      CXX_EXTENSIONS OFF
+      CXX_VISIBILITY_PRESET hidden
+      VISIBILITY_INLINES_HIDDEN ON
+      OUTPUT_NAME "_native_engine"
+  )
+  if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    set(ATLAS_NATIVE_ENGINE_VERSION_SCRIPT
+        "${CMAKE_CURRENT_SOURCE_DIR}/cmake/AtlasNativeEngineExports.map")
+    target_link_options(
+      atlas_native_engine
+      PRIVATE "LINKER:--version-script=${ATLAS_NATIVE_ENGINE_VERSION_SCRIPT}"
+    )
+    set_property(
+      TARGET atlas_native_engine
+      APPEND
+      PROPERTY LINK_DEPENDS "${ATLAS_NATIVE_ENGINE_VERSION_SCRIPT}"
+    )
+  endif()
+  atlas_set_project_warnings(atlas_native_engine)
+  atlas_enable_sanitizers(atlas_native_engine)
+
+  install(
+    TARGETS atlas_native_engine
+    LIBRARY
+      DESTINATION atlaslob
+      COMPONENT python
+    RUNTIME
+      DESTINATION atlaslob
+      COMPONENT python
+  )
+endif()
 
 if(ATLAS_BUILD_FUZZERS)
   if(NOT CMAKE_CXX_COMPILER_ID MATCHES "Clang" OR MSVC)

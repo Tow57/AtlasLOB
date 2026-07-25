@@ -3,7 +3,8 @@
 This document defines AtlasLOB's implemented command vocabulary, pure validation behavior, stable
 order-node ownership, ordered resting book, direct cancellation, command admission, value-only
 event batches, read-only matching plans, atomic New/Cancel/Replace execution, and public single-
-and multi-instrument engine boundaries with canonical deterministic evidence.
+and multi-instrument engine boundaries with canonical deterministic evidence, persistence, and
+the native Python adapter contract.
 
 ## Values and enumerations
 
@@ -191,8 +192,8 @@ nor caller-selected sequences are installed public API.
 
 ## Command-log and replay contract
 
-ADR 0013 freezes `ATLSLG01` command-log format V1. Its implementation is complete locally; hosted
-Clang, sanitizer, actual Clang libFuzzer execution, pull-request, and merge gates remain pending.
+ADR 0013 freezes `ATLSLG01` command-log format V1. Its implementation is complete on the stacked
+Phase 4 branches; integration remains pending.
 
 The header contains semantic/configuration identity, one opaque 16-byte log ID, first sequence 1,
 the sorted instrument catalog, an `ATLSCF01` configuration digest, and CRC32C. Every multibyte
@@ -257,7 +258,7 @@ reports contain no elapsed times or host paths.
 
 ## Persisted snapshot and recovery contract
 
-ADR 0014 freezes and the working PR3 branch implements `ATLSSN01` persisted-snapshot format V1.
+ADR 0014 freezes and PR3 implements `ATLSSN01` persisted-snapshot format V1.
 It stores the exact `ATLSLG01` log ID and byte boundary, authoritative global sequence/exhaustion
 state, canonical catalog and capacity, every configured instrument, nonempty levels in best-price
 order, orders in FIFO order, redundant aggregates/counts, `ATLSCF01`, `ATLSME01`, and one
@@ -291,6 +292,53 @@ Standalone inspection uses `ATLAS_SNAPSHOT_REPORT_V1`; snapshot-aware recovery u
 `ATLAS_REPLAY_REPORT_V2`; log-only V1 remains unchanged. Reports contain no elapsed times or host
 paths.
 
+## Native Python boundary
+
+ADR 0015 freezes the native Python adapter without changing semantic version 6 or the domain,
+event, state, log, or snapshot encodings. Distribution version 0.2.0 exposes
+`atlaslob.Engine` lazily over the private CPython-specific `atlaslob._native_engine` pybind11
+module. The independent `ReferenceEngine`, `ReferenceRouter`, generators, shrinkers,
+canonicalization, differential tooling, and subprocess adapter do not import the extension.
+Requesting `Engine` with a missing or binding-ABI-incompatible module raises `ImportError`; no
+reference fallback executes commands.
+
+Python catalog and command conversion is an adapter operation. Exact supported value objects are
+materialized into owned C++ values while the GIL is held. Every integer field rejects `bool`,
+checks its signed or unsigned representation range, and reports conversion failure before domain
+submission. Unknown raw enum values within the eight-bit representation are forwarded to domain
+validation and therefore consume a sequence as ordinary rejections. A finite batch is completely
+iterated, type-checked, and range-checked before its first command runs, so a malformed late
+element executes none of the batch.
+
+Batch execution preserves input order and is prefix-committing rather than transactional. Domain
+and state rejections count as processed and do not stop execution. A terminal `EngineError`
+counts as processed, is returned in object or column evidence, and leaves later commands
+unprocessed. A persistence failure publishes no result for its failed command and carries the
+successfully published prefix separately. Object mode returns immutable owned event results;
+column mode returns owned standard-library arrays with command/event offsets and explicit
+presence arrays; summary mode returns counts, terminal status, and the final digest without
+materializing individual results. All modes agree on counts and final engine digest.
+
+A native engine is live, logged, or recovered read-only. Clean full-log or snapshot-plus-suffix
+recovery returns a writable log-attached engine. Strict recovery rejects a torn final record.
+Valid-prefix recovery from a torn tail returns an inspectable read-only engine; submission and
+snapshot publication fail before locking or mutation and direct the caller to copy-only tail
+repair followed by strict recovery. Complete corruption never becomes a valid-prefix warning.
+Operational persistence, structural recovery, snapshot, and read-only errors remain distinct
+from `EngineError`.
+
+All Python arguments are converted before locking. Python-free C++ execution releases the GIL,
+then takes one per-engine mutex for the complete batch; calls on one engine therefore cannot
+interleave, while distinct engines may execute concurrently. Python objects are materialized only
+after releasing the engine mutex and reacquiring the GIL. No returned event, array, snapshot,
+report, pointer, span, or view borrows engine-owned storage.
+
+The ordinary CMake build leaves `ATLAS_BUILD_PYTHON=OFF`. Package builds use
+scikit-build-core 1.0.3 and pybind11 3.0.4, install only the private extension and Python package,
+and produce CPython-minor-specific manylinux x86-64 wheels for Python 3.11 through 3.14 plus a
+source distribution. Windows/macOS wheels, `abi3`, PyPy, free-threaded Python, and PyPI
+publication remain outside Phase 4.
+
 ## Error boundaries
 
 - Parse errors describe malformed adapter input and are not domain rejections.
@@ -315,6 +363,11 @@ paths.
   platform error was reported.
 - Torn-tail valid-prefix replay is standalone recovery evidence, not authorization to append to
   that file. Writable recovery requires a clean exact extent after safe repair.
+- Python conversion failures consume no sequence. Persistence, recovery, snapshot, and read-only
+  adapter failures are not translated into a domain rejection or `EngineError`.
+- A Python batch may commit a valid prefix before a terminal engine or persistence failure; later
+  commands remain unprocessed, and result-materialization failure does not roll back native
+  state.
 
 ## Matching planning and execution boundary
 
@@ -413,8 +466,9 @@ multi-engine observers additionally expose catalog membership, total active coun
 top/snapshot values, one complete engine snapshot, and the engine-wide state digest. Node
 addresses, levels, indexes, planners, prepared transactions, and detailed internal component
 errors are not public API. Allocation failure propagates. The command-log/replay contract and local
-PR2 implementation plus the persisted-snapshot/recovery PR3 implementation are complete locally;
-full PR3 and hosted validation remain pending.
+PR2 implementation plus the persisted-snapshot/recovery PR3 implementation are complete. PR3's
+hosted checks are green; stacked integration remains pending. The native Python adapter is
+implemented and locally validated, with hosted PR4 validation pending.
 
 ## Canonical snapshots and digests
 

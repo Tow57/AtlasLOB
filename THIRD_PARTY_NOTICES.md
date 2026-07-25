@@ -1,7 +1,8 @@
 # Third-Party Notices
 
-AtlasLOB's production library currently depends only on the C++ standard library. When tests are
-enabled, CMake fetches the following pinned test-only dependency.
+AtlasLOB's C++ production libraries depend only on the C++ standard library. The optional native
+Python extension uses the pinned build dependencies listed below. When tests are enabled, CMake
+fetches the following pinned test-only dependency.
 
 ## GoogleTest
 
@@ -14,13 +15,30 @@ enabled, CMake fetches the following pinned test-only dependency.
 GoogleTest is used only by AtlasLOB's test targets and is not linked into the production libraries
 or command-line executable.
 
+## Native Python build and wheel tools
+
+The installed `atlaslob` package has no third-party Python runtime dependency. Building its private
+CPython extension and official wheel artifacts uses these exactly pinned tools:
+
+| Project | Version | Source | License |
+| --- | --- | --- | --- |
+| scikit-build-core | 1.0.3 | <https://github.com/scikit-build/scikit-build-core> | Apache-2.0 |
+| pybind11 | 3.0.4 | <https://github.com/pybind/pybind11> | BSD-3-Clause |
+| cibuildwheel | 4.1.0 | <https://github.com/pypa/cibuildwheel> | BSD-2-Clause |
+| build | 1.3.0 | <https://github.com/pypa/build> | MIT |
+| auditwheel | 6.4.2 | <https://github.com/pypa/auditwheel> | MIT |
+
+scikit-build-core drives the PEP 517 CMake build, pybind11 supplies the CPython binding layer, and
+cibuildwheel builds the retained Linux wheel artifacts. `build` creates the retained source
+distribution, and auditwheel inspects repaired wheel dependencies. They are build or development
+tools and are not imported by the installed runtime package.
+
 ## Python development and evidence tools
 
 The Python correctness package has no runtime dependency outside the Python standard library. The
 Phase 4 `ReferenceRouter`, Generator V2, canonical evidence, and shrinking modules preserve that
-boundary and add no third-party runtime dependency. The isolated build uses setuptools 83.0.0
-under the MIT license. Its optional development/test group declares these exactly pinned
-top-level tools:
+boundary and add no third-party runtime dependency. Its optional development/test group declares
+these exactly pinned top-level tools:
 
 | Project | Version | Source | License |
 | --- | --- | --- | --- |
