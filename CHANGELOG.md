@@ -8,6 +8,11 @@ The format is based on Keep a Changelog, and public releases will follow semanti
 
 ### Changed
 
+- Migrated the `atlaslob` distribution to scikit-build-core 1.0.3 and version 0.2.0 while keeping
+  the native extension opt-in for ordinary CMake builds and preserving extension-free imports for
+  the independent oracle, generators, shrinkers, and differential tooling.
+- Added a lazy `atlaslob.Engine` export with an explicit private binding-ABI check and no silent
+  fallback to the Python reference model.
 - Routed the existing single-instrument `MatchingEngine` through the shared multi-instrument
   coordinator without changing its public API or frozen Phase 2/3 evidence encodings.
 - Moved authoritative publication of command sequences above individual instrument executors.
@@ -49,6 +54,25 @@ The format is based on Keep a Changelog, and public releases will follow semanti
 
 ### Added
 
+- A private pybind11 3.0.4 `_native_engine` module and public immutable Python engine values for
+  live execution, write-ahead logged execution, clean writable recovery, torn valid-prefix
+  read-only recovery, top-of-book inspection, snapshots, state digests, and snapshot publication.
+- Strict Python catalog and command conversion with exact object types, explicit `bool`
+  rejection, checked integer ranges, raw in-range enum forwarding, Unicode path support, and
+  complete finite-batch preflight before the first command is submitted.
+- Prefix-committing native batch submission with owned object, typed-column, and summary payload
+  modes, consistent outcome accounting and final digests, terminal engine-error stopping, and
+  structured persistence-failure prefix evidence.
+- Per-engine mutex serialization with one lock held across a complete batch, released-GIL
+  Python-free C++ execution, and caller-owned results that remain valid after later engine
+  mutation or destruction.
+- CPython 3.11-3.14 manylinux x86-64 wheel and PEP 517 source-distribution builds using
+  cibuildwheel 4.1.0, with clean-environment smoke, wheel-content, dynamic-dependency, exact
+  one-symbol extension-export, import isolation, binding parity, recovery, concurrency, and
+  ownership coverage.
+- ADR 0015 documenting the native import/ABI boundary, strict preflight, batch semantics,
+  persistence errors, read-only recovery, GIL/mutex ordering, result ownership, and packaging
+  policy.
 - A non-copyable `MultiInstrumentEngine` facade with an immutable sorted catalog, eager independent
   books, global sequence observers, per-instrument top/snapshot access, and complete engine
   snapshots.
@@ -204,16 +228,18 @@ The format is based on Keep a Changelog, and public releases will follow semanti
   production-only and formatting gates, Ruff, strict mypy, and wheel build/install smoke. The
   published Phase 3 PR #5 head `29049756` passed all required hosted compiler, sanitizer, Python,
   formatting, wheel, PR-corpus, and Linux link-safety checks. Phase 3 is complete on that published
-  head, but it remains remotely unmerged because GitHub authentication is unavailable in this
-  session. Phase 4 PR1 router work is implemented and passes its available local Debug/Release,
-  formatting, Python, stress, and cross-language gates; hosted validation remains pending. Phase 4
-  PR2 command-log/replay implementation now passes the local Debug, Release, production-only,
-  persistence, Python, typing, linting, and formatting gates; hosted Clang, sanitizer, libFuzzer,
-  pull-request, and merge gates remain pending. On the stacked Phase 4 PR3 working branch, GCC
-  Debug and Release each pass 482/482 CTest cases, the production-only build passes, the
-  288-test non-campaign and 11-test marked Python selections pass, and the CLI process-boundary
-  check passes. Its 60-case focused recovery selection reports 59 passes plus one expected Windows
-  canonical-symlink skip. Hosted Clang, sanitizer, actual libFuzzer execution, pull-request, and
-  merge gates remain pending.
+  head, but it remains remotely unmerged. Phase 4 PR1 router work is implemented and passes its
+  available local Debug/Release, formatting, Python, stress, and cross-language gates. Phase 4 PR2
+  command-log/replay implementation passes the local Debug, Release, production-only,
+  persistence, Python, typing, linting, and formatting gates. Phase 4 PR3 passes 482/482 CTest
+  cases in both GCC configurations, the production-only and Python gates, and all 13 hosted
+  compiler, sanitizer, decoder-fuzz-smoke, Python, formatting, wheel, and differential checks,
+  revalidating the complete stacked router/log/snapshot state; integration remains pending. On the
+  PR4 working branch, GCC Debug and Release each pass 482/482 CTest cases, Python reports 354
+  passes with two expected Windows canonical-symlink skips plus 11 campaign/fuzz passes, and Ruff,
+  strict mypy, and formatting pass. Local cibuildwheel builds and clean-smokes CPython 3.11-3.14
+  manylinux x86-64 wheels with the required contents and no unexpected auditwheel dependency; a
+  PEP 517 source distribution also builds, installs, and smokes cleanly. All 15 hosted PR4 checks
+  pass; stacked integration and merge remain pending.
 - ADR 0011, the Phase 3 evidence index, and documented dependency deferrals for Phase 4,
   Phase 6, and future persistence-format fuzzing.

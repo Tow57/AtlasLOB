@@ -243,6 +243,14 @@ class TopOfBookLevel:
 
 
 @dataclass(frozen=True, slots=True)
+class BookTop:
+    """Value-only best bid and ask view shared by native and oracle engines."""
+
+    best_bid: TopOfBookLevel | None
+    best_ask: TopOfBookLevel | None
+
+
+@dataclass(frozen=True, slots=True)
 class BookChangedEvent:
     header: EventHeader
     best_bid: TopOfBookLevel | None

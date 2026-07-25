@@ -15,6 +15,7 @@ from atlaslob.canonical import engine_state_digest
 from atlaslob.domain import (
     ATLASLOB_SEMANTICS_VERSION,
     U64_MAX,
+    BookTop,
     CancelOrder,
     Command,
     EngineError,
@@ -34,7 +35,6 @@ from atlaslob.domain import (
     command_type,
 )
 from atlaslob.reference import (
-    BookTop,
     ReferenceEngine,
     _Order,
     _Rejection,

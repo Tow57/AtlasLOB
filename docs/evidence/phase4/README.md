@@ -1,43 +1,50 @@
 # Phase 4 evidence index
 
 This directory indexes Phase 4 and distinguishes locally implemented evidence surfaces from
-contracts or validation that are still in progress. The router slice is not remotely merged.
-The command-log/replay PR2 contract and implementation are complete locally, with hosted
-Clang/sanitizer/libFuzzer validation and remote integration still pending. The
-persisted-snapshot/recovery PR3 contract and implementation are also complete on the working
-branch. Its 60-case selected recovery gate reports 59 passes plus one expected Windows
-canonical-symlink skip. GCC Debug and Release each pass 482/482 CTest cases, the production-only
-build and both Python selections pass, and the CLI process-boundary check passes. Hosted
-compiler/sanitizer/libFuzzer validation remains pending. These slices do not complete Phase 4
-because native Python packaging is still outstanding.
+hosted validation or integration that is still pending. The four slices are stacked as router,
+command-log/replay, persisted snapshots/recovery, and native Python packaging. PR3's 13 hosted
+compiler, sanitizer, decoder-fuzz-smoke, Python, formatting, wheel, and differential checks are
+green. PR4 is implemented and locally validated: its native pybind11 engine, strict preflight,
+three batch modes, logging/recovery/snapshot API, GIL/mutex boundary, four CPython 3.11-3.14
+manylinux wheels, and source distribution pass the local gates recorded below. All 15 hosted PR4
+checks are green; stacked integration remains pending.
 
 ## Current status
 
 - Base: published Phase 3 PR #5 head
   `29049756e250fef04aac819c457438f0f01149c3`.
 - Phase 3 prerequisite: required hosted gates passed.
-- Remote integration: PR #5 remains open because the available GitHub integration cannot create or
-  merge pull requests in this repository; remote `main` still ends at Phase 2.
-- Router implementation: published on `codex/phase4-router` at `dd9bcc2`.
+- Remote integration: draft PR #5 remains open and remote `main` still ends at Phase 2. The Phase 4
+  router, command-log, snapshot, and native-Python slices are published as sequential draft PRs
+  #7, #8, #6, and #9.
+- Router implementation: published on `codex/phase4-router`.
 - Router local gate: GCC Debug and Release each pass 333/333 CTest tests; the pinned C++ formatter,
   296-test Python suite with two Windows privilege skips, 41 focused V2 tests, Ruff, and strict mypy
-  pass. Hosted Clang/sanitizer validation and remote integration remain pending.
+  pass. The green hosted PR3 head revalidates the stacked router code; individual integration
+  remains pending.
 - Command-log/replay contract: ADR 0013 and the byte-level `ATLSLG01` V1 reference are accepted on
   `codex/phase4-command-log`.
 - Command-log/replay implementation: complete locally. GCC Debug and Release each pass 418/418
   CTest cases, including 85 persistence cases. The production-only build, pinned formatter,
   288-test non-campaign Python gate with two expected Windows symlink skips, Ruff, and strict mypy
-  pass. The deterministic decoder mutation/truncation suite passes; actual Clang libFuzzer and
-  ASan/UBSan execution remain authoritative hosted gates because the local Windows toolchain lacks
-  those runtimes.
+  pass. The deterministic decoder mutation/truncation suite passes, and the green hosted PR3 head
+  revalidates this stack with ASan/UBSan and bounded Clang libFuzzer smoke.
 - Snapshot/recovery contract and implementation: ADR 0014 and the byte-level `ATLSSN01` V1
-  reference are implemented on the PR3 working branch. The focused selection contains 11 core
+  reference are implemented on PR3. The focused selection contains 11 core
   restore, 21 codec, 22 publication/recovery/inspection/report, two exact-extent append-sink, and
   four exact V2 report cases; 59 pass and the canonical-symlink case is an expected Windows skip.
   GCC Debug and Release each pass 482/482 CTest cases. The production-only build, 288-test
   non-campaign and 11-test marked Python selections, and Unicode-path/LF-only CLI
-  process-boundary script also pass. Hosted Clang, ASan/UBSan, actual Clang libFuzzer execution,
-  publication, and merge remain pending.
+  process-boundary script also pass. All 13 hosted PR3 checks are green; merge remains pending.
+- Native Python contract and implementation: ADR 0015, `atlaslob.Engine`, the private
+  `_native_engine` module, strict conversion, owned batch outputs, persistence/recovery/snapshot
+  bindings, and package version 0.2.0 are implemented on draft PR #9. GCC Debug and
+  Release each pass 482/482 CTest cases. Python reports 354 passes with two expected Windows
+  canonical-symlink skips plus 11 campaign/fuzz passes. Ruff, strict mypy, and formatting pass.
+- Native package artifacts: cibuildwheel 4.1.0 builds CPython 3.11, 3.12, 3.13, and 3.14
+  manylinux x86-64 wheels. Wheel contents, auditwheel dependencies, and clean-container smokes
+  pass. The PEP 517 source distribution builds, installs, and smokes in a clean environment.
+  All 15 hosted PR4 checks pass.
 
 The accepted contract is [ADR 0012](../../decisions/0012-multi-instrument-routing-and-global-sequencing.md);
 the implementation narrative is the
@@ -49,6 +56,10 @@ The PR3 contract is
 [ADR 0014](../../decisions/0014-persisted-snapshots-and-log-suffix-recovery.md), with exact bytes
 in the [snapshot format reference](../../snapshot-format.md) and current local evidence in the
 [snapshot/recovery journal](../../journal/2026-07-25-phase4-snapshot-recovery.md).
+The PR4 contract is
+[ADR 0015](../../decisions/0015-native-python-bindings-and-packaging.md), with implementation and
+local artifact evidence in the
+[native Python journal](../../journal/2026-07-25-phase4-native-python.md).
 
 ## Implemented evidence surfaces
 
@@ -83,6 +94,13 @@ in the [snapshot format reference](../../snapshot-format.md) and current local e
 | Writable recovery | `LoggedEngine::recover*` | Clean-tail, exact-extent, existing-only append resumption |
 | Snapshot reports | `ATLAS_SNAPSHOT_REPORT_V1`, `ATLAS_REPLAY_REPORT_V2` | Stable path/time-free inspection and recovery evidence |
 | Decoder fuzzing | Three libFuzzer targets | Retained log/snapshot seeds plus bounded hosted smoke job |
+| Public Python engine | `atlaslob.Engine` | Lazy native-only facade with live/logged/recovered backends |
+| Binding ABI | `atlaslob._native_engine` / `BINDING_ABI` | Fail-closed wrapper/extension compatibility check |
+| Strict preflight | Exact Python value conversion | Complete finite batch checked before first submission |
+| Batch evidence | objects, columns, summary | Owned output modes with common counts and final digest |
+| Python recovery | clean writable or torn-prefix read-only | No append to an unrepaired torn authoritative log |
+| Concurrency boundary | GIL release plus per-engine mutex | Whole-batch noninterleaving for one engine |
+| Native distribution | `atlaslob==0.2.0` | CPython 3.11-3.14 manylinux wheels and PEP 517 sdist |
 
 Generator V1, `ATLAS_DIFF_V1`, `ATLSST01`, `ATLSEV01`, Phase 3 campaign policy, retained corpora,
 and failure signatures remain frozen and must continue passing unchanged.
@@ -101,16 +119,16 @@ and failure signatures remain frozen and must continue passing unchanged.
 | Replay | fast/verify/diagnostic; strict/valid-prefix | State/evidence/tail and validated-prefix digest-sensitivity tests pass |
 | Repeated verified replay | Real file-backed log, two independent engine rebuilds | Exact JSON/text report bytes, counts, original snapshots/digests, and follow-on trade events/state agree |
 | Machine reports | `ATLAS_LOG_REPORT_V1`, `ATLAS_REPLAY_REPORT_V1` | Exact JSON/text golden tests pass |
-| Decoder fuzzing | bounded header/record seeds and smoke runs | Deterministic PR2 mutation/smoke evidence passes; hosted libFuzzer pending |
+| Decoder fuzzing | bounded header/record seeds and smoke runs | Deterministic mutation evidence and hosted PR3 libFuzzer smoke pass |
 
 The log stores expected event count and digest, not expected event bodies. Diagnostic replay can
 identify the first divergent record and compare logged metadata with actual replay output, but a
 field-level expected event body requires a separately retained exact transcript.
 
-## Snapshot/recovery local evidence
+## Snapshot/recovery evidence
 
-The rows below describe the focused working-branch evidence. They do not substitute for the
-pending full CTest, hosted, sanitizer, or libFuzzer gates.
+The rows below describe the focused snapshot/recovery evidence. The full local gates and all 13
+hosted PR3 checks also pass.
 
 | Surface | Frozen contract | Current evidence status |
 | --- | --- | --- |
@@ -131,6 +149,30 @@ The focused total is 60 selected cases: 11 core restoration, 21 codec, 22
 publication/recovery/inspection/report, two exact-extent append-sink, and four exact V2 report
 goldens. It reports 59 passes plus one expected Windows canonical-symlink skip. The fixed golden is
 a reviewed literal and is not claimed to come from an independent encoder.
+
+## Native Python local evidence
+
+| Surface | Contract | Current evidence status |
+| --- | --- | --- |
+| Import isolation | Oracle modules never import `_native_engine` | Blocked-extension oracle tests pass; requesting `Engine` fails clearly |
+| ABI boundary | Private integer `BINDING_ABI` | Missing and incompatible extension cases fail closed |
+| Strict conversion | Exact command/config types and integer ranges | `bool`, overflow, wrong shape, late malformed batch, raw invalid enum, and Unicode-path cases pass |
+| Object batch | Immutable owned `EngineResult` tuple | Single/batch identity, result lifetime, rejection continuation, and terminal stopping pass |
+| Column batch | Owned standard-library arrays plus presence columns | Offsets, variant fields, zero/absence distinction, mutation isolation, and object parity pass |
+| Summary batch | Counts, terminal status, and digest only | Counts and final digest agree with object and column modes |
+| Logged execution | Write-ahead native backend | Logged batch parity, rejection persistence, prefix accounting, and poison behavior pass |
+| Recovery | Clean writable; torn valid-prefix read-only | Clean, strict torn, valid-prefix torn, corruption, snapshot, and repaired-copy cases pass |
+| Snapshot publication | Logged engine only | Unicode-directory publication and owned report/snapshot output pass |
+| Same-engine concurrency | One mutex for a complete batch | Concurrent calls receive noninterleaved command-sequence ranges |
+| GIL boundary | Release only for Python-free native work | Another Python thread makes progress during native execution |
+| Oracle/native parity | Independent `ReferenceRouter` and V2 adapter | Named native batches agree on events, state, outcomes, and digests |
+| Wheel matrix | cp311-cp314 manylinux x86-64 | Four wheels build; content, auditwheel, exact extension-export, and clean-container smokes pass |
+| Source distribution | PEP 517 isolated build | Contents, build-from-sdist, clean install, and smoke pass |
+
+Local aggregate evidence is 482/482 CTest cases in both GCC Debug and Release; 354 Python passes
+with two expected Windows canonical-symlink skips; 11 additional campaign/fuzz passes; and green
+Ruff, strict mypy, and formatting checks. All 15 hosted PR4 checks independently revalidate the
+stack on implementation commit `0525c9b`.
 
 ## Router acceptance matrix
 
@@ -153,8 +195,8 @@ The local test surfaces cover:
   reference/native parity; and
 - fixed-seed multi-engine stress with invariant checks after every operation.
 
-These surfaces pass the available local gate recorded above. No hosted Phase 4 result is claimed
-until the final router head is published and checked.
+These surfaces pass the available local gate recorded above. Router draft PR #7 has 12 green
+hosted checks, PR3 has 13, and PR4 has 15; stacked integration remains pending.
 
 ## Local reproduction
 
@@ -186,6 +228,23 @@ python -m ruff check python
 python -m mypy
 ```
 
+Build and inspect the native package artifacts on a Linux x86-64 host with Docker available:
+
+```sh
+python -m cibuildwheel --output-dir wheelhouse .
+python tests/packaging/verify_wheels.py wheelhouse
+python tests/packaging/verify_auditwheel.py wheelhouse
+
+python -m build --sdist --outdir dist
+python tests/packaging/verify_sdist.py dist
+```
+
+Each cibuildwheel environment runs `tests/packaging/wheel_smoke.py` against its installed wheel.
+The audit verifier also requires the Linux extension to define only
+`PyInit__native_engine` in its dynamic export table.
+The source-distribution gate installs `dist/atlaslob-0.2.0.tar.gz` through normal isolated PEP 517
+build handling in a clean environment, then runs the same smoke and `pip check`.
+
 With a non-MSVC Clang toolchain, run the retained decoder seed smoke:
 
 ```sh
@@ -204,18 +263,19 @@ python tests/fuzz/run_command_log_fuzz_smoke.py \
   --corpus-dir build/command-log-fuzz/corpus
 ```
 
-The retained Phase 3 corpus must pass without regenerated V1 goldens. Hosted sanitizer and
-libFuzzer evidence must pass before the stacked persistence slices are integrated.
+The retained Phase 3 corpus passes without regenerated V1 goldens in the hosted PR4 run. Stacked
+integration remains required.
 
 ## Claim boundary
 
-PR1 supplies deterministic in-memory routing and evidence. PR2 supplies the locally validated
-command-log, scanner, write-ahead, repair, replay, reporting, CLI, and fuzz-target implementation.
-PR3 supplies the implemented snapshot codec, all-or-nothing bulk reconstruction, synchronized
-publication, inspection, candidate-safe discovery, log-suffix recovery, and clean-tail writable
-resumption surfaces with the local evidence above. The stacked PRs are not remotely integrated;
-all Phase 4 hosted Clang/sanitizer/libFuzzer results remain pending. Native Python bindings,
-benchmark results, a network gateway, and production-operational guarantees remain outside the
+PR1 supplies deterministic in-memory routing and evidence. PR2 supplies the command-log, scanner,
+write-ahead, repair, replay, reporting, CLI, and fuzz-target implementation. PR3 supplies the
+snapshot codec, all-or-nothing bulk reconstruction, synchronized publication, inspection,
+candidate-safe discovery, log-suffix recovery, and clean-tail writable resumption surfaces; its
+hosted checks are green. PR4 supplies the locally validated native Python facade, strict batches,
+logging/recovery/snapshot bindings, concurrency/ownership boundary, wheels, and source
+distribution; all 15 of its hosted checks are green. The stacked PRs are not yet integrated.
+Benchmark results, a network gateway, and production-operational guarantees remain outside the
 current evidence.
 
 Test counts and elapsed times are correctness metadata only. They are not latency, throughput,

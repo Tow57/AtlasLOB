@@ -15,26 +15,20 @@ latency claims.
 
 ## Current status
 
-**Phase 2 matching MVP remains on remote `main`. Phase 3 is complete on published PR #5 head
-`29049756`: its required hosted GCC/Clang Release, ASan/UBSan, Python 3.11-3.14, formatting, fixed
-PR corpus, wheel, and Linux link-safety checks passed. PR #5 remains open and remotely unmerged
-because the available GitHub integration cannot create or merge pull requests in this repository.
-Phase 4 PR1 is implemented
-and locally validated on `codex/phase4-router`. It adds deterministic multi-instrument
-routing, one global sequence, an engine-wide active-ID directory and capacity, canonical
-`ATLSME01` evidence, a strict test-only `ATLAS_DIFF_V2` adapter, and independent Python
-`ReferenceRouter`/Generator V2 surfaces. Phase 4 PR2 is implemented and locally validated on
-`codex/phase4-command-log`: it adds the canonical `ATLSLG01` log, write-ahead sessions, bounded
-inspection and safe tail repair, verified replay, deterministic reports, command-line tools, and
-decoder fuzz targets. Phase 4 PR3 is implemented on `codex/phase4-snapshot-recovery`: it adds the
-canonical `ATLSSN01` codec, bounded all-or-nothing bulk reconstruction, synchronized no-overwrite
-publication, snapshot inspection, candidate-safe newest-valid discovery, exact log-suffix
-recovery, and clean-tail recovery into a writable `LoggedEngine`. At this documentation
-checkpoint, GCC Debug and Release each pass 482/482 CTest cases, the production-only build passes,
-the 288-test non-campaign and 11-test marked Python selections pass, and the CLI
-process-boundary check passes. The 60-case focused recovery selection reports 59 passes and one
-expected Windows canonical-symlink skip. Hosted Clang, sanitizer, and actual libFuzzer validation
-remain pending. Native Python distribution remains Phase 4 PR4 work.**
+**Phase 2 matching MVP remains on remote `main`. Phase 3 is complete on published draft PR #5;
+its required hosted GCC/Clang Release, ASan/UBSan, Python 3.11-3.14, formatting, fixed PR corpus,
+wheel, and Linux link-safety checks passed. Phase 4 is represented by four sequential slices:
+router draft PR #7, command-log/replay draft PR #8, snapshot/recovery draft PR #6, and
+native-Python draft PR #9. PR3's 13 hosted compiler, sanitizer, fuzz-smoke, Python, formatting,
+wheel, and differential checks are green. PR4 now implements the lazy `atlaslob.Engine` API over
+a private pybind11 extension, strict all-before-execution conversion, owned
+object/column/summary batches,
+logged submission, clean or read-only valid-prefix recovery, snapshot publication, per-engine
+serialization, and released-GIL native work. The package is version 0.2.0 and its local packaging
+gate builds and clean-smokes CPython 3.11-3.14 manylinux x86-64 wheels plus a PEP 517 source
+distribution. Local GCC Debug and Release each pass 482/482 CTest cases; Python reports 354 passes
+with two expected Windows canonical-symlink skips plus 11 campaign/fuzz passes; Ruff, strict mypy,
+and formatting pass. All 15 hosted PR4 checks pass; stacked integration and merge remain pending.**
 
 See the [Phase 4 evidence index](docs/evidence/phase4/README.md) for the current validation
 boundary.
@@ -75,16 +69,17 @@ boundary.
 | GCC and Clang CI | Passed on published Phase 3 PR head | `.github/workflows/ci.yml` |
 | ASan and UBSan CI | Passed on published Phase 3 PR head | `asan-ubsan` preset and CI job |
 | Pinned clang-format gate | Passed on published Phase 3 PR head | `format-check` CI job |
-| Multi-instrument facade and immutable catalog | Complete locally; hosted gate pending | `atlaslob::MultiInstrumentEngine`, ADR 0012 |
-| Global sequence, active-ID directory, and capacity | Complete locally; hosted gate pending | Router unit and stress coverage |
-| Multi-engine snapshots and `ATLSME01` digest | Complete locally; hosted gate pending | Independent C++/Python golden evidence |
-| Native multi-instrument adapter and strict decoder | Complete locally; hosted gate pending | `atlas_diff_multi_native`, `ATLAS_DIFF_V2` |
-| Python `ReferenceRouter` and Generator V2 | Complete locally; hosted gate pending | V2 workload, manifest, and interleaving tests |
-| Append-only command log, scanner, repair, and replay | Complete locally; hosted gate pending | [ADR 0013](docs/decisions/0013-command-log-and-replay.md), [format](docs/command-log-format.md), 85 persistence tests |
-| Persisted snapshot codec, publication, recovery, and clean-tail log resumption | Complete locally; hosted gate pending | [ADR 0014](docs/decisions/0014-persisted-snapshots-and-log-suffix-recovery.md), [format](docs/snapshot-format.md), 60 selected recovery cases |
+| Multi-instrument facade and immutable catalog | Hosted PR3 checks passed; integration pending | `atlaslob::MultiInstrumentEngine`, ADR 0012 |
+| Global sequence, active-ID directory, and capacity | Hosted PR3 checks passed; integration pending | Router unit and stress coverage |
+| Multi-engine snapshots and `ATLSME01` digest | Hosted PR3 checks passed; integration pending | Independent C++/Python golden evidence |
+| Native multi-instrument adapter and strict decoder | Hosted PR3 checks passed; integration pending | `atlas_diff_multi_native`, `ATLAS_DIFF_V2` |
+| Python `ReferenceRouter` and Generator V2 | Hosted PR3 checks passed; integration pending | V2 workload, manifest, and interleaving tests |
+| Append-only command log, scanner, repair, and replay | Hosted PR3 checks passed; integration pending | [ADR 0013](docs/decisions/0013-command-log-and-replay.md), [format](docs/command-log-format.md), 85 persistence tests |
+| Persisted snapshot codec, publication, recovery, and clean-tail log resumption | Hosted PR3 checks passed; integration pending | [ADR 0014](docs/decisions/0014-persisted-snapshots-and-log-suffix-recovery.md), [format](docs/snapshot-format.md), PR #6 |
+| Native pybind11 engine, strict batches, logging, recovery, and snapshots | Hosted PR4 checks passed; integration pending | [ADR 0015](docs/decisions/0015-native-python-bindings-and-packaging.md), Python binding and packaging tests |
+| CPython 3.11-3.14 manylinux wheels and source distribution | Hosted PR4 checks passed; integration pending | `cibuildwheel==4.1.0`, clean wheel/auditwheel and PEP 517 sdist smoke |
 | Resting book structure | Complete | `stress.InstrumentBookStress*` |
 | Matching and normalized command execution | Complete | Phase 2 |
-| Native Python bindings and wheels | Planned | Phase 4 PR4 |
 | Benchmarks and gateway | Planned | Later gated phases |
 
 ## Quick start
@@ -95,10 +90,15 @@ Requirements:
 - Ninja
 - Git, used by CMake to fetch the pinned test-only GoogleTest dependency
 - A C++20 compiler: GCC 13+ or Clang 17+
-- Python 3.11 through 3.14 for the independent correctness-evidence package
+- Python 3.11 through 3.14 for the independent correctness-evidence package and native
+  distribution
 
 The first testing-enabled configure downloads GoogleTest 1.17.0 at an immutable commit. Production
 library builds configured with `BUILD_TESTING=OFF` do not fetch or link GoogleTest.
+
+The ordinary C++ build keeps native Python disabled. Package builds enable the private pybind11
+extension through scikit-build-core; importing the independent oracle does not require that
+extension, while accessing `atlaslob.Engine` fails clearly if it is unavailable.
 
 Configure, build, and test with GCC:
 
@@ -240,6 +240,10 @@ developed with MinGW GCC on Windows, but Linux CI is the support authority.
   intrusive-state restoration, synchronized unique publication, symlink-safe newest-valid
   discovery, exact log-boundary/suffix recovery, clean-tail `LoggedEngine` resumption, and
   separate snapshot-aware report schemas.
+- ADR 0015 freezes the native Python import and ABI boundary, exact preflight conversion,
+  prefix-committing object/column/summary batches, persistence and read-only recovery errors,
+  per-engine mutex and GIL order, owned return values, and the CPython-specific manylinux
+  distribution policy.
 
 See [the semantic contract](docs/semantics.md) and
 [ADR 0001](docs/decisions/0001-core-semantics.md) plus
@@ -255,7 +259,8 @@ See [the semantic contract](docs/semantics.md) and
 [ADR 0011](docs/decisions/0011-deterministic-differential-campaigns.md) plus
 [ADR 0012](docs/decisions/0012-multi-instrument-routing-and-global-sequencing.md) plus
 [ADR 0013](docs/decisions/0013-command-log-and-replay.md) plus
-[ADR 0014](docs/decisions/0014-persisted-snapshots-and-log-suffix-recovery.md) for accepted rules.
+[ADR 0014](docs/decisions/0014-persisted-snapshots-and-log-suffix-recovery.md) plus
+[ADR 0015](docs/decisions/0015-native-python-bindings-and-packaging.md) for accepted rules.
 The
 test-only process, workload, campaign, and failure schemas are documented in
 [Differential testing interface](docs/differential-testing.md).
