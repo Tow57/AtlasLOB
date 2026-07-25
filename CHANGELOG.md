@@ -15,6 +15,29 @@ The format is based on Keep a Changelog, and public releases will follow semanti
 - Successful `BookSide::PreparedLevel` commit now invalidates its guard completely.
 - Kept the expensive invariant toggle private to the core build instead of exporting it to
   consumers.
+- Replaced two tautological canonical-digest assertions with an independently reproduced Python
+  rejection hash and the existing cross-instance/snapshot comparisons.
+- Made native adapter selection fail closed: an explicit `ATLAS_DIFF_NATIVE` never falls back, and
+  a complete evidence run without any adapter now fails instead of skipping process parity.
+- Hardened the native adapter's process boundary so read, snapshot, digest, serialization, output,
+  and terminal-flush failures return the documented fatal exit without appending a second record
+  after partial output.
+- Bound decoded native transcripts to the requested mode, configuration, command stream,
+  checkpoint cadence, contiguous sequence timeline, process exit, and final state; impossible
+  event envelopes, snapshots, and malformed numeric JSON now fail as protocol errors.
+- Aligned the internal oracle package and CI support window to Python 3.11 through 3.14.
+- Extended per-command state evidence with exact bid/ask level, order, and aggregate summaries.
+- Replaced command-sized native transcript buffering in long differential cases with incremental
+  strict JSONL decoding, a bounded line queue, disk-spooled reference evidence, and rolling
+  digests.
+- Made every semantic divergence use a fresh exact prefix or full replay with one snapshot
+  checkpoint at the divergence. Capacity-constrained Release and sanitizer shards defer prefixes
+  above 1,000,000 commands with `diagnosis.status=deferred_command_limit` rather than materializing
+  giant transcripts or treating the case as passing evidence.
+- Made reused evidence outputs fail closed around links and unexpected owned-file types, clear only
+  runner-owned stale case/failure artifacts, and preserve unrelated manual reproduction content.
+- Bound the checked PR and million-command evidence to exact schemas and frozen digests, with a
+  marked test that regenerates all 1,050,000 underlying V1 commands and statistics.
 
 ### Added
 
@@ -68,3 +91,54 @@ The format is based on Keep a Changelog, and public releases will follow semanti
   execution-preparation, atomic New/Cancel, atomic Replace, and public API boundaries.
 - GCC, Clang, formatting, ASan, and UBSan workflow definitions.
 - Initial semantic contract, roadmap, and architecture decision record.
+- A non-installed `atlas_diff_native` adapter with strict numeric input, exact/compact JSONL
+  evidence, complete event serialization, checkpoint snapshots, and fatal harness boundaries.
+- A typed Python 3.11-through-3.14 internal `atlaslob` correctness package with no runtime
+  dependencies.
+- Independent ADR 0009 state/event encoders that reproduce the frozen C++ golden hashes.
+- A plain dictionary/deque Python matching oracle with validation, sequencing, New/Cancel/Replace,
+  invariants, capacity/overflow checks, and fatal poisoning after internal exceptions.
+- Strict native JSONL decoding that revalidates canonical digests, snapshot aggregates, ordering,
+  active identities/priorities, instrument consistency, top of book, sequence observers, and the
+  adapter error-code vocabulary.
+- Named exact cross-language scenarios comparing every command result, event, snapshot, observer,
+  and digest.
+- Pinned pytest, Hypothesis, Ruff, and mypy top-level development tooling plus Python 3.11-3.14
+  CI.
+- A normal-wheel build/install smoke gate that imports the oracle without development
+  dependencies and verifies its `py.typed` marker.
+- Native process fault-injection and black-box CLI coverage for throwing/partial output, terminal
+  flush failure, every documented mode spelling, and invalid usage.
+- ADR 0010 and a versioned differential-interface reference.
+- Generator V1 with frozen SplitMix64 vectors, ten named workload profiles, configurable valid and
+  invalid intent, boundary-biased quantities, and fully resolved serializable specifications.
+- Canonical workload manifests that bind generator version, seed, engine/distribution policy,
+  command-stream SHA-256, and generation statistics.
+- Versioned predefined PR, main, nightly, release, and sanitizer campaign policies with fixed,
+  explicit rotating-epoch, or published seed provenance.
+- A disk-spooled differential runner that completes reference evidence before native execution,
+  compares every streamed record, retains structured first-divergence data, and exact-reruns every
+  semantic divergence from fresh engines.
+- Portable versioned failure bundles with original and minimized fixtures, state/top/depth
+  differences, build metadata, artifact digests, and relative-path reproduction. Standard
+  diagnostic bundles retain both evidence streams; summary-only large-tier bundles may omit them.
+- Deterministic signature-preserving semantic reduction across chunks, commands, identifiers,
+  prices, quantities, command types, side, and time in force.
+- Three development-only evidence-boundary fault proofs for newest-at-price, incoming trade price,
+  and stale partial-fill aggregates, with checked minimized regression fixtures.
+- Metamorphic coverage for replay, side/price mirroring, split market orders, far nonmarketable
+  levels, and rejection-prefix isolation.
+- Bounded Hypothesis byte-stream and valid-sequence mutation fuzzing with minimal, golden,
+  boundary, and prior-regression seed files.
+- A pull-request 10-by-5,000 exact campaign job plus explicit main and nightly workflows and
+  compiler-by-case Release/per-case sanitizer shards with tiered artifact retention. Manual
+  Release work requires full GCC and Clang Release build-and-CTest gates first.
+- Checked local closure evidence: 244 passed/2 Windows-symlink skips/11 deselected in the default
+  Python selection, 11 passed/246 deselected in the marked selection, the 10-by-5,000 exact PR
+  corpus, one epoch-0 1,000,000-command compact nightly case, both 288-test GCC configurations,
+  production-only and formatting gates, Ruff, strict mypy, and wheel build/install smoke. The
+  published Phase 3 PR implementation head passed all required hosted compiler, sanitizer, Python,
+  formatting, wheel, PR-corpus, and Linux link-safety checks. Phase 3 is complete; Phase 4 has not
+  started.
+- ADR 0011, the Phase 3 evidence index, and documented dependency deferrals for Phase 4,
+  Phase 6, and future persistence-format fuzzing.

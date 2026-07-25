@@ -1,0 +1,333 @@
+name: Phase 3 campaigns
+
+on:
+  push:
+    branches: [main]
+  schedule:
+    - cron: "17 4 * * *"
+  workflow_dispatch:
+    inputs:
+      tier:
+        description: Campaign tier
+        required: true
+        default: nightly
+        type: choice
+        options:
+          - main
+          - nightly
+          - release
+          - release-sanitizer
+      epoch:
+        description: Explicit u64 rotation epoch for main/nightly
+        required: false
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  main-campaign:
+    name: Main 20-by-100,000 exact campaign
+    if: >-
+      (github.event_name == 'push') ||
+      (github.event_name == 'workflow_dispatch' && inputs.tier == 'main')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+    env:
+      ATLAS_DIFF_NATIVE: ${{ github.workspace }}/build/dev-gcc/atlas_diff_native
+      ATLAS_COMPILER_ID: GCC
+      ATLAS_BUILD_TYPE: Debug
+      CAMPAIGN_EPOCH: ${{ inputs.epoch || github.run_number }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Set up Python
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
+        with:
+          python-version: "3.12"
+      - name: Validate explicit campaign epoch
+        if: github.event_name == 'workflow_dispatch'
+        env:
+          REQUESTED_EPOCH: ${{ inputs.epoch }}
+        run: >-
+          python -c
+          "import os;
+          value = os.environ.get('REQUESTED_EPOCH', '');
+          assert value.isascii() and value.isdecimal()
+          and (value == '0' or not value.startswith('0'))
+          and int(value) <= (1 << 64) - 1,
+          'epoch must be canonical unsigned 64-bit decimal'"
+      - name: Install and build
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes g++ ninja-build
+          cmake --preset dev-gcc
+          cmake --build --preset dev-gcc --target atlas_diff_native --parallel 2
+          python -m pip install --disable-pip-version-check -e ".[dev]"
+      - name: Run rotating main campaign
+        run: >-
+          python -m atlaslob.cli predefined
+          --tier main
+          --epoch "$CAMPAIGN_EPOCH"
+          --native "$ATLAS_DIFF_NATIVE"
+          --output "$RUNNER_TEMP/phase3-main"
+          --case-timeout 900
+          --shrink-evaluations 2000
+          --shrink-timeout 300
+      - name: Retain main evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: phase3-main-${{ env.CAMPAIGN_EPOCH }}
+          path: ${{ runner.temp }}/phase3-main
+          if-no-files-found: error
+          retention-days: 30
+
+  nightly-campaign:
+    name: Nightly 10-by-1,000,000 compact campaign
+    if: >-
+      (github.event_name == 'schedule') ||
+      (github.event_name == 'workflow_dispatch' && inputs.tier == 'nightly')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 360
+    env:
+      ATLAS_DIFF_NATIVE: ${{ github.workspace }}/build/dev-gcc/atlas_diff_native
+      ATLAS_COMPILER_ID: GCC
+      ATLAS_BUILD_TYPE: Release
+      CAMPAIGN_EPOCH: ${{ inputs.epoch || github.run_number }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Set up Python
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
+        with:
+          python-version: "3.12"
+      - name: Validate explicit campaign epoch
+        if: github.event_name == 'workflow_dispatch'
+        env:
+          REQUESTED_EPOCH: ${{ inputs.epoch }}
+        run: >-
+          python -c
+          "import os;
+          value = os.environ.get('REQUESTED_EPOCH', '');
+          assert value.isascii() and value.isdecimal()
+          and (value == '0' or not value.startswith('0'))
+          and int(value) <= (1 << 64) - 1,
+          'epoch must be canonical unsigned 64-bit decimal'"
+      - name: Install and build
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes g++ ninja-build
+          cmake --preset dev-gcc -DCMAKE_BUILD_TYPE=Release
+          cmake --build --preset dev-gcc --target atlas_diff_native --parallel 2
+          python -m pip install --disable-pip-version-check -e ".[dev]"
+      - name: Run rotating nightly campaign
+        run: >-
+          python -m atlaslob.cli predefined
+          --tier nightly
+          --epoch "$CAMPAIGN_EPOCH"
+          --native "$ATLAS_DIFF_NATIVE"
+          --output "$RUNNER_TEMP/phase3-nightly"
+          --case-timeout 1800
+          --shrink-evaluations 3000
+          --shrink-timeout 600
+      - name: Retain nightly evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: phase3-nightly-${{ env.CAMPAIGN_EPOCH }}
+          path: ${{ runner.temp }}/phase3-nightly
+          if-no-files-found: error
+          retention-days: 30
+
+  release-quality-gate:
+    name: Release gate (${{ matrix.name }})
+    if: >-
+      github.event_name == 'workflow_dispatch' &&
+      (inputs.tier == 'release' || inputs.tier == 'release-sanitizer')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: GCC
+            packages: g++ ninja-build
+            compiler: g++
+            build_directory: release-gcc
+          - name: Clang
+            packages: clang ninja-build
+            compiler: clang++
+            build_directory: release-clang
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Reject an unused epoch
+        env:
+          REQUESTED_EPOCH: ${{ inputs.epoch }}
+        run: >-
+          python3 -c
+          "import os;
+          assert not os.environ.get('REQUESTED_EPOCH'),
+          'fixed release tiers do not accept --epoch'"
+      - name: Install toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes ${{ matrix.packages }}
+      - name: Configure release
+        run: >-
+          cmake -S . -B "build/${{ matrix.build_directory }}" -G Ninja
+          -DBUILD_TESTING=ON
+          -DCMAKE_BUILD_TYPE=Release
+          -DCMAKE_CXX_COMPILER="${{ matrix.compiler }}"
+          -DATLAS_ENABLE_INVARIANTS=OFF
+          -DATLAS_WARNINGS_AS_ERRORS=ON
+      - name: Build release
+        run: cmake --build "build/${{ matrix.build_directory }}" --parallel 2
+      - name: Test release
+        run: ctest --test-dir "build/${{ matrix.build_directory }}" --output-on-failure
+
+  release-campaign:
+    name: Release case ${{ matrix.case_index }} (${{ matrix.compiler.id }})
+    needs: release-quality-gate
+    if: github.event_name == 'workflow_dispatch' && inputs.tier == 'release'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 360
+    strategy:
+      fail-fast: false
+      max-parallel: 4
+      matrix:
+        compiler:
+          - id: GCC
+            packages: g++ ninja-build
+            preset: dev-gcc
+          - id: Clang
+            packages: clang ninja-build
+            preset: dev-clang
+        case_index: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]
+    env:
+      ATLAS_DIFF_NATIVE: ${{ github.workspace }}/build/${{ matrix.compiler.preset }}/atlas_diff_native
+      ATLAS_COMPILER_ID: ${{ matrix.compiler.id }}
+      ATLAS_BUILD_TYPE: Release
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Set up Python
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
+        with:
+          python-version: "3.12"
+      - name: Reject an unused epoch
+        env:
+          REQUESTED_EPOCH: ${{ inputs.epoch }}
+        run: >-
+          python -c
+          "import os;
+          assert not os.environ.get('REQUESTED_EPOCH'),
+          'the fixed release tier does not accept --epoch'"
+      - name: Install and build
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes ${{ matrix.compiler.packages }}
+          cmake --preset ${{ matrix.compiler.preset }} -DCMAKE_BUILD_TYPE=Release
+          cmake --build --preset ${{ matrix.compiler.preset }} --target atlas_diff_native --parallel 2
+          python -m pip install --disable-pip-version-check -e ".[dev]"
+      - name: Run one published release case
+        env:
+          CASE_OUTPUT: >-
+            ${{ runner.temp }}/phase3-release-${{ matrix.compiler.id }}-${{ matrix.case_index }}
+        run: >-
+          python -m atlaslob.cli predefined
+          --tier release
+          --case-index "${{ matrix.case_index }}"
+          --summary-only
+          --exact-replay-command-limit 1000000
+          --native "$ATLAS_DIFF_NATIVE"
+          --output "$CASE_OUTPUT"
+          --case-timeout 14400
+      - name: Retain bounded release evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: >-
+            phase3-release-${{ matrix.compiler.id }}-case-${{ matrix.case_index }}
+          path: |
+            ${{ runner.temp }}/phase3-release-${{ matrix.compiler.id }}-${{ matrix.case_index }}/campaign.json
+            ${{ runner.temp }}/phase3-release-${{ matrix.compiler.id }}-${{ matrix.case_index }}/summary.json
+            ${{ runner.temp }}/phase3-release-${{ matrix.compiler.id }}-${{ matrix.case_index }}/cases/**
+            ${{ runner.temp }}/phase3-release-${{ matrix.compiler.id }}-${{ matrix.case_index }}/failures/**
+          if-no-files-found: error
+          retention-days: 90
+
+  release-sanitizer:
+    name: Release sanitizer case ${{ matrix.case_index }}
+    needs: release-quality-gate
+    if: >-
+      github.event_name == 'workflow_dispatch' &&
+      (inputs.tier == 'release' || inputs.tier == 'release-sanitizer')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 360
+    strategy:
+      fail-fast: false
+      max-parallel: 4
+      matrix:
+        case_index: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]
+    env:
+      ATLAS_DIFF_NATIVE: ${{ github.workspace }}/build/asan-ubsan/atlas_diff_native
+      ATLAS_COMPILER_ID: Clang-ASan-UBSan
+      ATLAS_BUILD_TYPE: Debug
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Set up Python
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
+        with:
+          python-version: "3.12"
+      - name: Reject an unused epoch
+        env:
+          REQUESTED_EPOCH: ${{ inputs.epoch }}
+        run: >-
+          python -c
+          "import os;
+          assert not os.environ.get('REQUESTED_EPOCH'),
+          'the fixed sanitizer tier does not accept --epoch'"
+      - name: Install and build
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes clang ninja-build
+          cmake --preset asan-ubsan
+          cmake --build --preset asan-ubsan --target atlas_diff_native --parallel 2
+          python -m pip install --disable-pip-version-check -e ".[dev]"
+      - name: Run one published exact sanitizer case
+        env:
+          CASE_OUTPUT: ${{ runner.temp }}/phase3-release-sanitizer-${{ matrix.case_index }}
+        run: >-
+          python -m atlaslob.cli predefined
+          --tier release-sanitizer
+          --case-index "${{ matrix.case_index }}"
+          --summary-only
+          --exact-replay-command-limit 1000000
+          --native "$ATLAS_DIFF_NATIVE"
+          --output "$CASE_OUTPUT"
+          --case-timeout 7200
+      - name: Retain bounded sanitizer evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: phase3-release-sanitizer-case-${{ matrix.case_index }}
+          path: |
+            ${{ runner.temp }}/phase3-release-sanitizer-${{ matrix.case_index }}/campaign.json
+            ${{ runner.temp }}/phase3-release-sanitizer-${{ matrix.case_index }}/summary.json
+            ${{ runner.temp }}/phase3-release-sanitizer-${{ matrix.case_index }}/cases/**
+            ${{ runner.temp }}/phase3-release-sanitizer-${{ matrix.case_index }}/failures/**
+          if-no-files-found: error
+          retention-days: 90

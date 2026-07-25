@@ -286,4 +286,5 @@ A test-only reference engine uses ordered maps, FIFO deques, linear identity sea
 separately implemented validation, matching, mutation, and event construction. Fixed-seed
 command streams compare exact batches, snapshots, observers, and digests after every command.
 This is Phase 2 regression evidence, not a substitute for the separately packaged Python oracle,
-shrinking, long campaigns, and fuzzing planned for Phase 3.
+shrinking, long campaigns, and fuzzing that provide the completed Phase 3 independent-evidence
+layer.
