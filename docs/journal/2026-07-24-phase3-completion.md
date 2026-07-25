@@ -1,4 +1,4 @@
-# 2026-07-24 - Phase 3 completion implementation and pending release evidence
+# 2026-07-24 - Phase 3 completion and release evidence
 
 ## Outcome
 
@@ -7,10 +7,10 @@ fully resolved manifests, five explicit campaign tiers, a disk-spooled streaming
 runner, portable failure bundles, deterministic semantic reduction, three injected-fault
 demonstrations, applicable metamorphic properties, and bounded command-sequence fuzzing.
 
-This is an implementation-and-local-evidence checkpoint, not the final release declaration. The
-Python selections, fixed PR corpus, one checked million-command case, both GCC CTest
-configurations, and the remaining local quality gates pass. Branch publication and hosted
-compiler, sanitizer, formatting, and PR-corpus evidence are still pending.
+This completes the Phase 3 correctness-evidence milestone. The Python selections, fixed PR corpus,
+one checked million-command case, both GCC CTest configurations, and the remaining local quality
+gates pass. The published implementation head also passed the required hosted compiler, sanitizer,
+Python, formatting, wheel, PR-corpus, and Linux link-safety gates.
 
 ## Generator and campaigns
 
@@ -80,20 +80,27 @@ includes minimal, mixed golden, boundary, and prior-regression examples.
 - Local GCC Debug and Release CTest: 288/288 in each configuration.
 - Local `BUILD_TESTING=OFF` production build, pinned clang-format, Ruff, strict mypy, and wheel
   build/install smoke gates passed.
+- Hosted CI run 30141147909 on implementation head
+  `b13298572c353e139a58dcd6b077eb67536b01b2`: GCC and Clang Debug, GCC and Clang Release,
+  ASan/UBSan, Python 3.11-3.14, pinned formatting, wheel smoke, the 10-by-5,000 exact PR corpus,
+  and both Linux link-safety tests passed.
+- The hosted `phase3-pr-differential` artifact retains the PR-corpus summary under the workflow's
+  14-day policy.
 
 The checked campaign JSON and fuzz/regression corpora are deterministic repository inputs. Passing
 CI retains summaries and digests according to tier policy; divergences retain their original and
 minimized portable bundles.
 
-## Pending before Phase 3 release completion
+## Hosted release evidence
 
-- Publish the final branch and verify hosted GCC, Clang, ASan/UBSan, pinned formatting, the fixed
-  PR-corpus job, and the two Linux link-safety checks skipped locally.
+The published implementation head passed every required hosted Phase 3 gate. The manual
+10-by-10,000,000 Release tier remains available on demand and is not claimed as executed by this
+milestone.
 
-Phase 4 remains not started. Snapshot/restore continuation and independent multi-instrument reorder
-properties move there because their required infrastructure does not exist yet. Protocol
-encode/decode identity and decoder fuzzing remain Phase 6. Corrupt log and snapshot-deserializer
-fuzzing remain deferred until those formats exist.
+These results close Phase 3. Phase 4 remains not started. Snapshot/restore continuation and
+independent multi-instrument reorder properties move there because their required infrastructure
+does not exist yet. Protocol encode/decode identity and decoder fuzzing remain Phase 6. Corrupt log
+and snapshot-deserializer fuzzing remain deferred until those formats exist.
 
 No campaign count or elapsed time is a latency, throughput, allocation, memory, scalability, or
 production-readiness claim.

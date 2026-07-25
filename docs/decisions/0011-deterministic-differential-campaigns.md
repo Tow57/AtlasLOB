@@ -216,6 +216,6 @@ therefore require a version change and review rather than silently changing name
 - Local `BUILD_TESTING=OFF` production build, pinned clang-format, Ruff, strict mypy, and wheel
   build/install smoke gates passed.
 
-Publication and hosted GCC, Clang, ASan/UBSan, formatting, fixed PR-corpus, and Linux link-safety
-checks remain release evidence to collect before Phase 3 is declared complete. Phase 4 has not
-started.
+The published Phase 3 PR implementation head passed the required hosted GCC, Clang, Release,
+ASan/UBSan, Python, formatting, wheel, PR-corpus, and Linux link-safety checks. ADR 0011 is fully
+evidenced and Phase 3 is complete. Phase 4 has not started.

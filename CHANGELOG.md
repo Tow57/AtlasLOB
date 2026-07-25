@@ -136,7 +136,9 @@ The format is based on Keep a Changelog, and public releases will follow semanti
 - Checked local closure evidence: 244 passed/2 Windows-symlink skips/11 deselected in the default
   Python selection, 11 passed/246 deselected in the marked selection, the 10-by-5,000 exact PR
   corpus, one epoch-0 1,000,000-command compact nightly case, both 288-test GCC configurations,
-  production-only and formatting gates, Ruff, strict mypy, and wheel build/install smoke. Hosted
-  publication and Linux link-safety checks remain pending.
+  production-only and formatting gates, Ruff, strict mypy, and wheel build/install smoke. The
+  published Phase 3 PR implementation head passed all required hosted compiler, sanitizer, Python,
+  formatting, wheel, PR-corpus, and Linux link-safety checks. Phase 3 is complete; Phase 4 has not
+  started.
 - ADR 0011, the Phase 3 evidence index, and documented dependency deferrals for Phase 4,
   Phase 6, and future persistence-format fuzzing.

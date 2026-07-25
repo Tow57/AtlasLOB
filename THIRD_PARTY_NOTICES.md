@@ -27,10 +27,10 @@ declares these exactly pinned top-level tools:
 | Ruff | 0.15.22 | <https://github.com/astral-sh/ruff> | MIT |
 | mypy | 2.3.0 | <https://github.com/python/mypy> | MIT |
 
-pytest, Ruff, and mypy currently provide unit execution, formatting/linting, and static typing.
-Hypothesis is pinned for the next seeded-generation slice but is not used by the initial oracle
-slice. These tools are not imported by the installed `atlaslob` runtime package.
+pytest, Ruff, and mypy provide unit execution, formatting/linting, and static typing. Hypothesis
+drives the bounded seeded byte-stream and valid-command mutation fuzz tests. These tools are not
+imported by the installed `atlaslob` runtime package.
 
 Transitive development dependencies are resolved by pip and are not lockfile-pinned in this
-foundation slice. A complete environment lock belongs with the fixed Phase 3 corpus so the
-generator, shrinker, and dependency environment can be versioned together.
+release. Required top-level evidence tools are exactly pinned; a complete transitive environment
+lock remains future reproducibility hardening.

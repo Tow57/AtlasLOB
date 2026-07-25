@@ -15,17 +15,17 @@ latency claims.
 
 ## Current status
 
-**Phase 2 matching MVP is complete on `main`. Phase 3 implementation now includes the independent
-Python oracle, deterministic valid/invalid workload generation, fixed and rotating campaigns, a
-streaming differential runner, portable failure bundles, semantic shrinking, metamorphic checks,
-and bounded cross-language fuzzing. Local closure evidence now includes 244 passed, 2
-Windows-symlink skips, and 11 deselected in the default Python selection; 11 passed and 246
-deselected in the marked campaign/fuzz selection; the fixed 10-by-5,000 exact PR corpus; one
-checked 1,000,000-command compact case; and GCC Debug and Release CTest at 288/288 each. The
-`BUILD_TESTING=OFF` production build, pinned clang-format, Ruff, strict mypy, and wheel
-build/install smoke also pass locally. Publication and the hosted GCC, Clang, ASan/UBSan,
-formatting, PR-corpus, and Linux link-safety checks remain pending, so Phase 3 is not yet declared
-complete. Phase 4 has not started.**
+**Phase 2 matching MVP is complete on `main`. Phase 3 is complete on the published pull-request
+implementation head. It includes the independent Python oracle, deterministic valid/invalid
+workload generation, fixed and rotating campaigns, a streaming differential runner, portable
+failure bundles, semantic shrinking, metamorphic checks, and bounded cross-language fuzzing. Local
+closure evidence includes 244 passed, 2 Windows-symlink skips, and 11 deselected in the default
+Python selection; 11 passed and 246 deselected in the marked campaign/fuzz selection; the fixed
+10-by-5,000 exact PR corpus; one checked 1,000,000-command compact case; and GCC Debug and Release
+CTest at 288/288 each. The `BUILD_TESTING=OFF` production build, pinned clang-format, Ruff, strict
+mypy, and wheel build/install smoke also pass locally. Hosted CI passed GCC, Clang, Release
+GCC/Clang, ASan/UBSan, Python 3.11-3.14, the Phase 3 PR differential corpus, wheel smoke,
+formatting, and both Linux link-safety tests. Phase 4 has not started.**
 
 | Capability | Status | Evidence |
 | --- | --- | --- |
@@ -58,11 +58,11 @@ complete. Phase 4 has not started.**
 | Versioned deterministic workload generation | Complete | Generator V1, ten profiles, checked manifests |
 | Streaming differential campaigns | Complete | Exact/compact runner, fixed/rotating/published tiers |
 | Failure persistence and semantic shrinking | Complete | Fresh exact replay, bounded deferral, three injected faults |
-| Metamorphic and bounded fuzz evidence | Complete locally | Five properties, two fuzz paths, checked seed corpus |
-| Phase 3 long campaign and final release gates | Pending | Local million-command and final gates pass; hosted evidence pending |
-| GCC and Clang CI | Defined; Phase 3 branch evidence pending publication | `.github/workflows/ci.yml` |
-| ASan and UBSan CI | Defined; Phase 3 branch evidence pending publication | `asan-ubsan` preset and CI job |
-| Pinned clang-format gate | Passes locally; hosted Phase 3 evidence pending publication | `format-check` CI job |
+| Metamorphic and bounded fuzz evidence | Complete | Five properties, two fuzz paths, checked seed corpus |
+| Phase 3 long campaign and final release gates | Complete | Checked million-command case and published PR-head gates |
+| GCC and Clang CI | Passed on published Phase 3 PR head | `.github/workflows/ci.yml` |
+| ASan and UBSan CI | Passed on published Phase 3 PR head | `asan-ubsan` preset and CI job |
+| Pinned clang-format gate | Passed on published Phase 3 PR head | `format-check` CI job |
 | Resting book structure | Complete | `stress.InstrumentBookStress*` |
 | Matching and normalized command execution | Complete | Phase 2 |
 | Replay, Python bindings, benchmarks, gateway | Planned | Later gated phases |

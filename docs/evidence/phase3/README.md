@@ -54,6 +54,14 @@ summary-only large-tier bundles may omit them.
 - GCC Debug and Release CTest each passed 288/288.
 - The `BUILD_TESTING=OFF` production build, pinned clang-format, Ruff, strict mypy, and wheel
   build/install smoke gates passed locally.
+- Hosted CI [run 30141147909](https://github.com/Tow57/AtlasLOB/actions/runs/30141147909) on
+  implementation head
+  [`b13298572c353e139a58dcd6b077eb67536b01b2`](https://github.com/Tow57/AtlasLOB/commit/b13298572c353e139a58dcd6b077eb67536b01b2)
+  passed GCC and Clang Debug, GCC and Clang Release, ASan/UBSan, Python 3.11-3.14, wheel smoke,
+  pinned formatting, the fixed PR corpus, and both Linux link-safety tests.
+- The retained
+  [`phase3-pr-differential` artifact](https://github.com/Tow57/AtlasLOB/actions/runs/30141147909/artifacts/8614502951)
+  records the hosted 10-by-5,000 exact campaign; its workflow retention period is 14 days.
 
 The retained [PR smoke summary](pr-smoke.json) records every case seed, generated stream digest,
 reference/native evidence digest, command mix, validity mix, and exercised intent-family count.
@@ -62,15 +70,14 @@ Automated evidence tests enforce both checked JSON schemas and frozen hashes, th
 revalidate command digests and generation statistics.
 
 These results establish the implemented generator, campaign, runner, failure, shrinker,
-metamorphic, bounded-fuzz, long-case, and local release-gate paths.
+metamorphic, bounded-fuzz, long-case, and release-gate paths.
 
-## Pending release gates
+## Release gate result
 
-- Publish the branch and verify hosted GCC, Clang, ASan/UBSan, pinned formatting, the fixed
-  10-by-5,000 PR campaign, and the two Linux link-safety checks skipped locally.
-
-Until that hosted evidence exists for the published branch, Phase 3 remains release-gated and
-Phase 4 remains not started.
+The published Phase 3 PR implementation head passed all required hosted checks, including both
+Linux link-safety tests and the fixed 10-by-5,000 corpus. The Phase 3 release gate is satisfied.
+The manual 10-by-10,000,000 Release campaign remains an on-demand policy tier and is not claimed as
+executed here. Phase 4 has not started.
 
 ## Reproduction
 

@@ -343,10 +343,11 @@ On 2026-07-24, the local default Python selection passed 244 tests with 2 Window
 policy passed all 10 cases and 50,000 exact commands. Checked evidence records a passing epoch-0
 nightly case with 1,000,000 compact commands. GCC Debug and Release CTest each passed 288/288; the
 `BUILD_TESTING=OFF` production build, pinned clang-format, Ruff, strict mypy, and wheel
-build/install smoke gates also passed locally. Publication and hosted GCC, Clang, ASan/UBSan,
-formatting, PR-corpus, and Linux link-safety evidence remain pending, so Phase 3 is still
-release-gated and Phase 4 has not started. See
-[the Phase 3 evidence index](evidence/phase3/README.md) for the checklist.
+build/install smoke gates also passed locally. Hosted CI subsequently passed GCC, Clang, Release
+GCC/Clang, ASan/UBSan, Python 3.11-3.14, the fixed PR corpus and marked proofs, wheel smoke,
+formatting, and Linux link-safety checks. Together with the retained local evidence, this closes
+the Phase 3 correctness-evidence gate. Phase 4 has not started. See
+[the Phase 3 evidence index](evidence/phase3/README.md) for the complete record.
 
 Command counts and elapsed campaign time are correctness-test metadata. They make no latency,
 throughput, allocation, memory, scalability, or production-readiness claim.

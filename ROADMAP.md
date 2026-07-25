@@ -84,7 +84,7 @@ to 264 tests; that follow-up must rerun the same hosted gates before merge.
 - [x] Named per-command differential comparison with exact events and snapshots.
 - [x] Seeded valid and invalid command generation.
 - [x] Failure persistence and shrinking.
-- [ ] Fixed CI corpus, long campaigns, fuzzing, and hosted release evidence.
+- [x] Fixed CI corpus, long campaigns, fuzzing, and hosted release evidence.
 
 ADR 0010 fixes the independence boundary: the Python model uses ordinary dictionaries, deques,
 and sorted prices; it has no binding or access to C++ transition helpers; and native execution is
@@ -119,9 +119,9 @@ the marked campaign/fuzz selection passes 11 with 246 deselected; and the fixed 
 passes 10 exact 5,000-command cases. Checked evidence records a passing epoch-0 nightly case with
 1,000,000 compact commands. GCC Debug and Release CTest each pass 288/288; the production-only
 build, pinned clang-format, Ruff, strict mypy, and wheel build/install smoke gates also pass
-locally. Publication and the hosted GCC, Clang, ASan/UBSan, formatting, PR-corpus, and Linux
-link-safety checks remain the final Phase 3 release gate. The final checkbox stays open, and Phase
-4 remains not started.
+locally. The published Phase 3 PR implementation head passed every required hosted compiler,
+sanitizer, Python, formatting, wheel, PR-corpus, and Linux link-safety gate. This closes Phase 3.
+Phase 4 remains not started.
 
 ## Phase 4 - Deterministic infrastructure and Python
 
