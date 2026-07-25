@@ -16,10 +16,9 @@ Published Phase 3 PR #5 head `29049756e250fef04aac819c457438f0f01149c3` passed t
 hosted GCC/Clang Release, ASan/UBSan, Python 3.11-3.14, formatting, fixed PR corpus, wheel, and
 Linux link-safety checks. The implementation and evidence gate is closed.
 
-PR #5 is still open rather than remotely merged because GitHub authentication is unavailable in
-this session. Remote `main` therefore remains at Phase 2. The Phase 4 work is stacked locally on
-the published Phase 3 head and must retain that ancestry when remote integration becomes
-available.
+PR #5 was subsequently squash-merged as `3c60e2b`, followed by router PR #7 as `3d6d438`. The
+remaining Phase 4 slices were then integrated sequentially without changing the reviewed router
+tree.
 
 ## Router and identity boundary
 
@@ -60,8 +59,9 @@ allocation-free whole-engine invariants. Domain rejections are successful prepar
 identity/book mutation and still publish one sequence. Ordinary `execute()` uses this exact
 prepare-then-commit path.
 
-The private access seam is ready for later persistence to append between prepare and commit. PR1
-does not claim that the write-ahead log or persistence session itself exists yet.
+At the PR1 boundary, the private access seam was ready for later persistence to append between
+prepare and commit. The subsequent command-log slice supplied that write-ahead log and persistence
+session through PR #8.
 
 ## Deterministic evidence
 

@@ -5,8 +5,8 @@ This document is the byte-level reference for `ATLSLG01`. It implements the deci
 
 The format is an append-only deterministic command history. It is not a native object dump, an
 event-payload archive, a network protocol, an authentication format, or a durability guarantee.
-Phase 4 PR2 implementation and validation are in progress; this reference does not claim that the
-gate has passed.
+The implementation and its local, pull-request, and final push-to-main gates pass. It is integrated
+on `main` through Phase 4 PR #8.
 
 ## Encoding conventions
 

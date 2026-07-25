@@ -7,11 +7,11 @@ The format is a canonical image of one multi-instrument engine at one exact `ATL
 boundary. It is not a native object dump, a replacement for the command log, a network protocol,
 an authentication format, or a universal durability guarantee.
 
-Phase 4 PR3 implements this format on its working branch. The focused codec, restoration,
-publication, recovery, inspection, report, and CLI process-boundary checks pass locally. GCC Debug
-and Release each pass 482/482 CTest cases, and the production-only and Python gates pass. Hosted
-Clang, sanitizer, actual Clang libFuzzer execution, pull-request, and merge gates remain pending,
-so this reference does not claim final PR3 acceptance.
+Phase 4 PR3 implements this format. The focused codec, restoration, publication, recovery,
+inspection, report, and CLI process-boundary checks pass locally. GCC Debug and Release each pass
+482/482 CTest cases, and the production-only and Python gates pass. Hosted Clang, sanitizer,
+retained Clang libFuzzer smoke, pull-request, and final push-to-main gates also pass. The
+implementation is integrated on `main` through PR #6.
 
 ## Encoding conventions
 

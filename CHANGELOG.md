@@ -227,19 +227,12 @@ The format is based on Keep a Changelog, and public releases will follow semanti
   corpus, one epoch-0 1,000,000-command compact nightly case, both 288-test GCC configurations,
   production-only and formatting gates, Ruff, strict mypy, and wheel build/install smoke. The
   published Phase 3 PR #5 head `29049756` passed all required hosted compiler, sanitizer, Python,
-  formatting, wheel, PR-corpus, and Linux link-safety checks. Phase 3 is complete on that published
-  head, but it remains remotely unmerged. Phase 4 PR1 router work is implemented and passes its
-  available local Debug/Release, formatting, Python, stress, and cross-language gates. Phase 4 PR2
-  command-log/replay implementation passes the local Debug, Release, production-only,
-  persistence, Python, typing, linting, and formatting gates. Phase 4 PR3 passes 482/482 CTest
-  cases in both GCC configurations, the production-only and Python gates, and all 13 hosted
-  compiler, sanitizer, decoder-fuzz-smoke, Python, formatting, wheel, and differential checks,
-  revalidating the complete stacked router/log/snapshot state; integration remains pending. On the
-  PR4 working branch, GCC Debug and Release each pass 482/482 CTest cases, Python reports 354
-  passes with two expected Windows canonical-symlink skips plus 11 campaign/fuzz passes, and Ruff,
-  strict mypy, and formatting pass. Local cibuildwheel builds and clean-smokes CPython 3.11-3.14
-  manylinux x86-64 wheels with the required contents and no unexpected auditwheel dependency; a
-  PEP 517 source distribution also builds, installs, and smokes cleanly. All 15 hosted PR4 checks
-  pass; stacked integration and merge remain pending.
+  formatting, wheel, PR-corpus, and Linux link-safety checks. Phase 3 and all four Phase 4 slices
+  were then retargeted, revalidated, and squash-merged sequentially: PR #5 as `3c60e2b`, router PR
+  #7 as `3d6d438`, command-log/replay PR #8 as `f5c2f11`, snapshot/recovery PR #6 as `25b0a39`,
+  and native-Python PR #9 as `075d29a`. The final uncancelled `main` workflow passes GCC and Clang
+  Debug/Release, ASan/UBSan, decoder-fuzz smoke, Python 3.11-3.14, formatting, the native Clang
+  binding, source-distribution build/install smoke, and the CPython 3.11-3.14 manylinux wheel,
+  audit, clean-container, and native/reference parity gates.
 - ADR 0011, the Phase 3 evidence index, and documented dependency deferrals for Phase 4,
   Phase 6, and future persistence-format fuzzing.

@@ -192,8 +192,8 @@ nor caller-selected sequences are installed public API.
 
 ## Command-log and replay contract
 
-ADR 0013 freezes `ATLSLG01` command-log format V1. Its implementation is complete on the stacked
-Phase 4 branches; integration remains pending.
+ADR 0013 freezes `ATLSLG01` command-log format V1. Its implementation is complete and integrated
+on `main`.
 
 The header contains semantic/configuration identity, one opaque 16-byte log ID, first sequence 1,
 the sorted instrument catalog, an `ATLSCF01` configuration digest, and CRC32C. Every multibyte
@@ -465,11 +465,9 @@ current best bid/ask price and aggregate, next sequence, and sticky sequence exh
 multi-engine observers additionally expose catalog membership, total active count, per-instrument
 top/snapshot values, one complete engine snapshot, and the engine-wide state digest. Node
 addresses, levels, indexes, planners, prepared transactions, and detailed internal component
-errors are not public API. Allocation failure propagates. The command-log/replay contract and local
-PR2 implementation plus the persisted-snapshot/recovery PR3 implementation are complete. PR3's
-hosted checks are green; stacked integration remains pending. The native Python adapter is
-implemented, locally validated, and green across all 15 hosted PR4 checks; stacked integration
-remains pending.
+errors are not public API. Allocation failure propagates. The command-log/replay,
+persisted-snapshot/recovery, and native Python implementations are complete, integrated on `main`,
+and green across their local, pull-request, and final push-to-main gates.
 
 ## Canonical snapshots and digests
 

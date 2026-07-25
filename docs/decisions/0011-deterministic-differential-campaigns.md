@@ -218,5 +218,5 @@ therefore require a version change and review rather than silently changing name
 
 Published Phase 3 PR #5 head `29049756` passed the required hosted GCC, Clang, Release,
 ASan/UBSan, Python 3.11-3.14, formatting, wheel, PR-corpus, and Linux link-safety checks. ADR 0011
-is fully evidenced and Phase 3 is complete. PR #5 remains open because GitHub authentication is
-unavailable in this session; the local Phase 4 router slice is implemented and under validation.
+is fully evidenced and Phase 3 is complete. PR #5 was subsequently squash-merged as `3c60e2b`
+before the Phase 4 stack was integrated.

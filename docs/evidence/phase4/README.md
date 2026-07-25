@@ -1,29 +1,27 @@
 # Phase 4 evidence index
 
-This directory indexes Phase 4 and distinguishes locally implemented evidence surfaces from
-hosted validation or integration that is still pending. The four slices are stacked as router,
-command-log/replay, persisted snapshots/recovery, and native Python packaging. PR3's 13 hosted
-compiler, sanitizer, decoder-fuzz-smoke, Python, formatting, wheel, and differential checks are
-green. PR4 is implemented and locally validated: its native pybind11 engine, strict preflight,
-three batch modes, logging/recovery/snapshot API, GIL/mutex boundary, four CPython 3.11-3.14
-manylinux wheels, and source distribution pass the local gates recorded below. All 15 hosted PR4
-checks are green; stacked integration remains pending.
+This directory indexes the completed Phase 4 implementation and its local, pull-request, and
+post-merge evidence. The four slices—router, command-log/replay, persisted snapshots/recovery, and
+native Python packaging—were revalidated and squash-merged sequentially after the Phase 3
+prerequisite. Final `main` commit `075d29a` is byte-for-byte equivalent to the reviewed Phase 4
+head, and its uncancelled hosted workflow is green.
 
 ## Current status
 
-- Base: published Phase 3 PR #5 head
-  `29049756e250fef04aac819c457438f0f01149c3`.
-- Phase 3 prerequisite: required hosted gates passed.
-- Remote integration: draft PR #5 remains open and remote `main` still ends at Phase 2. The Phase 4
-  router, command-log, snapshot, and native-Python slices are published as sequential draft PRs
-  #7, #8, #6, and #9.
-- Router implementation: published on `codex/phase4-router`.
+- Phase 3 prerequisite: PR #5 passed its required hosted gates and merged as `3c60e2b`.
+- Router: PR #7 merged as `3d6d438`.
+- Command log and replay: PR #8 merged as `f5c2f11`.
+- Persisted snapshots and recovery: PR #6 merged as `25b0a39`.
+- Native Python and packaging: PR #9 merged as `075d29a`.
+- Final integration: `main` exactly matches the reviewed PR #9 tree. Workflow
+  `30175938269` passes every push-to-main compiler, Release, sanitizer, decoder-fuzz, Python,
+  formatting, native-binding, source-distribution, and wheel gate; the PR-only fixed differential
+  job is intentionally skipped on push after passing on the final PR #9 head.
 - Router local gate: GCC Debug and Release each pass 333/333 CTest tests; the pinned C++ formatter,
   296-test Python suite with two Windows privilege skips, 41 focused V2 tests, Ruff, and strict mypy
-  pass. The green hosted PR3 head revalidates the stacked router code; individual integration
-  remains pending.
-- Command-log/replay contract: ADR 0013 and the byte-level `ATLSLG01` V1 reference are accepted on
-  `codex/phase4-command-log`.
+  pass.
+- Command-log/replay contract: ADR 0013 and the byte-level `ATLSLG01` V1 reference are accepted and
+  integrated on `main`.
 - Command-log/replay implementation: complete locally. GCC Debug and Release each pass 418/418
   CTest cases, including 85 persistence cases. The production-only build, pinned formatter,
   288-test non-campaign Python gate with two expected Windows symlink skips, Ruff, and strict mypy
@@ -35,10 +33,10 @@ checks are green; stacked integration remains pending.
   four exact V2 report cases; 59 pass and the canonical-symlink case is an expected Windows skip.
   GCC Debug and Release each pass 482/482 CTest cases. The production-only build, 288-test
   non-campaign and 11-test marked Python selections, and Unicode-path/LF-only CLI
-  process-boundary script also pass. All 13 hosted PR3 checks are green; merge remains pending.
+  process-boundary script also pass. All 13 hosted PR3 checks are green.
 - Native Python contract and implementation: ADR 0015, `atlaslob.Engine`, the private
   `_native_engine` module, strict conversion, owned batch outputs, persistence/recovery/snapshot
-  bindings, and package version 0.2.0 are implemented on draft PR #9. GCC Debug and
+  bindings, and package version 0.2.0 are implemented on `main`. GCC Debug and
   Release each pass 482/482 CTest cases. Python reports 354 passes with two expected Windows
   canonical-symlink skips plus 11 campaign/fuzz passes. Ruff, strict mypy, and formatting pass.
 - Native package artifacts: cibuildwheel 4.1.0 builds CPython 3.11, 3.12, 3.13, and 3.14
@@ -60,6 +58,8 @@ The PR4 contract is
 [ADR 0015](../../decisions/0015-native-python-bindings-and-packaging.md), with implementation and
 local artifact evidence in the
 [native Python journal](../../journal/2026-07-25-phase4-native-python.md).
+The sequential merge procedure and final push-to-main evidence are recorded in the
+[Phase 4 integration journal](../../journal/2026-07-25-phase4-integration.md).
 
 ## Implemented evidence surfaces
 
@@ -172,7 +172,8 @@ a reviewed literal and is not claimed to come from an independent encoder.
 Local aggregate evidence is 482/482 CTest cases in both GCC Debug and Release; 354 Python passes
 with two expected Windows canonical-symlink skips; 11 additional campaign/fuzz passes; and green
 Ruff, strict mypy, and formatting checks. All 15 hosted PR4 checks independently revalidate the
-stack on implementation commit `0525c9b`.
+stack on the final reviewed head, and the uncancelled workflow on merged commit `075d29a`
+revalidates the push-to-main gate.
 
 ## Router acceptance matrix
 
@@ -195,8 +196,8 @@ The local test surfaces cover:
   reference/native parity; and
 - fixed-seed multi-engine stress with invariant checks after every operation.
 
-These surfaces pass the available local gate recorded above. Router draft PR #7 has 12 green
-hosted checks, PR3 has 13, and PR4 has 15; stacked integration remains pending.
+These surfaces pass the available local gate recorded above. Router PR #7 has 12 green hosted
+checks, PR3 has 13, and PR4 has 15. All four slices are integrated on `main`.
 
 ## Local reproduction
 
@@ -263,8 +264,8 @@ python tests/fuzz/run_command_log_fuzz_smoke.py \
   --corpus-dir build/command-log-fuzz/corpus
 ```
 
-The retained Phase 3 corpus passes without regenerated V1 goldens in the hosted PR4 run. Stacked
-integration remains required.
+The retained Phase 3 corpus passes without regenerated V1 goldens in the hosted PR4 run. That
+PR-only evidence is intentionally not duplicated by the push-to-main workflow.
 
 ## Claim boundary
 
@@ -274,7 +275,8 @@ snapshot codec, all-or-nothing bulk reconstruction, synchronized publication, in
 candidate-safe discovery, log-suffix recovery, and clean-tail writable resumption surfaces; its
 hosted checks are green. PR4 supplies the locally validated native Python facade, strict batches,
 logging/recovery/snapshot bindings, concurrency/ownership boundary, wheels, and source
-distribution; all 15 of its hosted checks are green. The stacked PRs are not yet integrated.
+distribution; all 15 of its hosted checks are green. The four slices are integrated on `main`, and
+the final uncancelled main workflow passes.
 Benchmark results, a network gateway, and production-operational guarantees remain outside the
 current evidence.
 
