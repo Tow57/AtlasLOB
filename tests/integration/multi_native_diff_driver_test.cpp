@@ -1,6 +1,7 @@
 #include <gtest/gtest.h>
 
 #include <cstddef>
+#include <cstdint>
 #include <limits>
 #include <sstream>
 #include <string>
@@ -194,8 +195,8 @@ TEST(MultiNativeDiffDriver, RawEnumsAndSignedPriceBoundsReachSequencedDomainVali
 }
 
 TEST(MultiNativeDiffDriver, HostRepresentationBoundsAreChecked) {
-  if constexpr (std::numeric_limits<std::size_t>::digits <
-                std::numeric_limits<std::uint64_t>::digits) {
+#if SIZE_MAX < UINT64_MAX
+  {
     std::istringstream input{
         "ATLAS_DIFF_V2 18446744073709551615 1 0 0\n"
         "I 7 1000 1 4\n"};
@@ -204,6 +205,7 @@ TEST(MultiNativeDiffDriver, HostRepresentationBoundsAreChecked) {
     EXPECT_NE(output.str().find(R"("code":"invalid_header_max_total_active_orders")"),
               std::string::npos);
   }
+#endif
 }
 
 TEST(MultiNativeDiffDriver, IdenticalStreamsProduceByteIdenticalEvidence) {
