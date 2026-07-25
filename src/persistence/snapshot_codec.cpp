@@ -855,7 +855,7 @@ SnapshotCodecResult<SnapshotFile> decode_snapshot(std::span<const std::uint8_t> 
   std::uint64_t header_length = 0U;
   std::span<const std::uint8_t> log_id_bytes;
   std::uint64_t covered_sequence = 0U;
-  std::uint64_t covered_log_offset = 0U;
+  std::uint64_t decoded_covered_log_offset = 0U;
   std::uint8_t exhausted = 0U;
   std::uint64_t active_order_count = 0U;
   std::uint64_t maximum_total_active = 0U;
@@ -868,7 +868,7 @@ SnapshotCodecResult<SnapshotFile> decode_snapshot(std::span<const std::uint8_t> 
   if (!decoder.bytes(snapshot_magic.size(), magic) || !decoder.u16(format_version) ||
       !decoder.u16(semantics_version) || !decoder.u32(marker) || !decoder.u64(total_length) ||
       !decoder.u64(header_length) || !decoder.bytes(16U, log_id_bytes) ||
-      !decoder.u64(covered_sequence) || !decoder.u64(covered_log_offset) ||
+      !decoder.u64(covered_sequence) || !decoder.u64(decoded_covered_log_offset) ||
       !decoder.u8(exhausted) || !decoder.u64(active_order_count) ||
       !decoder.u64(maximum_total_active) || !decoder.u32(catalog_count) ||
       !decoder.u64(catalog_length) || !decoder.u32(instrument_count) ||
@@ -924,7 +924,7 @@ SnapshotCodecResult<SnapshotFile> decode_snapshot(std::span<const std::uint8_t> 
       .format_version = format_version,
       .semantics_version = semantics_version,
       .covered_sequence = domain::Sequence{covered_sequence},
-      .covered_log_byte_offset = covered_log_offset,
+      .covered_log_byte_offset = decoded_covered_log_offset,
       .sequence_exhausted = exhausted != 0U,
       .engine_config =
           {
