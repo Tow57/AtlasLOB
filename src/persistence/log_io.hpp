@@ -28,6 +28,8 @@ enum class LogIoOperation : std::uint8_t {
   sync = 7,
   close = 8,
   remove_file = 9,
+  publish_file = 10,
+  sync_directory = 11,
 };
 
 struct LogIoFailure final {
@@ -176,6 +178,28 @@ struct NativeSinkOpenResult final {
 // removes the partial new file.
 [[nodiscard]] NativeSinkOpenResult open_native_new_log_sink(const std::filesystem::path& path);
 
+struct NativeFilePublicationResult final {
+  bool destination_visible{};
+  bool source_visible{true};
+  LogIoFailure failure{};
+
+  [[nodiscard]] bool succeeded() const noexcept {
+    return destination_visible && !source_visible && !failure;
+  }
+  [[nodiscard]] explicit operator bool() const noexcept { return succeeded(); }
+};
+
+// Publishes a closed, synchronized new file at a different path without ever
+// replacing an existing destination. The paths must share a directory. The
+// visibility bits remain authoritative even when publication or directory
+// synchronization fails.
+[[nodiscard]] NativeFilePublicationResult publish_native_new_file_no_replace(
+    const std::filesystem::path& source, const std::filesystem::path& destination);
+
+// Uses the same private removal seam as NativeNewFileSink::abandon(). Callers
+// can therefore report a surviving unpublished artifact deterministically.
+[[nodiscard]] LogIoFailure remove_native_file(const std::filesystem::path& path) noexcept;
+
 class NativeAppendFileSink final : public LogSink {
  public:
   ~NativeAppendFileSink() override;
@@ -196,9 +220,15 @@ class NativeAppendFileSink final : public LogSink {
  private:
   friend struct NativeAppendSinkOpenResult;
   friend NativeAppendSinkOpenResult open_native_append_log_sink(const std::filesystem::path& path);
+  friend NativeAppendSinkOpenResult open_native_existing_append_log_sink(
+      const std::filesystem::path& path, std::uint64_t expected_extent);
 
-  NativeAppendFileSink(std::FILE* stream, std::filesystem::path path)
-      : stream_{stream}, path_{std::move(path)} {}
+  NativeAppendFileSink(std::FILE* stream, std::filesystem::path path,
+                       std::uint64_t initial_offset = 0U, bool header_published = false) noexcept
+      : stream_{stream},
+        path_{std::move(path)},
+        offset_{initial_offset},
+        header_published_{header_published} {}
 
   std::FILE* stream_{};
   std::filesystem::path path_;
@@ -218,5 +248,12 @@ struct NativeAppendSinkOpenResult final {
 // record writes; existing paths are never truncated.
 [[nodiscard]] NativeAppendSinkOpenResult open_native_append_log_sink(
     const std::filesystem::path& path);
+
+// Opens an existing authoritative log without creating or truncating it. The
+// opened descriptor is append-only, its extent must still equal the validated
+// recovery extent, and the sink is published from construction so no failure
+// path can remove the existing log.
+[[nodiscard]] NativeAppendSinkOpenResult open_native_existing_append_log_sink(
+    const std::filesystem::path& path, std::uint64_t expected_extent);
 
 }  // namespace atlaslob::persistence::detail

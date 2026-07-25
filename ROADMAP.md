@@ -133,8 +133,9 @@ at Phase 2.
   and merge pending.
 - [ ] Inspector, replay, corruption, and truncated-tail tests - implemented and locally validated;
   hosted sanitizer/libFuzzer validation and merge pending.
+- [ ] Canonical persisted snapshot plus log-suffix recovery - implemented and validated by the
+  full local GCC/Python/production gates; hosted validation and merge pending.
 - [ ] pybind11 batch API and distributable native-backed Python package.
-- [ ] Canonical persisted snapshot plus log-suffix recovery.
 
 [ADR 0012](docs/decisions/0012-multi-instrument-routing-and-global-sequencing.md) defines the first
 Phase 4 slice. The local `codex/phase4-router` work adds an immutable, eagerly constructed
@@ -165,11 +166,27 @@ recovery rather than permitting the session to continue. Since the log stores ev
 digest rather than complete expected events, diagnostic replay cannot reconstruct an expected
 field-level event body without a separate transcript.
 
-PR1 and PR2 are locally validated with hosted integration pending. PR2 passes 418 Debug and Release
-CTest cases, including 85 persistence cases, plus the 288-test non-campaign Python gate, strict
-typing/linting, production-only build, and pinned formatting. The local Windows toolchain lacks
-ASan/UBSan runtimes and Clang libFuzzer, so those authoritative hosted gates remain pending. Neither
-slice completes snapshot recovery or native bindings. Current evidence status is indexed in
+PR1 and PR2 are locally validated with hosted integration pending. The stacked PR3 working branch
+passes 482/482 GCC Debug and Release CTest cases, the production-only build, the 288-test
+non-campaign and 11-test marked Python selections, and the CLI process-boundary check. The local
+Windows toolchain lacks ASan/UBSan runtimes and Clang libFuzzer, so those authoritative hosted
+gates remain pending.
+
+[ADR 0014](docs/decisions/0014-persisted-snapshots-and-log-suffix-recovery.md) and the
+[snapshot format reference](docs/snapshot-format.md) define the implemented `ATLSSN01` V1 slice.
+It adds a bounded canonical snapshot codec; all-or-nothing bulk reconstruction that allocates
+levels, nodes, local indexes, the global active-ID directory, and a reverse active-priority
+directory before linking FIFO state; log-synchronized unique publication; standalone inspection;
+candidate-safe newest-valid directory selection that never follows canonical snapshot symlinks;
+and verified recovery from the exact log suffix. Clean full-log and snapshot recovery can resume
+as an existing-only append session after an exact-extent check. Torn-tail valid-prefix recovery
+remains read-only until copy-only repair creates a new clean log.
+
+The focused 60-case recovery selection reports 59 passes and one expected Windows
+canonical-symlink skip. GCC Debug and Release each pass 482/482 CTest cases, the production-only
+build passes, and both Python selections above pass. Hosted Clang, ASan/UBSan, actual Clang
+libFuzzer execution, publication, and merge remain pending. Native bindings remain the final
+Phase 4 slice. Current evidence status is indexed in
 [the Phase 4 evidence record](docs/evidence/phase4/README.md).
 
 ## Phase 5 - Measured portfolio release

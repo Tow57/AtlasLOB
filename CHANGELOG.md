@@ -56,7 +56,8 @@ The format is based on Keep a Changelog, and public releases will follow semanti
   unknown/ownership/instrument/duplicate precedence, active-ID reuse after terminal state, and
   projected per-instrument plus global capacity.
 - Whole-engine invariants covering catalog/book correspondence, local indexes, the global
-  directory, active counts, globally unique priorities, and sequence bounds.
+  active-ID directory, a transactional reverse active-priority directory, active counts, globally
+  unique priorities, and sequence bounds without a pairwise priority scan.
 - Canonical big-endian `ATLSME01` multi-engine state encoding and SHA-256 digest while preserving
   semantic version 6, `ATLSST01`, `ATLSEV01`, and `ATLAS_DIFF_V1`.
 - Independent Python `ReferenceRouter`, Generator V2, canonical V2 workload/manifest schemas,
@@ -83,6 +84,28 @@ The format is based on Keep a Changelog, and public releases will follow semanti
   fast/verify/diagnostic replay.
 - Header and record libFuzzer targets, retained canonical seed generation, and a hosted bounded
   ASan/UBSan fuzz-smoke job.
+- ADR 0014 and a byte-level persisted-snapshot reference freezing `ATLSSN01` V1, the 256 MiB
+  default bound, whole-file CRC32C, exact hierarchy and digest validation, canonical names,
+  no-overwrite publication, log-boundary pairing, and snapshot-aware report schemas.
+- A bounded persisted-snapshot codec with checked lengths/counts, a reviewed byte-exact golden,
+  deterministic truncation/corruption classification, configuration/state digest verification,
+  exact field/entry diagnostic offsets across value and byte entry points, and a dedicated
+  snapshot decoder fuzz target plus retained canonical seed.
+- Bounded all-or-nothing bulk restoration that reserves storage and local/global directories,
+  allocates every level, node, and index entry before linking, then reconstructs exact FIFO state,
+  active counts, priorities, authoritative global sequence, and exhaustion through a private
+  temporary-engine boundary.
+- `LoggedEngine::write_snapshot`, standalone snapshot inspection, explicit or newest-valid
+  directory recovery, exact log-suffix replay, deterministic candidate-skip diagnostics, and
+  `ATLAS_SNAPSHOT_REPORT_V1`/`ATLAS_REPLAY_REPORT_V2` tooling without changing log-only report V1.
+- `LoggedEngine::recover`, `recover_from_snapshot`, and `recover_from_snapshot_directory` factories
+  that retain one source across validation, require a clean tail, and reopen only the exact
+  validated extent with existing-only append semantics. Torn-tail valid-prefix replay remains
+  non-resumable until safe copy-only repair creates a clean log.
+- Snapshot fault evidence for every injected restore allocation and publication stage, sticky
+  poisoning on pre-snapshot log-sync failure, no-overwrite behavior, preservation of previous good
+  snapshots, cleanup-error reporting, invalid-newer/valid-older selection, non-followed canonical
+  symlinks, candidate-local I/O skipping, and full-log fallback.
 - C++20 domain library, CLI, and unit-test foundation.
 - Strong identifier, price, quantity, and sequence values.
 - Deterministic new-order validation and demonstration command.
@@ -186,6 +209,11 @@ The format is based on Keep a Changelog, and public releases will follow semanti
   formatting, Python, stress, and cross-language gates; hosted validation remains pending. Phase 4
   PR2 command-log/replay implementation now passes the local Debug, Release, production-only,
   persistence, Python, typing, linting, and formatting gates; hosted Clang, sanitizer, libFuzzer,
-  pull-request, and merge gates remain pending.
+  pull-request, and merge gates remain pending. On the stacked Phase 4 PR3 working branch, GCC
+  Debug and Release each pass 482/482 CTest cases, the production-only build passes, the
+  288-test non-campaign and 11-test marked Python selections pass, and the CLI process-boundary
+  check passes. Its 60-case focused recovery selection reports 59 passes plus one expected Windows
+  canonical-symlink skip. Hosted Clang, sanitizer, actual libFuzzer execution, pull-request, and
+  merge gates remain pending.
 - ADR 0011, the Phase 3 evidence index, and documented dependency deferrals for Phase 4,
   Phase 6, and future persistence-format fuzzing.

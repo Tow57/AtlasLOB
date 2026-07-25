@@ -190,7 +190,13 @@ InstrumentBook::InstrumentBook(domain::InstrumentId instrument_id) : instrument_
   }
 }
 
-InstrumentBook::~InstrumentBook() noexcept { drain(); }
+InstrumentBook::~InstrumentBook() noexcept {
+  if (snapshot_restore_staging_) {
+    abandon_snapshot_restore();
+  } else {
+    drain();
+  }
+}
 
 InstrumentBook::PreparedRest::PreparedRest(InstrumentBook& owner, OrderNode& node,
                                            std::unique_ptr<PriceLevel> staging_level,
@@ -1243,6 +1249,90 @@ void InstrumentBook::enforce_postconditions() const noexcept {
     std::terminate();
   }
 #endif
+}
+
+void InstrumentBook::begin_snapshot_restore() noexcept {
+  if (snapshot_restore_staging_ || storage_.size() != 0U || !index_.empty() || !bids_.empty() ||
+      !asks_.empty() || has_pending_preparation()) {
+    std::terminate();
+  }
+  snapshot_restore_staging_ = true;
+}
+
+void InstrumentBook::reserve_snapshot_storage(std::size_t order_count) {
+  if (!snapshot_restore_staging_) {
+    std::terminate();
+  }
+  storage_.reserve_for_snapshot_restore(order_count);
+}
+
+void InstrumentBook::reserve_snapshot_index(std::size_t order_count) {
+  if (!snapshot_restore_staging_) {
+    std::terminate();
+  }
+  index_.reserve_for_snapshot_restore(order_count);
+}
+
+PriceLevel* InstrumentBook::allocate_snapshot_level(domain::Side side, domain::PriceTicks price) {
+  if (!snapshot_restore_staging_) {
+    std::terminate();
+  }
+  if (side == domain::Side::buy) {
+    return bids_.allocate_level_for_snapshot_restore(price);
+  }
+  if (side == domain::Side::sell) {
+    return asks_.allocate_level_for_snapshot_restore(price);
+  }
+  return nullptr;
+}
+
+OrderNode* InstrumentBook::allocate_snapshot_order(const OrderNodeSpec& spec) {
+  if (!snapshot_restore_staging_) {
+    std::terminate();
+  }
+  return storage_.create(spec).node;
+}
+
+bool InstrumentBook::index_snapshot_order(OrderNode& node) {
+  if (!snapshot_restore_staging_) {
+    std::terminate();
+  }
+  return index_.insert(node) == ActiveOrderIndexError::none;
+}
+
+OrderNode* InstrumentBook::find_snapshot_order(domain::OrderId order_id) noexcept {
+  if (!snapshot_restore_staging_) {
+    std::terminate();
+  }
+  return storage_.find(order_id);
+}
+
+void InstrumentBook::link_snapshot_order(OrderNode& node) noexcept {
+  if (!snapshot_restore_staging_) {
+    std::terminate();
+  }
+  PriceLevel* const level = node.side() == domain::Side::buy ? bids_.find_level(node.price())
+                                                             : asks_.find_level(node.price());
+  if (level == nullptr || level->append(node) != PriceLevelError::none) {
+    std::terminate();
+  }
+}
+
+void InstrumentBook::complete_snapshot_restore() noexcept {
+  if (!snapshot_restore_staging_ || !validate_invariants()) {
+    std::terminate();
+  }
+  snapshot_restore_staging_ = false;
+}
+
+void InstrumentBook::abandon_snapshot_restore() noexcept {
+  if (!snapshot_restore_staging_) {
+    std::terminate();
+  }
+  bids_.clear_for_snapshot_restore();
+  asks_.clear_for_snapshot_restore();
+  index_.clear_for_snapshot_restore();
+  snapshot_restore_staging_ = false;
 }
 
 void InstrumentBook::drain() noexcept {

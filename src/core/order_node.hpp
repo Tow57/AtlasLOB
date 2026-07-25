@@ -5,6 +5,7 @@
 namespace atlaslob::core {
 
 class HeapOrderStorage;
+class MultiInstrumentEngineAccess;
 class OrderNodeDeleter;
 class PriceLevel;
 
@@ -49,6 +50,7 @@ class OrderNode final {
 
  private:
   friend class HeapOrderStorage;
+  friend class MultiInstrumentEngineAccess;
   friend class OrderNodeDeleter;
   friend class PriceLevel;
 #if defined(ATLAS_ENABLE_TEST_ACCESS) && ATLAS_ENABLE_TEST_ACCESS

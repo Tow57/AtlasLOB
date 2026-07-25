@@ -13,6 +13,7 @@
 #include "log_io.hpp"
 #include "log_scanner.hpp"
 #include "multi_instrument_engine_access.hpp"
+#include "replay_internal.hpp"
 
 namespace atlaslob::persistence {
 namespace {
@@ -93,13 +94,22 @@ namespace {
 
 class ReplayVisitor final : public detail::LogScanVisitor {
  public:
-  ReplayVisitor(MultiInstrumentEngine& engine, ReplayReport& report, ReplayOptions options) noexcept
-      : engine_{engine}, report_{report}, options_{options} {}
+  ReplayVisitor(MultiInstrumentEngine& engine, ReplayReport& report, ReplayOptions options,
+                std::uint64_t start_offset) noexcept
+      : engine_{engine}, report_{report}, options_{options}, start_offset_{start_offset} {}
 
   void on_record(const CommandRecord& record, std::span<const std::uint8_t> encoded,
                  std::uint64_t frame_begin, std::uint64_t frame_end) override {
     static_cast<void>(encoded);
     static_cast<void>(frame_end);
+    if (record.outcome == RecordOutcome::committed) {
+      ++report_.committed;
+    } else {
+      ++report_.rejected;
+    }
+    if (frame_begin < start_offset_) {
+      return;
+    }
     if (report_.divergence.has_value()) {
       return;
     }
@@ -108,12 +118,6 @@ class ReplayVisitor final : public detail::LogScanVisitor {
     ++report_.records_replayed;
     const auto expected = expected_summary(record);
     const auto actual = actual_summary(result);
-
-    if (result.committed()) {
-      ++report_.committed;
-    } else if (result.rejected()) {
-      ++report_.rejected;
-    }
 
     std::optional<ReplayDivergenceCategory> difference;
     if (result.error() != EngineError::none || !actual.outcome.has_value()) {
@@ -153,10 +157,11 @@ class ReplayVisitor final : public detail::LogScanVisitor {
   MultiInstrumentEngine& engine_;
   ReplayReport& report_;
   ReplayOptions options_;
+  std::uint64_t start_offset_{};
 };
 
-[[nodiscard]] bool same_validated_source(const detail::LogScanResult& first,
-                                         const detail::LogScanResult& second) noexcept {
+[[nodiscard]] bool same_source(const detail::LogScanResult& first,
+                               const detail::LogScanResult& second) noexcept {
   return first.valid_prefix_digest.has_value() && second.valid_prefix_digest.has_value() &&
          second.source_extent == first.source_extent &&
          second.header_end_offset == first.header_end_offset &&
@@ -168,7 +173,32 @@ class ReplayVisitor final : public detail::LogScanVisitor {
 
 }  // namespace
 
-ReplayResult replay_log(const std::filesystem::path& path, ReplayOptions options) {
+namespace detail {
+
+ReplayTail public_replay_tail(LogScanTermination termination) noexcept {
+  return replay_tail(termination);
+}
+
+bool same_validated_source(const LogScanResult& first, const LogScanResult& second) noexcept {
+  return same_source(first, second);
+}
+
+ReplayPassResult execute_replay_pass(LogSource& source, MultiInstrumentEngine& engine,
+                                     ReplayOptions options, std::uint64_t start_offset) {
+  ReplayReport evidence;
+  ReplayVisitor visitor{engine, evidence, options, start_offset};
+  auto scan = scan_command_log(source, {.codec_limits = options.codec_limits}, &visitor);
+  return {
+      .scan = std::move(scan),
+      .records_replayed = evidence.records_replayed,
+      .committed = evidence.committed,
+      .rejected = evidence.rejected,
+      .divergence = std::move(evidence.divergence),
+  };
+}
+
+ReplayResult replay_validated_log_source(LogSource& source, const LogScanResult& first_scan,
+                                         ReplayOptions options) {
   ReplayReport report;
   report.mode = options.mode;
   report.tail_policy = options.tail_policy;
@@ -181,32 +211,24 @@ ReplayResult replay_log(const std::filesystem::path& path, ReplayOptions options
     return {.engine = nullptr, .report = std::move(report)};
   }
 
-  auto first_source = detail::open_native_log_source(path);
-  if (!first_source) {
-    report.error = io_error(first_source.failure.offset, first_source.failure.system_error);
-    return {.engine = nullptr, .report = std::move(report)};
-  }
-  const auto scan_options = detail::LogScanOptions{
-      .codec_limits = options.codec_limits,
-  };
-  auto first_scan = detail::scan_command_log(*first_source.source, scan_options);
-  report.tail = replay_tail(first_scan.termination);
+  report.tail = public_replay_tail(first_scan.termination);
   report.header = first_scan.header;
   report.last_sequence = first_scan.last_sequence;
   report.valid_end_offset = first_scan.valid_end_offset;
   report.records_scanned = first_scan.record_count;
 
-  if (first_scan.termination == detail::LogScanTermination::io_failure ||
-      first_scan.termination == detail::LogScanTermination::corruption) {
+  if (first_scan.termination == LogScanTermination::io_failure ||
+      first_scan.termination == LogScanTermination::corruption) {
     report.error = first_scan.error;
     return {.engine = nullptr, .report = std::move(report)};
   }
-  if (first_scan.termination == detail::LogScanTermination::truncated_tail &&
+  if (first_scan.termination == LogScanTermination::truncated_tail &&
       options.tail_policy == TailPolicy::strict) {
     report.error = first_scan.error;
     return {.engine = nullptr, .report = std::move(report)};
   }
-  report.used_valid_prefix = first_scan.termination == detail::LogScanTermination::truncated_tail;
+  report.used_valid_prefix = first_scan.termination == LogScanTermination::truncated_tail &&
+                             options.tail_policy == TailPolicy::valid_prefix;
   if (report.used_valid_prefix) {
     report.warning = first_scan.error;
   }
@@ -226,24 +248,22 @@ ReplayResult replay_log(const std::filesystem::path& path, ReplayOptions options
 
   auto engine =
       std::make_unique<MultiInstrumentEngine>(host.value->catalog, host.value->engine_config);
-  ReplayReport replay_evidence;
-  ReplayVisitor visitor{*engine, replay_evidence, options};
-  const auto second_scan = detail::scan_command_log(*first_source.source, scan_options, &visitor);
-  if (!same_validated_source(first_scan, second_scan)) {
-    report.error = io_error(second_scan.valid_end_offset,
+  auto replay_pass = execute_replay_pass(source, *engine, options, first_scan.header_end_offset);
+  if (!same_validated_source(first_scan, replay_pass.scan)) {
+    report.error = io_error(replay_pass.scan.valid_end_offset,
                             std::make_error_code(std::errc::state_not_recoverable));
     return {.engine = nullptr, .report = std::move(report)};
   }
-  if (second_scan.termination == detail::LogScanTermination::io_failure ||
-      second_scan.termination == detail::LogScanTermination::corruption) {
-    report.error = second_scan.error;
+  if (replay_pass.scan.termination == LogScanTermination::io_failure ||
+      replay_pass.scan.termination == LogScanTermination::corruption) {
+    report.error = replay_pass.scan.error;
     return {.engine = nullptr, .report = std::move(report)};
   }
 
-  report.records_replayed = replay_evidence.records_replayed;
-  report.committed = replay_evidence.committed;
-  report.rejected = replay_evidence.rejected;
-  report.divergence = std::move(replay_evidence.divergence);
+  report.records_replayed = replay_pass.records_replayed;
+  report.committed = replay_pass.committed;
+  report.rejected = replay_pass.rejected;
+  report.divergence = std::move(replay_pass.divergence);
   if (!report.divergence.has_value() &&
       !core::MultiInstrumentEngineAccess::validate_invariants(*engine)) {
     report.divergence = ReplayDivergence{
@@ -266,6 +286,51 @@ ReplayResult replay_log(const std::filesystem::path& path, ReplayOptions options
       .engine = std::move(engine),
       .report = std::move(report),
   };
+}
+
+ReplayResult replay_log_source(LogSource& source, ReplayOptions options) {
+  if (!options.valid()) {
+    ReplayReport report;
+    report.mode = options.mode;
+    report.tail_policy = options.tail_policy;
+    report.error = {
+        .category = LogErrorCategory::invalid_length,
+        .byte_offset = 0U,
+        .system_error = std::make_error_code(std::errc::invalid_argument),
+    };
+    return {.engine = nullptr, .report = std::move(report)};
+  }
+  const auto scan_options = LogScanOptions{
+      .codec_limits = options.codec_limits,
+  };
+  auto first_scan = scan_command_log(source, scan_options);
+  return replay_validated_log_source(source, first_scan, options);
+}
+
+}  // namespace detail
+
+ReplayResult replay_log(const std::filesystem::path& path, ReplayOptions options) {
+  if (!options.valid()) {
+    ReplayReport report;
+    report.mode = options.mode;
+    report.tail_policy = options.tail_policy;
+    report.error = {
+        .category = LogErrorCategory::invalid_length,
+        .byte_offset = 0U,
+        .system_error = std::make_error_code(std::errc::invalid_argument),
+    };
+    return {.engine = nullptr, .report = std::move(report)};
+  }
+
+  auto source = detail::open_native_log_source(path);
+  if (!source) {
+    ReplayReport report;
+    report.mode = options.mode;
+    report.tail_policy = options.tail_policy;
+    report.error = io_error(source.failure.offset, source.failure.system_error);
+    return {.engine = nullptr, .report = std::move(report)};
+  }
+  return detail::replay_log_source(*source.source, options);
 }
 
 }  // namespace atlaslob::persistence

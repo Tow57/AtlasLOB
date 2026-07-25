@@ -8,6 +8,7 @@
 #include "atlaslob/domain/commands.hpp"
 #include "atlaslob/matching_engine.hpp"
 #include "atlaslob/multi_instrument_engine.hpp"
+#include "atlaslob/persistence/snapshot_store.hpp"
 #include "atlaslob/persistence/types.hpp"
 
 namespace atlaslob::persistence {
@@ -40,6 +41,29 @@ struct LoggedSubmissionResult final {
   [[nodiscard]] explicit operator bool() const noexcept { return has_value(); }
 };
 
+struct LoggedEngineRecoveryResult final {
+  std::unique_ptr<LoggedEngine> engine;
+  ReplayReport report{};
+
+  [[nodiscard]] bool has_value() const noexcept {
+    return engine != nullptr && report.tail == ReplayTail::clean && report.error.ok() &&
+           !report.divergence.has_value();
+  }
+  [[nodiscard]] explicit operator bool() const noexcept { return has_value(); }
+};
+
+struct LoggedEngineSnapshotRecoveryResult final {
+  std::unique_ptr<LoggedEngine> engine;
+  SnapshotRecoveryReport report{};
+
+  [[nodiscard]] bool has_value() const noexcept {
+    return engine != nullptr && report.replay.tail == ReplayTail::clean &&
+           report.snapshot_error.ok() && report.replay.error.ok() &&
+           !report.replay.divergence.has_value();
+  }
+  [[nodiscard]] explicit operator bool() const noexcept { return has_value(); }
+};
+
 // One logical writer that places every sequenced command in ATLSLG01 before
 // publishing its already-prepared engine mutation.
 class LoggedEngine final {
@@ -50,6 +74,19 @@ class LoggedEngine final {
   [[nodiscard]] static LoggedEngineOpenResult create_new(
       const std::filesystem::path& path, std::span<const InstrumentConfig> catalog, LogId log_id,
       MultiInstrumentEngineConfig engine_config = {}, LoggedEngineOptions options = {});
+
+  // Trusted recovery factories revalidate the complete existing log against
+  // one retained read handle, require a clean tail, and only then reopen that
+  // exact extent as an existing-only append session.
+  [[nodiscard]] static LoggedEngineRecoveryResult recover(const std::filesystem::path& path,
+                                                          ReplayOptions replay_options = {},
+                                                          LoggedEngineOptions options = {});
+  [[nodiscard]] static LoggedEngineSnapshotRecoveryResult recover_from_snapshot(
+      const std::filesystem::path& path, const std::filesystem::path& snapshot_path,
+      ReplayOptions replay_options = {}, LoggedEngineOptions options = {});
+  [[nodiscard]] static LoggedEngineSnapshotRecoveryResult recover_from_snapshot_directory(
+      const std::filesystem::path& path, const std::filesystem::path& snapshot_directory,
+      ReplayOptions replay_options = {}, LoggedEngineOptions options = {});
 
   ~LoggedEngine() noexcept;
 
@@ -65,6 +102,7 @@ class LoggedEngine final {
 
   // Required by snapshot publication even when normal writes are buffered.
   [[nodiscard]] LogError synchronize() noexcept;
+  [[nodiscard]] SnapshotPublicationResult write_snapshot(const std::filesystem::path& directory);
 
   [[nodiscard]] const MultiInstrumentEngine& engine() const noexcept;
   [[nodiscard]] bool poisoned() const noexcept;

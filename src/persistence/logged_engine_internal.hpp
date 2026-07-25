@@ -1,11 +1,17 @@
 #pragma once
 
+#include <cstdint>
 #include <span>
 
 #include "atlaslob/persistence/logged_engine.hpp"
 #include "log_io.hpp"
 
 namespace atlaslob::persistence::detail {
+
+using LoggedEngineSynchronizeHook = LogError (*)(std::uint64_t) noexcept;
+
+// Private deterministic fault-injection seam for the snapshot log-sync gate.
+void set_logged_engine_synchronize_hook_for_testing(LoggedEngineSynchronizeHook hook) noexcept;
 
 [[nodiscard]] LogError as_log_error(const LogIoFailure& failure) noexcept;
 

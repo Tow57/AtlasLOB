@@ -17,6 +17,7 @@
 
 #include "atlaslob/domain/commands.hpp"
 #include "atlaslob/persistence/logged_engine.hpp"
+#include "log_io.hpp"
 
 namespace atlaslob::persistence::tests {
 namespace {
@@ -40,6 +41,7 @@ class TemporaryDirectory final {
   TemporaryDirectory& operator=(const TemporaryDirectory&) = delete;
 
   [[nodiscard]] std::filesystem::path file(std::string_view name) const { return path_ / name; }
+  [[nodiscard]] const std::filesystem::path& path() const noexcept { return path_; }
 
  private:
   std::filesystem::path path_;
@@ -98,6 +100,18 @@ class RejectingStreamBuffer final : public std::streambuf {
       .error = error.str(),
   };
 }
+
+[[nodiscard]] std::error_code fail_cli_cleanup(const std::filesystem::path&) noexcept {
+  return std::make_error_code(std::errc::permission_denied);
+}
+
+class RemoveHookReset final {
+ public:
+  RemoveHookReset() = default;
+  RemoveHookReset(const RemoveHookReset&) = delete;
+  RemoveHookReset& operator=(const RemoveHookReset&) = delete;
+  ~RemoveHookReset() { detail::set_remove_file_hook_for_testing(nullptr); }
+};
 
 [[nodiscard]] CliResult replay(const std::vector<std::string>& owned_arguments) {
   std::vector<std::string_view> arguments;
@@ -208,6 +222,48 @@ TEST(PersistenceCli, UsageAndOperationalFailuresUseStableExitCodes) {
       detail::cli_usage_exit_code);
 }
 
+TEST(PersistenceCli, RepairCleanupFailureReportsAnArtifactWithoutLeakingAHostPath) {
+  TemporaryDirectory temporary;
+  const auto input = temporary.file("torn.log");
+  const std::array catalog{instrument()};
+  auto logged = LoggedEngine::create_new(input, catalog);
+  ASSERT_TRUE(logged);
+  ASSERT_TRUE(logged.engine->submit(order()));
+  logged.engine.reset();
+  const auto size = std::filesystem::file_size(input);
+  ASSERT_GT(size, 0U);
+  std::filesystem::resize_file(input, size - 1U);
+
+  const auto existing_output = temporary.file("existing.log");
+  {
+    std::ofstream stream{existing_output, std::ios::binary};
+    stream << "sentinel";
+    ASSERT_TRUE(stream);
+  }
+
+  RemoveHookReset reset;
+  detail::set_remove_file_hook_for_testing(fail_cli_cleanup);
+  const auto result =
+      inspect({"atlas_inspect", "repair-tail", input.string(), existing_output.string(), "--json"});
+  EXPECT_EQ(result.exit_code, detail::cli_io_failure_exit_code);
+  EXPECT_NE(result.output.find("\"unpublished_artifact_present\":true"), std::string::npos);
+  EXPECT_EQ(result.output.find(existing_output.string()), std::string::npos);
+  EXPECT_EQ(result.error, "repair-tail left an unpublished artifact beside the requested output\n");
+  EXPECT_EQ(result.error.find(existing_output.string()), std::string::npos);
+
+  detail::set_remove_file_hook_for_testing(nullptr);
+  bool artifact_found{};
+  for (const auto& entry : std::filesystem::directory_iterator{temporary.path()}) {
+    const auto filename = entry.path().filename().string();
+    if (filename.starts_with("existing.log.atlaslob-repair-tmp-")) {
+      artifact_found = true;
+      std::error_code ignored;
+      static_cast<void>(std::filesystem::remove(entry.path(), ignored));
+    }
+  }
+  EXPECT_TRUE(artifact_found);
+}
+
 TEST(PersistenceCli, OutputFailuresAreOperationalFailures) {
   TemporaryDirectory temporary;
   const auto clean = temporary.file("clean.log");
@@ -222,6 +278,46 @@ TEST(PersistenceCli, OutputFailuresAreOperationalFailures) {
   std::ostream rejected_output{&buffer};
   std::ostringstream error;
   EXPECT_EQ(detail::run_atlas_inspect(arguments, rejected_output, error),
+            detail::cli_io_failure_exit_code);
+}
+
+TEST(PersistenceCli, SnapshotInspectionAndRecoveryUseVersionedReportsAndStableExitCodes) {
+  TemporaryDirectory temporary;
+  const auto clean = temporary.file("clean.log");
+  const std::array catalog{instrument()};
+  auto logged = LoggedEngine::create_new(clean, catalog);
+  ASSERT_TRUE(logged);
+  ASSERT_TRUE(logged.engine->submit(order()));
+  const auto published = logged.engine->write_snapshot(temporary.file(".").parent_path());
+  ASSERT_TRUE(published);
+  logged.engine.reset();
+
+  const auto inspected = inspect({"atlas_inspect", "snapshot", published.path.string(), "--json"});
+  EXPECT_EQ(inspected.exit_code, 0);
+  EXPECT_TRUE(inspected.error.empty());
+  EXPECT_NE(inspected.output.find("\"schema\":\"ATLAS_SNAPSHOT_REPORT_V1\""), std::string::npos);
+  EXPECT_NE(inspected.output.find("\"status\":\"ok\""), std::string::npos);
+  EXPECT_EQ(inspected.output.find(published.path.string()), std::string::npos);
+
+  const auto recovered = replay({"atlas_replay", clean.string(), "--snapshot",
+                                 published.path.string(), "--mode", "verify", "--json"});
+  EXPECT_EQ(recovered.exit_code, 0);
+  EXPECT_TRUE(recovered.error.empty());
+  EXPECT_NE(recovered.output.find("\"schema\":\"ATLAS_REPLAY_REPORT_V2\""), std::string::npos);
+  EXPECT_NE(recovered.output.find("\"recovery_source\":\"explicit_snapshot\""), std::string::npos);
+  EXPECT_EQ(recovered.output.find(published.path.string()), std::string::npos);
+
+  EXPECT_EQ(replay({"atlas_replay", clean.string(), "--snapshot", published.path.string(),
+                    "--snapshot-dir", temporary.file(".").parent_path().string()})
+                .exit_code,
+            detail::cli_usage_exit_code);
+  EXPECT_EQ(
+      inspect({"atlas_inspect", "snapshot", temporary.file("missing.snapshot").string(), "--json"})
+          .exit_code,
+      detail::cli_io_failure_exit_code);
+  EXPECT_EQ(replay({"atlas_replay", clean.string(), "--snapshot",
+                    temporary.file("missing.snapshot").string(), "--json"})
+                .exit_code,
             detail::cli_io_failure_exit_code);
 }
 

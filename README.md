@@ -26,10 +26,15 @@ routing, one global sequence, an engine-wide active-ID directory and capacity, c
 `ReferenceRouter`/Generator V2 surfaces. Phase 4 PR2 is implemented and locally validated on
 `codex/phase4-command-log`: it adds the canonical `ATLSLG01` log, write-ahead sessions, bounded
 inspection and safe tail repair, verified replay, deterministic reports, command-line tools, and
-decoder fuzz targets. Debug and Release each pass all 418 CTest cases; the non-campaign Python gate
-passes 288 tests with two expected Windows symlink skips. Hosted Clang, sanitizer, and libFuzzer
-validation remain pending, so PR2 is not yet recorded as merged or fully green. Persisted snapshots
-and native Python distribution remain later Phase 4 work.**
+decoder fuzz targets. Phase 4 PR3 is implemented on `codex/phase4-snapshot-recovery`: it adds the
+canonical `ATLSSN01` codec, bounded all-or-nothing bulk reconstruction, synchronized no-overwrite
+publication, snapshot inspection, candidate-safe newest-valid discovery, exact log-suffix
+recovery, and clean-tail recovery into a writable `LoggedEngine`. At this documentation
+checkpoint, GCC Debug and Release each pass 482/482 CTest cases, the production-only build passes,
+the 288-test non-campaign and 11-test marked Python selections pass, and the CLI
+process-boundary check passes. The 60-case focused recovery selection reports 59 passes and one
+expected Windows canonical-symlink skip. Hosted Clang, sanitizer, and actual libFuzzer validation
+remain pending. Native Python distribution remains Phase 4 PR4 work.**
 
 See the [Phase 4 evidence index](docs/evidence/phase4/README.md) for the current validation
 boundary.
@@ -76,9 +81,10 @@ boundary.
 | Native multi-instrument adapter and strict decoder | Complete locally; hosted gate pending | `atlas_diff_multi_native`, `ATLAS_DIFF_V2` |
 | Python `ReferenceRouter` and Generator V2 | Complete locally; hosted gate pending | V2 workload, manifest, and interleaving tests |
 | Append-only command log, scanner, repair, and replay | Complete locally; hosted gate pending | [ADR 0013](docs/decisions/0013-command-log-and-replay.md), [format](docs/command-log-format.md), 85 persistence tests |
+| Persisted snapshot codec, publication, recovery, and clean-tail log resumption | Complete locally; hosted gate pending | [ADR 0014](docs/decisions/0014-persisted-snapshots-and-log-suffix-recovery.md), [format](docs/snapshot-format.md), 60 selected recovery cases |
 | Resting book structure | Complete | `stress.InstrumentBookStress*` |
 | Matching and normalized command execution | Complete | Phase 2 |
-| Persisted snapshot recovery and Python bindings | Planned | Phase 4 PR3 and PR4 |
+| Native Python bindings and wheels | Planned | Phase 4 PR4 |
 | Benchmarks and gateway | Planned | Later gated phases |
 
 ## Quick start
@@ -230,6 +236,10 @@ developed with MinGW GCC on Windows, but Linux CI is the support authority.
 - ADR 0013 freezes the byte-exact `ATLSLG01` V1 header and records, CRC32C coverage, write-ahead
   durability and poisoning boundary, bounded scanning, safe tail repair, replay verification,
   deterministic report schemas, and sticky poisoning after an impossible post-WAL commit mismatch.
+- ADR 0014 freezes the byte-exact `ATLSSN01` V1 hierarchy, bounded validation, staged bulk
+  intrusive-state restoration, synchronized unique publication, symlink-safe newest-valid
+  discovery, exact log-boundary/suffix recovery, clean-tail `LoggedEngine` resumption, and
+  separate snapshot-aware report schemas.
 
 See [the semantic contract](docs/semantics.md) and
 [ADR 0001](docs/decisions/0001-core-semantics.md) plus
@@ -243,8 +253,10 @@ See [the semantic contract](docs/semantics.md) and
 [ADR 0009](docs/decisions/0009-canonical-deterministic-evidence.md) plus
 [ADR 0010](docs/decisions/0010-independent-python-oracle-boundary.md) plus
 [ADR 0011](docs/decisions/0011-deterministic-differential-campaigns.md) plus
-[ADR 0012](docs/decisions/0012-multi-instrument-routing-and-global-sequencing.md) for accepted
-rules. The
+[ADR 0012](docs/decisions/0012-multi-instrument-routing-and-global-sequencing.md) plus
+[ADR 0013](docs/decisions/0013-command-log-and-replay.md) plus
+[ADR 0014](docs/decisions/0014-persisted-snapshots-and-log-suffix-recovery.md) for accepted rules.
+The
 test-only process, workload, campaign, and failure schemas are documented in
 [Differential testing interface](docs/differential-testing.md).
 

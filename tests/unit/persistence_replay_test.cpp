@@ -11,6 +11,7 @@
 #include <random>
 #include <span>
 #include <string>
+#include <variant>
 #include <vector>
 
 #include "atlaslob/domain/commands.hpp"
@@ -80,6 +81,20 @@ domain::NewOrder order(std::uint64_t order_id, std::uint32_t instrument_id, std:
       .time_in_force = domain::TimeInForce::gtc,
       .limit_price = domain::PriceTicks{price},
       .quantity = domain::Quantity{5U},
+  };
+}
+
+domain::NewOrder crossing_sell(std::uint64_t order_id, std::uint32_t instrument_id,
+                               std::int64_t price, std::uint64_t quantity) {
+  return {
+      .client_id = domain::ClientId{22U},
+      .order_id = domain::OrderId{order_id},
+      .instrument_id = domain::InstrumentId{instrument_id},
+      .side = domain::Side::sell,
+      .order_type = domain::OrderType::limit,
+      .time_in_force = domain::TimeInForce::gtc,
+      .limit_price = domain::PriceTicks{price},
+      .quantity = domain::Quantity{quantity},
   };
 }
 
@@ -181,6 +196,8 @@ TEST(CommandLogReplay, IndependentVerifiedReplaysProduceIdenticalReportsStateAnd
   ASSERT_TRUE(opened.engine->submit(order(1U, 7U, 100)));
   ASSERT_TRUE(opened.engine->submit(order(2U, 999U, 100)));
   ASSERT_TRUE(opened.engine->submit(order(3U, 9U, 101)));
+  const auto expected_snapshot = opened.engine->engine().snapshot();
+  const auto expected_digest = opened.engine->engine().state_digest();
   opened.engine.reset();
 
   auto first = replay_log(file.path(), replay_options(ReplayMode::verify));
@@ -188,21 +205,43 @@ TEST(CommandLogReplay, IndependentVerifiedReplaysProduceIdenticalReportsStateAnd
 
   ASSERT_TRUE(first);
   ASSERT_TRUE(second);
-  EXPECT_EQ(detail::render_replay_report_json(first.report),
-            detail::render_replay_report_json(second.report));
-  EXPECT_EQ(detail::render_replay_report_text(first.report),
-            detail::render_replay_report_text(second.report));
+  const auto first_json = detail::render_replay_report_json(first.report);
+  const auto second_json = detail::render_replay_report_json(second.report);
+  const auto first_text = detail::render_replay_report_text(first.report);
+  const auto second_text = detail::render_replay_report_text(second.report);
+  EXPECT_EQ(first_json, second_json);
+  EXPECT_EQ(first_text, second_text);
+  EXPECT_EQ(first.report.records_scanned, 3U);
+  EXPECT_EQ(first.report.records_replayed, 3U);
+  EXPECT_EQ(first.report.committed, 2U);
+  EXPECT_EQ(first.report.rejected, 1U);
+  EXPECT_EQ(second.report.records_scanned, first.report.records_scanned);
+  EXPECT_EQ(second.report.records_replayed, first.report.records_replayed);
+  EXPECT_EQ(second.report.committed, first.report.committed);
+  EXPECT_EQ(second.report.rejected, first.report.rejected);
+  EXPECT_EQ(first.report.final_state_digest, expected_digest);
+  EXPECT_EQ(second.report.final_state_digest, expected_digest);
+  EXPECT_EQ(first.engine->snapshot(), expected_snapshot);
+  EXPECT_EQ(second.engine->snapshot(), expected_snapshot);
   EXPECT_EQ(first.engine->snapshot(), second.engine->snapshot());
   EXPECT_EQ(first.engine->state_digest(), second.engine->state_digest());
 
-  const auto next_command = order(4U, 7U, 105);
+  const auto next_command = crossing_sell(4U, 7U, 100, 3U);
   const auto first_next = first.engine->execute(next_command);
   const auto second_next = second.engine->execute(next_command);
+  EXPECT_EQ(first_next.error(), second_next.error());
+  EXPECT_EQ(first_next.committed(), second_next.committed());
+  EXPECT_EQ(first_next.rejected(), second_next.rejected());
   ASSERT_NE(first_next.batch(), nullptr);
   ASSERT_NE(second_next.batch(), nullptr);
   ASSERT_EQ(first_next.batch()->size(), second_next.batch()->size());
   EXPECT_TRUE(std::equal(first_next.batch()->events().begin(), first_next.batch()->events().end(),
                          second_next.batch()->events().begin()));
+  EXPECT_TRUE(std::any_of(first_next.batch()->events().begin(), first_next.batch()->events().end(),
+                          [](const domain::Event& event) {
+                            return std::holds_alternative<domain::TradeEvent>(event);
+                          }));
+  EXPECT_EQ(first.engine->snapshot(), second.engine->snapshot());
   EXPECT_EQ(first.engine->state_digest(), second.engine->state_digest());
 }
 
@@ -245,6 +284,8 @@ TEST(CommandLogReplay, StrictRejectsAndValidPrefixAcceptsOnlyATornTail) {
   EXPECT_FALSE(strict);
   EXPECT_EQ(strict.report.error.category, LogErrorCategory::truncated_final_record);
   EXPECT_EQ(strict.report.tail, ReplayTail::torn);
+  EXPECT_FALSE(strict.report.used_valid_prefix);
+  EXPECT_FALSE(strict.report.warning);
 
   const auto prefix =
       replay_log(file.path(), replay_options(ReplayMode::verify, TailPolicy::valid_prefix));

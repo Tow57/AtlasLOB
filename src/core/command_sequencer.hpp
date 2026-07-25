@@ -78,6 +78,26 @@ class CommandSequencer final {
   [[nodiscard]] domain::Sequence next_sequence() const noexcept { return next_sequence_; }
   [[nodiscard]] bool exhausted() const noexcept { return exhausted_; }
 
+  // Private core restoration seam. The supplied values describe the last
+  // published command and whether issuing the maximum sequence exhausted the
+  // sequencer. Callers outside the core never receive access to this type.
+  void restore_after(domain::Sequence last_sequence, bool exhausted) {
+    const auto maximum = std::numeric_limits<std::uint64_t>::max();
+    if (exhausted) {
+      if (last_sequence.value() != maximum) {
+        throw std::invalid_argument{"exhausted sequence state requires the maximum last sequence"};
+      }
+      next_sequence_ = {};
+      exhausted_ = true;
+      return;
+    }
+    if (last_sequence.value() == maximum) {
+      throw std::invalid_argument{"maximum last sequence requires exhausted sequence state"};
+    }
+    next_sequence_ = domain::Sequence{last_sequence.value() + 1U};
+    exhausted_ = false;
+  }
+
   void set_next_sequence_for_testing(domain::Sequence next_sequence) {
     if (next_sequence.value() == 0U) {
       throw std::invalid_argument{"test sequence must be nonzero"};

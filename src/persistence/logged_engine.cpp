@@ -17,11 +17,16 @@
 #include "command_log_codec.hpp"
 #include "logged_engine_internal.hpp"
 #include "multi_instrument_engine_access.hpp"
+#include "replay_internal.hpp"
+#include "snapshot_store_internal.hpp"
 
 namespace atlaslob::persistence {
 namespace {
 
 [[nodiscard]] LogId generate_log_id() {
+  // This is intentionally the portable standard-library source. Its backing is
+  // implementation-defined, so LogId carries no operating-system entropy,
+  // cryptographic randomness, or guaranteed-uniqueness contract.
   std::random_device source;
   LogId result;
   for (auto& byte : result.bytes) {
@@ -38,9 +43,15 @@ namespace {
   };
 }
 
+detail::LoggedEngineSynchronizeHook synchronize_hook{};
+
 }  // namespace
 
 namespace detail {
+
+void set_logged_engine_synchronize_hook_for_testing(LoggedEngineSynchronizeHook hook) noexcept {
+  synchronize_hook = hook;
+}
 
 LogError as_log_error(const LogIoFailure& failure) noexcept {
   if (!failure) {
@@ -272,6 +283,147 @@ LoggedEngineOpenResult LoggedEngine::create_new(const std::filesystem::path& pat
   };
 }
 
+LoggedEngineRecoveryResult LoggedEngine::recover(const std::filesystem::path& path,
+                                                 ReplayOptions replay_options,
+                                                 LoggedEngineOptions options) {
+  if (!options.valid()) {
+    throw std::invalid_argument{"invalid logged-engine options"};
+  }
+
+  auto source = detail::open_native_log_source(path);
+  if (!source) {
+    ReplayReport report;
+    report.mode = replay_options.mode;
+    report.tail_policy = replay_options.tail_policy;
+    report.error = detail::as_log_error(source.failure);
+    return {
+        .engine = nullptr,
+        .report = std::move(report),
+    };
+  }
+
+  auto recovered = detail::replay_log_source(*source.source, replay_options);
+  if (!recovered || recovered.report.tail != ReplayTail::clean ||
+      !recovered.report.header.has_value()) {
+    return {
+        .engine = nullptr,
+        .report = std::move(recovered.report),
+    };
+  }
+
+  auto sink = detail::open_native_existing_append_log_sink(path, recovered.report.valid_end_offset);
+  if (!sink) {
+    recovered.report.error = detail::as_log_error(sink.failure);
+    return {
+        .engine = nullptr,
+        .report = std::move(recovered.report),
+    };
+  }
+
+  const auto log_id = recovered.report.header->log_id;
+  return {
+      .engine = std::unique_ptr<LoggedEngine>{new LoggedEngine{std::make_unique<Impl>(
+          std::move(recovered.engine), std::move(sink.sink), log_id, options)}},
+      .report = std::move(recovered.report),
+  };
+}
+
+LoggedEngineSnapshotRecoveryResult LoggedEngine::recover_from_snapshot(
+    const std::filesystem::path& path, const std::filesystem::path& snapshot_path,
+    ReplayOptions replay_options, LoggedEngineOptions options) {
+  if (!options.valid()) {
+    throw std::invalid_argument{"invalid logged-engine options"};
+  }
+
+  auto source = detail::open_native_log_source(path);
+  if (!source) {
+    SnapshotRecoveryReport report;
+    report.recovery_source = RecoverySource::explicit_snapshot;
+    report.replay.mode = replay_options.mode;
+    report.replay.tail_policy = replay_options.tail_policy;
+    report.replay.error = detail::as_log_error(source.failure);
+    return {
+        .engine = nullptr,
+        .report = std::move(report),
+    };
+  }
+
+  auto recovered =
+      detail::recover_log_from_snapshot_source(*source.source, snapshot_path, replay_options);
+  if (!recovered || recovered.report.replay.tail != ReplayTail::clean ||
+      !recovered.report.replay.header.has_value()) {
+    return {
+        .engine = nullptr,
+        .report = std::move(recovered.report),
+    };
+  }
+
+  auto sink =
+      detail::open_native_existing_append_log_sink(path, recovered.report.replay.valid_end_offset);
+  if (!sink) {
+    recovered.report.replay.error = detail::as_log_error(sink.failure);
+    return {
+        .engine = nullptr,
+        .report = std::move(recovered.report),
+    };
+  }
+
+  const auto log_id = recovered.report.replay.header->log_id;
+  return {
+      .engine = std::unique_ptr<LoggedEngine>{new LoggedEngine{std::make_unique<Impl>(
+          std::move(recovered.engine), std::move(sink.sink), log_id, options)}},
+      .report = std::move(recovered.report),
+  };
+}
+
+LoggedEngineSnapshotRecoveryResult LoggedEngine::recover_from_snapshot_directory(
+    const std::filesystem::path& path, const std::filesystem::path& snapshot_directory,
+    ReplayOptions replay_options, LoggedEngineOptions options) {
+  if (!options.valid()) {
+    throw std::invalid_argument{"invalid logged-engine options"};
+  }
+
+  auto source = detail::open_native_log_source(path);
+  if (!source) {
+    SnapshotRecoveryReport report;
+    report.recovery_source = RecoverySource::directory_snapshot;
+    report.replay.mode = replay_options.mode;
+    report.replay.tail_policy = replay_options.tail_policy;
+    report.replay.error = detail::as_log_error(source.failure);
+    return {
+        .engine = nullptr,
+        .report = std::move(report),
+    };
+  }
+
+  auto recovered = detail::recover_log_from_snapshot_directory_source(
+      *source.source, snapshot_directory, replay_options);
+  if (!recovered || recovered.report.replay.tail != ReplayTail::clean ||
+      !recovered.report.replay.header.has_value()) {
+    return {
+        .engine = nullptr,
+        .report = std::move(recovered.report),
+    };
+  }
+
+  auto sink =
+      detail::open_native_existing_append_log_sink(path, recovered.report.replay.valid_end_offset);
+  if (!sink) {
+    recovered.report.replay.error = detail::as_log_error(sink.failure);
+    return {
+        .engine = nullptr,
+        .report = std::move(recovered.report),
+    };
+  }
+
+  const auto log_id = recovered.report.replay.header->log_id;
+  return {
+      .engine = std::unique_ptr<LoggedEngine>{new LoggedEngine{std::make_unique<Impl>(
+          std::move(recovered.engine), std::move(sink.sink), log_id, options)}},
+      .report = std::move(recovered.report),
+  };
+}
+
 LoggedEngine::LoggedEngine(std::unique_ptr<Impl> implementation) noexcept
     : impl_{std::move(implementation)} {}
 
@@ -298,6 +450,13 @@ LogError LoggedEngine::synchronize() noexcept {
   if (impl_->poisoned_) {
     return state_error(impl_->sink_->position(), std::errc::state_not_recoverable);
   }
+  if (synchronize_hook != nullptr) {
+    const auto injected = synchronize_hook(impl_->sink_->position());
+    if (injected) {
+      impl_->poisoned_ = true;
+      return injected;
+    }
+  }
   const auto flush_error = detail::as_log_error(impl_->sink_->flush());
   if (flush_error) {
     impl_->poisoned_ = true;
@@ -308,6 +467,27 @@ LogError LoggedEngine::synchronize() noexcept {
     impl_->poisoned_ = true;
   }
   return sync_error;
+}
+
+SnapshotPublicationResult LoggedEngine::write_snapshot(const std::filesystem::path& directory) {
+  const auto sync_error = synchronize();
+  if (sync_error) {
+    return {
+        .path = {},
+        .covered_sequence = {},
+        .covered_log_byte_offset = impl_->sink_->position(),
+        .encoded_bytes = 0U,
+        .final_file_visible = false,
+        .error =
+            {
+                .category = SnapshotErrorCategory::io_failure,
+                .byte_offset = sync_error.byte_offset,
+                .system_error = sync_error.system_error,
+            },
+    };
+  }
+  return detail::publish_snapshot(directory, *impl_->engine_, impl_->log_id_,
+                                  impl_->sink_->position(), impl_->options_.codec_limits);
 }
 
 const MultiInstrumentEngine& LoggedEngine::engine() const noexcept { return *impl_->engine_; }

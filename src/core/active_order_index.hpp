@@ -9,6 +9,8 @@
 
 namespace atlaslob::core {
 
+class InstrumentBook;
+
 enum class ActiveOrderIndexError : std::uint8_t {
   none = 0,
   invalid_order_id = 1,
@@ -100,9 +102,13 @@ class ActiveOrderIndex final {
   [[nodiscard]] ActiveOrderIndexInvariantResult validate_invariants() const noexcept;
 
  private:
+  friend class InstrumentBook;
 #if defined(ATLAS_ENABLE_TEST_ACCESS) && ATLAS_ENABLE_TEST_ACCESS
   friend class test::CoreAccess;
 #endif
+
+  void reserve_for_snapshot_restore(std::size_t order_count) { orders_.reserve(order_count); }
+  void clear_for_snapshot_restore() noexcept { orders_.clear(); }
 
   using Orders =
       std::unordered_map<domain::OrderId, OrderNode*, domain::StrongValueHash<domain::OrderId>>;
