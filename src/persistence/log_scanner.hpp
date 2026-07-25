@@ -102,13 +102,23 @@ class LogScanVisitor {
 struct LogRepairResult final {
   LogScanResult scan;
   bool output_created{};
+  std::optional<std::filesystem::path> unpublished_artifact;
 };
 
 // Never modifies the input and never overwrites an existing output path. Only a
 // torn final record is repairable; clean logs and hard corruption leave no
-// destination after normal return.
+// destination after normal return. The source is identity-checked before and
+// during copying into an adjacent temporary file, which is published only after
+// the complete prefix is synchronized. If cleanup cannot remove that temporary
+// file, unpublished_artifact identifies it explicitly.
 [[nodiscard]] LogRepairResult repair_command_log_to_new_file(
     const std::filesystem::path& input_path, const std::filesystem::path& output_path,
     LogScanOptions options = {}, LogScanVisitor* visitor = nullptr);
+
+// Private source seam used to deterministically prove source-change handling.
+// It has the same destination and publication guarantees as the path overload.
+[[nodiscard]] LogRepairResult repair_command_log_source_to_new_file(
+    LogSource& source, const std::filesystem::path& output_path, LogScanOptions options = {},
+    LogScanVisitor* visitor = nullptr);
 
 }  // namespace atlaslob::persistence::detail

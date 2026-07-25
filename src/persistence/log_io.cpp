@@ -9,14 +9,24 @@
 #include <utility>
 
 #if defined(_WIN32)
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
 #include <fcntl.h>
 #include <io.h>
 #include <share.h>
 #include <sys/stat.h>
+#include <windows.h>
 #else
 #include <fcntl.h>
 #include <sys/stat.h>
 #include <sys/types.h>
+#if defined(__linux__)
+#include <sys/syscall.h>
+#endif
 #include <unistd.h>
 #endif
 
@@ -50,7 +60,7 @@ RemoveFileHook remove_file_hook{};
 #endif
 }
 
-[[nodiscard]] LogIoFailure remove_partial_file(const std::filesystem::path& path) noexcept {
+[[nodiscard]] LogIoFailure remove_file(const std::filesystem::path& path) noexcept {
   std::error_code error;
   if (remove_file_hook != nullptr) {
     error = remove_file_hook(path);
@@ -62,6 +72,31 @@ RemoveFileHook remove_file_hook{};
   }
   return {};
 }
+
+#if !defined(_WIN32)
+[[nodiscard]] LogIoFailure synchronize_directory(const std::filesystem::path& directory) noexcept {
+#if defined(O_DIRECTORY)
+  int descriptor = ::open(directory.c_str(), O_RDONLY | O_DIRECTORY);
+#else
+  int descriptor = ::open(directory.c_str(), O_RDONLY);
+#endif
+  if (descriptor < 0) {
+    return failure(LogIoOperation::sync_directory, 0U, errno_code());
+  }
+
+  int result{};
+  do {
+    result = ::fsync(descriptor);
+  } while (result != 0 && errno == EINTR);
+  const auto sync_failure =
+      result == 0 ? LogIoFailure{} : failure(LogIoOperation::sync_directory, 0U, errno_code());
+  const int close_result = close_descriptor(descriptor);
+  if (sync_failure) {
+    return sync_failure;
+  }
+  return close_result == 0 ? LogIoFailure{} : failure(LogIoOperation::close, 0U, errno_code());
+}
+#endif
 
 [[nodiscard]] LogWriteResult write_descriptor(int descriptor, std::uint64_t& offset,
                                               std::span<const std::byte> bytes) noexcept {
@@ -144,6 +179,38 @@ RemoveFileHook remove_file_hook{};
   return {};
 }
 
+[[nodiscard]] LogExtentResult descriptor_extent(int descriptor) noexcept {
+  if (descriptor < 0) {
+    return {
+        .failure = bad_descriptor(LogIoOperation::inspect_extent, 0U),
+    };
+  }
+#if defined(_WIN32)
+  struct ::_stati64 status {};
+  if (::_fstati64(descriptor, &status) != 0) {
+    return {
+        .failure = failure(LogIoOperation::inspect_extent, 0U, errno_code()),
+    };
+  }
+#else
+  struct ::stat status {};
+  if (::fstat(descriptor, &status) != 0) {
+    return {
+        .failure = failure(LogIoOperation::inspect_extent, 0U, errno_code()),
+    };
+  }
+#endif
+  if (status.st_size < 0) {
+    return {
+        .failure = failure(LogIoOperation::inspect_extent, 0U,
+                           std::make_error_code(std::errc::value_too_large)),
+    };
+  }
+  return {
+      .extent = static_cast<std::uint64_t>(status.st_size),
+  };
+}
+
 }  // namespace
 
 void set_remove_file_hook_for_testing(RemoveFileHook hook) noexcept { remove_file_hook = hook; }
@@ -154,43 +221,7 @@ NativeFileSource::~NativeFileSource() {
   }
 }
 
-LogExtentResult NativeFileSource::extent() noexcept {
-  if (descriptor_ < 0) {
-    return {
-        .failure = bad_descriptor(LogIoOperation::inspect_extent, 0U),
-    };
-  }
-#if defined(_WIN32)
-  struct ::_stati64 status {};
-  if (::_fstati64(descriptor_, &status) != 0) {
-    return {
-        .failure = failure(LogIoOperation::inspect_extent, 0U, errno_code()),
-    };
-  }
-  if (status.st_size < 0) {
-    return {
-        .failure = failure(LogIoOperation::inspect_extent, 0U,
-                           std::make_error_code(std::errc::value_too_large)),
-    };
-  }
-#else
-  struct ::stat status {};
-  if (::fstat(descriptor_, &status) != 0) {
-    return {
-        .failure = failure(LogIoOperation::inspect_extent, 0U, errno_code()),
-    };
-  }
-  if (status.st_size < 0) {
-    return {
-        .failure = failure(LogIoOperation::inspect_extent, 0U,
-                           std::make_error_code(std::errc::value_too_large)),
-    };
-  }
-#endif
-  return {
-      .extent = static_cast<std::uint64_t>(status.st_size),
-  };
-}
+LogExtentResult NativeFileSource::extent() noexcept { return descriptor_extent(descriptor_); }
 
 LogReadResult NativeFileSource::read_at(std::uint64_t offset,
                                         std::span<std::byte> destination) noexcept {
@@ -307,7 +338,7 @@ LogIoFailure NativeNewFileSink::commit() noexcept {
   const int descriptor = std::exchange(descriptor_, -1);
   if (close_descriptor(descriptor) != 0) {
     const auto close_failure = failure(LogIoOperation::close, offset_, errno_code());
-    const auto cleanup_failure = remove_partial_file(path_);
+    const auto cleanup_failure = remove_file(path_);
     return cleanup_failure ? cleanup_failure : close_failure;
   }
   committed_ = true;
@@ -323,7 +354,7 @@ LogIoFailure NativeNewFileSink::abandon() noexcept {
     }
   }
   if (!committed_) {
-    const auto cleanup_failure = remove_partial_file(path_);
+    const auto cleanup_failure = remove_file(path_);
     if (cleanup_failure) {
       return cleanup_failure;
     }
@@ -359,13 +390,78 @@ NativeSinkOpenResult open_native_new_log_sink(const std::filesystem::path& path)
   };
 }
 
+NativeFilePublicationResult publish_native_new_file_no_replace(
+    const std::filesystem::path& source, const std::filesystem::path& destination) {
+#if defined(_WIN32)
+  if (::MoveFileExW(source.c_str(), destination.c_str(), MOVEFILE_WRITE_THROUGH) == 0) {
+    return {
+        .destination_visible = false,
+        .source_visible = true,
+        .failure = failure(LogIoOperation::publish_file, 0U,
+                           {static_cast<int>(::GetLastError()), std::system_category()}),
+    };
+  }
+  return {
+      .destination_visible = true,
+      .source_visible = false,
+  };
+#else
+  bool published{};
+#if defined(__linux__) && defined(SYS_renameat2)
+  errno = 0;
+  constexpr unsigned int rename_no_replace{1U};
+  const auto rename_result = ::syscall(SYS_renameat2, AT_FDCWD, source.c_str(), AT_FDCWD,
+                                       destination.c_str(), rename_no_replace);
+  if (rename_result == 0) {
+    published = true;
+  } else if (errno != ENOSYS && errno != EINVAL) {
+    return {
+        .destination_visible = false,
+        .source_visible = true,
+        .failure = failure(LogIoOperation::publish_file, 0U, errno_code()),
+    };
+  }
+#endif
+  if (!published) {
+    if (::link(source.c_str(), destination.c_str()) != 0) {
+      return {
+          .destination_visible = false,
+          .source_visible = true,
+          .failure = failure(LogIoOperation::publish_file, 0U, errno_code()),
+      };
+    }
+    published = true;
+    if (::unlink(source.c_str()) != 0) {
+      return {
+          .destination_visible = true,
+          .source_visible = true,
+          .failure = failure(LogIoOperation::publish_file, 0U, errno_code()),
+      };
+    }
+  }
+
+  const auto directory =
+      destination.has_parent_path() ? destination.parent_path() : std::filesystem::path{"."};
+  const auto directory_failure = synchronize_directory(directory);
+  return {
+      .destination_visible = true,
+      .source_visible = false,
+      .failure = directory_failure,
+  };
+#endif
+}
+
+LogIoFailure remove_native_file(const std::filesystem::path& path) noexcept {
+  return remove_file(path);
+}
+
 NativeAppendFileSink::~NativeAppendFileSink() {
   if (stream_ != nullptr) {
     std::FILE* const stream = std::exchange(stream_, nullptr);
     static_cast<void>(std::fclose(stream));
   }
   if (!header_published_) {
-    static_cast<void>(remove_partial_file(path_));
+    static_cast<void>(remove_file(path_));
   }
 }
 
@@ -465,7 +561,7 @@ NativeAppendSinkOpenResult open_native_append_log_sink(const std::filesystem::pa
   if (stream == nullptr) {
     const auto stream_error = errno_code();
     static_cast<void>(close_descriptor(descriptor));
-    static_cast<void>(remove_partial_file(path));
+    static_cast<void>(remove_file(path));
     return {
         .sink = nullptr,
         .failure = failure(LogIoOperation::open_destination, 0U, stream_error),
@@ -473,6 +569,62 @@ NativeAppendSinkOpenResult open_native_append_log_sink(const std::filesystem::pa
   }
   return {
       .sink = std::unique_ptr<NativeAppendFileSink>{new NativeAppendFileSink{stream, path}},
+  };
+}
+
+NativeAppendSinkOpenResult open_native_existing_append_log_sink(const std::filesystem::path& path,
+                                                                std::uint64_t expected_extent) {
+  int descriptor{-1};
+#if defined(_WIN32)
+  const auto open_error = ::_wsopen_s(&descriptor, path.c_str(), _O_BINARY | _O_WRONLY | _O_APPEND,
+                                      _SH_DENYWR, _S_IREAD | _S_IWRITE);
+  if (open_error != 0) {
+    return {
+        .sink = nullptr,
+        .failure = failure(LogIoOperation::open_destination, expected_extent,
+                           {static_cast<int>(open_error), std::generic_category()}),
+    };
+  }
+#else
+  descriptor = ::open(path.c_str(), O_WRONLY | O_APPEND);
+  if (descriptor < 0) {
+    return {
+        .sink = nullptr,
+        .failure = failure(LogIoOperation::open_destination, expected_extent, errno_code()),
+    };
+  }
+#endif
+
+  const auto extent = descriptor_extent(descriptor);
+  if (!extent || extent.extent != expected_extent) {
+    const auto extent_failure =
+        extent ? failure(LogIoOperation::inspect_extent, extent.extent,
+                         std::make_error_code(std::errc::state_not_recoverable))
+               : extent.failure;
+    static_cast<void>(close_descriptor(descriptor));
+    return {
+        .sink = nullptr,
+        .failure = extent_failure,
+    };
+  }
+
+  std::FILE* stream{};
+#if defined(_WIN32)
+  stream = ::_fdopen(descriptor, "ab");
+#else
+  stream = ::fdopen(descriptor, "ab");
+#endif
+  if (stream == nullptr) {
+    const auto stream_error = errno_code();
+    static_cast<void>(close_descriptor(descriptor));
+    return {
+        .sink = nullptr,
+        .failure = failure(LogIoOperation::open_destination, expected_extent, stream_error),
+    };
+  }
+  return {
+      .sink = std::unique_ptr<NativeAppendFileSink>{new NativeAppendFileSink{
+          stream, path, expected_extent, true}},
   };
 }
 

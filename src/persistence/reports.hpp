@@ -7,6 +7,7 @@
 
 #include "atlaslob/persistence/inspection.hpp"
 #include "atlaslob/persistence/replay.hpp"
+#include "atlaslob/persistence/snapshot_store.hpp"
 
 namespace atlaslob::persistence::detail {
 
@@ -27,14 +28,24 @@ enum class LogReportOperation : std::uint8_t {
 
 [[nodiscard]] std::string render_log_report_json(
     const LogInspectionReport& report, LogReportOperation operation,
-    std::optional<std::uint64_t> output_bytes = std::nullopt);
+    std::optional<std::uint64_t> output_bytes = std::nullopt,
+    bool unpublished_artifact_present = false);
 
 [[nodiscard]] std::string render_log_report_text(
     const LogInspectionReport& report, LogReportOperation operation,
-    std::optional<std::uint64_t> output_bytes = std::nullopt);
+    std::optional<std::uint64_t> output_bytes = std::nullopt,
+    bool unpublished_artifact_present = false);
 
 [[nodiscard]] std::string render_replay_report_json(const ReplayReport& report);
 
 [[nodiscard]] std::string render_replay_report_text(const ReplayReport& report);
+
+[[nodiscard]] std::string render_snapshot_report_json(const SnapshotInspectionReport& report);
+
+[[nodiscard]] std::string render_snapshot_report_text(const SnapshotInspectionReport& report);
+
+[[nodiscard]] std::string render_snapshot_replay_report_json(const SnapshotRecoveryReport& report);
+
+[[nodiscard]] std::string render_snapshot_replay_report_text(const SnapshotRecoveryReport& report);
 
 }  // namespace atlaslob::persistence::detail

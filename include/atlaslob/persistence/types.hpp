@@ -14,6 +14,8 @@ inline constexpr std::uint16_t command_log_format_version{1U};
 inline constexpr std::uint16_t command_log_record_version{1U};
 inline constexpr std::uint32_t command_log_byte_order_marker{0x01020304U};
 inline constexpr std::uint64_t command_log_first_sequence{1U};
+inline constexpr std::uint16_t snapshot_format_version{1U};
+inline constexpr std::uint32_t snapshot_byte_order_marker{0x01020304U};
 
 inline constexpr std::uint32_t default_max_log_header_bytes{1024U * 1024U};
 inline constexpr std::uint32_t default_max_log_record_bytes{64U * 1024U};

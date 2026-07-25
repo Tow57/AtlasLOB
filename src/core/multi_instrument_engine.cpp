@@ -11,6 +11,7 @@
 #include <stdexcept>
 #include <type_traits>
 #include <unordered_map>
+#include <unordered_set>
 #include <utility>
 #include <variant>
 #include <vector>
@@ -31,12 +32,24 @@ namespace {
 struct Identity final {
   domain::InstrumentId instrument_id{};
   domain::ClientId client_id{};
+  domain::Sequence priority_sequence{};
 
   bool operator==(const Identity&) const = default;
 };
 
 using ActiveOrderDirectory =
     std::unordered_map<domain::OrderId, Identity, domain::StrongValueHash<domain::OrderId>>;
+using ActivePriorityDirectory = std::unordered_map<domain::Sequence, domain::OrderId,
+                                                   domain::StrongValueHash<domain::Sequence>>;
+
+core::MultiInstrumentEngineAccess::RestoreAllocationHook restore_allocation_hook{};
+
+void invoke_restore_allocation_hook(
+    core::MultiInstrumentEngineAccess::RestoreAllocationStage stage) {
+  if (restore_allocation_hook != nullptr) {
+    restore_allocation_hook(stage);
+  }
+}
 
 struct IdentityRemoval final {
   domain::OrderId order_id{};
@@ -178,6 +191,152 @@ template <domain::Side RestingSide>
     std::terminate();
   }
   return static_cast<std::uint64_t>(value);
+}
+
+[[nodiscard]] constexpr bool fits_size_t(std::uint64_t value) noexcept {
+  if constexpr (sizeof(std::size_t) < sizeof(std::uint64_t)) {
+    return value <= static_cast<std::uint64_t>(std::numeric_limits<std::size_t>::max());
+  }
+  static_cast<void>(value);
+  return true;
+}
+
+void require_restorable(bool condition, const char* message) {
+  if (!condition) {
+    throw std::invalid_argument{message};
+  }
+}
+
+void validate_restorable_side(const std::vector<PriceLevelSnapshot>& levels,
+                              domain::Side expected_side, const InstrumentConfig& config,
+                              domain::Sequence last_sequence,
+                              std::unordered_set<std::uint64_t>& order_ids,
+                              std::unordered_set<std::uint64_t>& priorities,
+                              std::uint64_t& observed_orders) {
+  domain::PriceTicks previous_price{};
+  bool has_previous_price = false;
+  for (const auto& level : levels) {
+    require_restorable(level.price.value() > 0, "snapshot level price must be positive");
+    require_restorable(level.price.value() % config.matching.tick_increment.value() == 0,
+                       "snapshot level price is not tick aligned");
+    if (has_previous_price) {
+      const bool ordered = expected_side == domain::Side::buy ? previous_price > level.price
+                                                              : previous_price < level.price;
+      require_restorable(ordered, "snapshot levels are not in canonical price order");
+    }
+    require_restorable(!level.orders.empty(), "snapshot cannot contain an empty price level");
+
+    std::uint64_t aggregate = 0U;
+    domain::Sequence previous_priority{};
+    bool has_previous_priority = false;
+    for (const auto& order : level.orders) {
+      require_restorable(order.order_id.value() != 0U, "snapshot order ID must be nonzero");
+      require_restorable(order.client_id.value() != 0U, "snapshot client ID must be nonzero");
+      require_restorable(order.instrument_id == config.instrument_id,
+                         "snapshot order instrument does not match its book");
+      require_restorable(order.side == expected_side, "snapshot order is on the wrong side");
+      require_restorable(order.price == level.price,
+                         "snapshot order price does not match its level");
+      require_restorable(order.remaining_quantity.value() != 0U,
+                         "snapshot order quantity must be positive");
+      require_restorable(order.remaining_quantity <= config.matching.max_order_quantity,
+                         "snapshot order quantity exceeds the instrument limit");
+      require_restorable(order.priority_sequence.value() != 0U,
+                         "snapshot order priority must be nonzero");
+      require_restorable(order.priority_sequence <= last_sequence,
+                         "snapshot order priority is newer than the covered sequence");
+      if (has_previous_priority) {
+        require_restorable(previous_priority < order.priority_sequence,
+                           "snapshot FIFO priorities are not strictly increasing");
+      }
+      require_restorable(order_ids.insert(order.order_id.value()).second,
+                         "snapshot contains a duplicate active order ID");
+      require_restorable(priorities.insert(order.priority_sequence.value()).second,
+                         "snapshot contains a duplicate active priority");
+      require_restorable(
+          order.remaining_quantity.value() <= std::numeric_limits<std::uint64_t>::max() - aggregate,
+          "snapshot level aggregate overflows");
+      aggregate += order.remaining_quantity.value();
+      require_restorable(observed_orders != std::numeric_limits<std::uint64_t>::max(),
+                         "snapshot active-order count overflows");
+      ++observed_orders;
+      previous_priority = order.priority_sequence;
+      has_previous_priority = true;
+    }
+    require_restorable(level.aggregate_quantity.value() == aggregate,
+                       "snapshot level aggregate does not match its orders");
+    previous_price = level.price;
+    has_previous_price = true;
+  }
+}
+
+void validate_restorable_snapshot(const EngineSnapshot& snapshot) {
+  require_restorable(snapshot.semantics_version == atlaslob_semantics_version,
+                     "snapshot semantics version is incompatible");
+  require_restorable(!snapshot.catalog.empty(), "snapshot catalog must be nonempty");
+  require_restorable(snapshot.catalog.size() == snapshot.instruments.size(),
+                     "snapshot must contain every configured instrument exactly once");
+  require_restorable(fits_size_t(snapshot.active_order_count),
+                     "snapshot active-order count does not fit the host");
+
+  const auto maximum_sequence = std::numeric_limits<std::uint64_t>::max();
+  require_restorable(snapshot.sequence_exhausted
+                         ? snapshot.last_sequence.value() == maximum_sequence
+                         : snapshot.last_sequence.value() != maximum_sequence,
+                     "snapshot sequence and exhaustion state are inconsistent");
+
+  std::unordered_set<std::uint64_t> order_ids;
+  std::unordered_set<std::uint64_t> priorities;
+
+  std::uint64_t total_orders = 0U;
+  domain::InstrumentId previous_instrument{};
+  bool has_previous_instrument = false;
+  for (std::size_t index = 0U; index < snapshot.catalog.size(); ++index) {
+    const auto& config = snapshot.catalog[index];
+    const auto& instrument = snapshot.instruments[index];
+    require_restorable(config.instrument_id.value() != 0U,
+                       "snapshot catalog instrument IDs must be nonzero");
+    require_restorable(config.matching.valid(), "snapshot instrument configuration is invalid");
+    require_restorable(capacity_fits_u64(config.matching.max_active_orders),
+                       "snapshot instrument capacity exceeds the canonical representation");
+    if (has_previous_instrument) {
+      require_restorable(previous_instrument < config.instrument_id,
+                         "snapshot catalog is not in canonical instrument order");
+    }
+    require_restorable(instrument.instrument_id == config.instrument_id,
+                       "snapshot instrument state does not match the catalog");
+    require_restorable(fits_size_t(instrument.active_order_count),
+                       "snapshot instrument count does not fit the host");
+    require_restorable(static_cast<std::size_t>(instrument.active_order_count) <=
+                           config.matching.max_active_orders,
+                       "snapshot instrument count exceeds its configured capacity");
+
+    std::uint64_t observed_orders = 0U;
+    validate_restorable_side(instrument.bids, domain::Side::buy, config, snapshot.last_sequence,
+                             order_ids, priorities, observed_orders);
+    validate_restorable_side(instrument.asks, domain::Side::sell, config, snapshot.last_sequence,
+                             order_ids, priorities, observed_orders);
+    require_restorable(observed_orders == instrument.active_order_count,
+                       "snapshot instrument count does not match its orders");
+    require_restorable(observed_orders <= std::numeric_limits<std::uint64_t>::max() - total_orders,
+                       "snapshot engine active-order count overflows");
+    total_orders += observed_orders;
+
+    if (!instrument.bids.empty() && !instrument.asks.empty()) {
+      require_restorable(instrument.bids.front().price < instrument.asks.front().price,
+                         "snapshot contains a crossed book");
+    }
+    previous_instrument = config.instrument_id;
+    has_previous_instrument = true;
+  }
+
+  require_restorable(capacity_fits_u64(snapshot.engine_config.max_total_active_orders),
+                     "snapshot engine capacity exceeds the canonical representation");
+  require_restorable(total_orders == snapshot.active_order_count,
+                     "snapshot engine count does not match its instruments");
+  require_restorable(
+      static_cast<std::size_t>(total_orders) <= snapshot.engine_config.max_total_active_orders,
+      "snapshot engine count exceeds its configured capacity");
 }
 
 }  // namespace
@@ -389,33 +548,6 @@ class MultiInstrumentEngine::Impl final {
     }
     const auto last_sequence = core::snapshot_last_sequence(next_sequence, sequencer_.exhausted());
 
-    const auto count_priority = [this](domain::Sequence priority) noexcept {
-      std::size_t count = 0U;
-      for (const auto& [ignored_instrument, entry] : books_) {
-        static_cast<void>(ignored_instrument);
-        if (entry == nullptr) {
-          return std::numeric_limits<std::size_t>::max();
-        }
-        const auto count_side = [&count, priority](const auto& side) noexcept {
-          for (const core::PriceLevel& level : side) {
-            for (const core::OrderNode* node = level.head(); node != nullptr; node = node->next()) {
-              if (node->priority_sequence() == priority) {
-                if (count == std::numeric_limits<std::size_t>::max()) {
-                  return false;
-                }
-                ++count;
-              }
-            }
-          }
-          return true;
-        };
-        if (!count_side(entry->book.bids()) || !count_side(entry->book.asks())) {
-          return std::numeric_limits<std::size_t>::max();
-        }
-      }
-      return count;
-    };
-
     std::size_t total = 0U;
     for (const auto& [instrument_id, entry_ptr] : books_) {
       if (entry_ptr == nullptr || entry_ptr->config.instrument_id != instrument_id ||
@@ -429,19 +561,22 @@ class MultiInstrumentEngine::Impl final {
       }
       total += entry_ptr->book.active_order_count();
 
-      const auto verify_side = [this, &count_priority, last_sequence,
-                                instrument_id](const auto& side) noexcept {
+      const auto verify_side = [this, last_sequence, instrument_id](const auto& side) noexcept {
         for (const core::PriceLevel& level : side) {
           for (const core::OrderNode* node = level.head(); node != nullptr; node = node->next()) {
             if (node->instrument_id() != instrument_id || node->priority_sequence().value() == 0U ||
-                node->priority_sequence() > last_sequence ||
-                count_priority(node->priority_sequence()) != 1U) {
+                node->priority_sequence() > last_sequence) {
               return false;
             }
             const auto identity = active_orders_.find(node->order_id());
             if (identity == active_orders_.end() ||
                 identity->second.instrument_id != instrument_id ||
-                identity->second.client_id != node->client_id()) {
+                identity->second.client_id != node->client_id() ||
+                identity->second.priority_sequence != node->priority_sequence()) {
+              return false;
+            }
+            const auto priority = active_priorities_.find(node->priority_sequence());
+            if (priority == active_priorities_.end() || priority->second != node->order_id()) {
               return false;
             }
           }
@@ -453,14 +588,27 @@ class MultiInstrumentEngine::Impl final {
       }
     }
 
-    if (total != active_orders_.size() || total > config_.max_total_active_orders) {
+    if (total != active_orders_.size() || total != active_priorities_.size() ||
+        total > config_.max_total_active_orders) {
       return false;
     }
     for (const auto& [order_id, identity] : active_orders_) {
       const auto* entry = find_book(identity.instrument_id);
       const auto* node = entry == nullptr ? nullptr : entry->book.find(order_id);
       if (node == nullptr || node->client_id() != identity.client_id ||
-          node->instrument_id() != identity.instrument_id) {
+          node->instrument_id() != identity.instrument_id ||
+          node->priority_sequence() != identity.priority_sequence) {
+        return false;
+      }
+      const auto priority = active_priorities_.find(identity.priority_sequence);
+      if (priority == active_priorities_.end() || priority->second != order_id) {
+        return false;
+      }
+    }
+    for (const auto& [priority, order_id] : active_priorities_) {
+      const auto identity = active_orders_.find(order_id);
+      if (priority.value() == 0U || identity == active_orders_.end() ||
+          identity->second.priority_sequence != priority) {
         return false;
       }
     }
@@ -470,6 +618,7 @@ class MultiInstrumentEngine::Impl final {
   MultiInstrumentEngineConfig config_;
   std::map<domain::InstrumentId, std::unique_ptr<BookEntry>> books_;
   ActiveOrderDirectory active_orders_;
+  ActivePriorityDirectory active_priorities_;
   core::CommandSequencer sequencer_;
   bool preparation_active_{};
 };
@@ -489,13 +638,15 @@ class core::PreparedMultiInstrumentCommand::Impl final {
 
   Impl(MultiInstrumentEngine::Impl& owner, domain::Command command, domain::Sequence sequence,
        core::PreparedCommandExecution book_preparation, std::vector<IdentityRemoval> removals,
-       ActiveOrderDirectory::node_type addition) noexcept
+       ActiveOrderDirectory::node_type addition,
+       ActivePriorityDirectory::node_type priority_addition) noexcept
       : owner_{&owner},
         command_{std::move(command)},
         sequence_{sequence},
         book_preparation_{std::move(book_preparation)},
         removals_{std::move(removals)},
         addition_{std::move(addition)},
+        priority_addition_{std::move(priority_addition)},
         publishes_sequence_{true} {}
 
   Impl(const Impl&) = delete;
@@ -565,7 +716,7 @@ class core::PreparedMultiInstrumentCommand::Impl final {
     }
 
     if (book_preparation_->rejected()) {
-      if (!removals_.empty() || !addition_.empty()) {
+      if (!removals_.empty() || !addition_.empty() || !priority_addition_.empty()) {
         std::terminate();
       }
       auto book_result = book_preparation_->commit();
@@ -591,12 +742,21 @@ class core::PreparedMultiInstrumentCommand::Impl final {
       std::terminate();
     }
 
+    if (addition_.empty() != priority_addition_.empty()) {
+      std::terminate();
+    }
     if (!addition_.empty()) {
-      if (owner_->active_orders_.contains(addition_.key())) {
+      if (owner_->active_orders_.contains(addition_.key()) ||
+          owner_->active_priorities_.contains(priority_addition_.key())) {
         std::terminate();
       }
       const auto inserted = owner_->active_orders_.insert(std::move(addition_));
       if (!inserted.inserted) {
+        std::terminate();
+      }
+      const auto priority_inserted =
+          owner_->active_priorities_.insert(std::move(priority_addition_));
+      if (!priority_inserted.inserted) {
         std::terminate();
       }
     }
@@ -604,6 +764,11 @@ class core::PreparedMultiInstrumentCommand::Impl final {
       if (owner_->active_orders_.erase(removal.order_id) != 1U) {
         std::terminate();
       }
+      const auto priority = owner_->active_priorities_.find(removal.identity.priority_sequence);
+      if (priority == owner_->active_priorities_.end() || priority->second != removal.order_id) {
+        std::terminate();
+      }
+      owner_->active_priorities_.erase(priority);
     }
 
     auto book_result = book_preparation_->commit();
@@ -656,6 +821,10 @@ class core::PreparedMultiInstrumentCommand::Impl final {
       if (position == owner_->active_orders_.end() || position->second != removal.identity) {
         return false;
       }
+      const auto priority = owner_->active_priorities_.find(removal.identity.priority_sequence);
+      if (priority == owner_->active_priorities_.end() || priority->second != removal.order_id) {
+        return false;
+      }
       for (std::size_t previous = 0U; previous < index; ++previous) {
         if (removals_[previous].order_id == removal.order_id) {
           return false;
@@ -686,9 +855,13 @@ class core::PreparedMultiInstrumentCommand::Impl final {
         continue;
       }
       ++rested_count;
-      if (rested_count != 1U || addition_.empty() || addition_.key() != rested->order_id ||
+      if (rested_count != 1U || addition_.empty() || priority_addition_.empty() ||
+          addition_.key() != rested->order_id ||
           addition_.mapped().instrument_id != rested->header.instrument_id ||
-          addition_.mapped().client_id != rested->client_id) {
+          addition_.mapped().client_id != rested->client_id ||
+          addition_.mapped().priority_sequence != rested->header.command_sequence ||
+          priority_addition_.key() != rested->header.command_sequence ||
+          priority_addition_.mapped() != rested->order_id) {
         return false;
       }
       const bool matches_command = std::visit(
@@ -711,10 +884,12 @@ class core::PreparedMultiInstrumentCommand::Impl final {
         return false;
       }
     }
-    if (addition_.empty() != (rested_count == 0U)) {
+    if (addition_.empty() != (rested_count == 0U) ||
+        priority_addition_.empty() != addition_.empty()) {
       return false;
     }
-    if (!addition_.empty() && owner_->active_orders_.contains(addition_.key())) {
+    if (!addition_.empty() && (owner_->active_orders_.contains(addition_.key()) ||
+                               owner_->active_priorities_.contains(priority_addition_.key()))) {
       return false;
     }
 
@@ -766,6 +941,7 @@ class core::PreparedMultiInstrumentCommand::Impl final {
     }
     book_preparation_.reset();
     addition_ = {};
+    priority_addition_ = {};
     release_owner();
     consumed_ = true;
   }
@@ -791,6 +967,7 @@ class core::PreparedMultiInstrumentCommand::Impl final {
   std::optional<core::PreparedCommandExecution> book_preparation_;
   std::vector<IdentityRemoval> removals_;
   ActiveOrderDirectory::node_type addition_;
+  ActivePriorityDirectory::node_type priority_addition_;
   bool publishes_sequence_{};
   bool consumed_{};
   bool owner_invariants_after_release_{true};
@@ -897,6 +1074,7 @@ MultiInstrumentEngine::Impl::prepare_state(const domain::NewOrder& order) {
     }
 
     ActiveOrderDirectory::node_type addition;
+    ActivePriorityDirectory::node_type priority_addition;
     if (planned.plan.residual_disposition == core::ResidualDisposition::rest) {
       if (active_orders_.size() == std::numeric_limits<std::size_t>::max()) {
         preparation_active_ = false;
@@ -907,16 +1085,26 @@ MultiInstrumentEngine::Impl::prepare_state(const domain::NewOrder& order) {
       // the same map type. With no overlapping preparation, commit's
       // allocator-compatible node insertion cannot allocate or rehash.
       active_orders_.reserve(active_orders_.size() + 1U);
+      active_priorities_.reserve(active_priorities_.size() + 1U);
       ActiveOrderDirectory staging;
       const auto [position, inserted] =
           staging.emplace(order.order_id, Identity{
                                               .instrument_id = order.instrument_id,
                                               .client_id = order.client_id,
+                                              .priority_sequence = sequence,
                                           });
       if (!inserted) {
         std::terminate();
       }
       addition = staging.extract(position);
+
+      ActivePriorityDirectory priority_staging;
+      const auto [priority_position, priority_inserted] =
+          priority_staging.emplace(sequence, order.order_id);
+      if (!priority_inserted) {
+        std::terminate();
+      }
+      priority_addition = priority_staging.extract(priority_position);
     }
 
     auto prepared = const_cast<BookEntry*>(target)->executor.prepare_at(order, sequence);
@@ -934,11 +1122,12 @@ MultiInstrumentEngine::Impl::prepare_state(const domain::NewOrder& order) {
       }
       return std::make_unique<core::PreparedMultiInstrumentCommand::Impl>(
           *this, command, sequence, std::move(prepared), std::vector<IdentityRemoval>{},
-          ActiveOrderDirectory::node_type{});
+          ActiveOrderDirectory::node_type{}, ActivePriorityDirectory::node_type{});
     }
 
     return std::make_unique<core::PreparedMultiInstrumentCommand::Impl>(
-        *this, command, sequence, std::move(prepared), std::move(removals), std::move(addition));
+        *this, command, sequence, std::move(prepared), std::move(removals), std::move(addition),
+        std::move(priority_addition));
   } catch (...) {
     preparation_active_ = false;
     throw;
@@ -995,7 +1184,7 @@ MultiInstrumentEngine::Impl::prepare_state(const domain::CancelOrder& order) {
 
     return std::make_unique<core::PreparedMultiInstrumentCommand::Impl>(
         *this, command, sequence, std::move(prepared), std::move(removals),
-        ActiveOrderDirectory::node_type{});
+        ActiveOrderDirectory::node_type{}, ActivePriorityDirectory::node_type{});
   } catch (...) {
     preparation_active_ = false;
     throw;
@@ -1088,6 +1277,7 @@ MultiInstrumentEngine::Impl::prepare_state(const domain::ReplaceOrder& order) {
     }
 
     ActiveOrderDirectory::node_type addition;
+    ActivePriorityDirectory::node_type priority_addition;
     if (planned.plan.residual_disposition == core::ResidualDisposition::rest) {
       if (active_orders_.size() == std::numeric_limits<std::size_t>::max()) {
         preparation_active_ = false;
@@ -1097,16 +1287,26 @@ MultiInstrumentEngine::Impl::prepare_state(const domain::ReplaceOrder& order) {
       // See the NewOrder path: both bucket capacity and the exact node are
       // owned before publication crosses the no-allocation commit boundary.
       active_orders_.reserve(active_orders_.size() + 1U);
+      active_priorities_.reserve(active_priorities_.size() + 1U);
       ActiveOrderDirectory staging;
       const auto [position, inserted] =
           staging.emplace(order.new_order_id, Identity{
                                                   .instrument_id = order.instrument_id,
                                                   .client_id = order.client_id,
+                                                  .priority_sequence = sequence,
                                               });
       if (!inserted) {
         std::terminate();
       }
       addition = staging.extract(position);
+
+      ActivePriorityDirectory priority_staging;
+      const auto [priority_position, priority_inserted] =
+          priority_staging.emplace(sequence, order.new_order_id);
+      if (!priority_inserted) {
+        std::terminate();
+      }
+      priority_addition = priority_staging.extract(priority_position);
     }
 
     auto prepared = const_cast<BookEntry*>(target)->executor.prepare_at(order, sequence);
@@ -1124,11 +1324,12 @@ MultiInstrumentEngine::Impl::prepare_state(const domain::ReplaceOrder& order) {
       }
       return std::make_unique<core::PreparedMultiInstrumentCommand::Impl>(
           *this, command, sequence, std::move(prepared), std::vector<IdentityRemoval>{},
-          ActiveOrderDirectory::node_type{});
+          ActiveOrderDirectory::node_type{}, ActivePriorityDirectory::node_type{});
     }
 
     return std::make_unique<core::PreparedMultiInstrumentCommand::Impl>(
-        *this, command, sequence, std::move(prepared), std::move(removals), std::move(addition));
+        *this, command, sequence, std::move(prepared), std::move(removals), std::move(addition),
+        std::move(priority_addition));
   } catch (...) {
     preparation_active_ = false;
     throw;
@@ -1144,6 +1345,157 @@ core::PreparedMultiInstrumentCommand core::MultiInstrumentEngineAccess::prepare(
 bool core::MultiInstrumentEngineAccess::validate_invariants(
     const MultiInstrumentEngine& engine) noexcept {
   return engine.impl_->validate_invariants();
+}
+
+std::unique_ptr<MultiInstrumentEngine> core::MultiInstrumentEngineAccess::restore_snapshot(
+    const EngineSnapshot& snapshot, std::optional<Digest256> expected_digest) {
+  validate_restorable_snapshot(snapshot);
+
+  invoke_restore_allocation_hook(RestoreAllocationStage::engine);
+  auto restored = std::make_unique<MultiInstrumentEngine>(snapshot.catalog, snapshot.engine_config);
+
+  invoke_restore_allocation_hook(RestoreAllocationStage::global_directory_reserve);
+  restored->impl_->active_orders_.reserve(static_cast<std::size_t>(snapshot.active_order_count));
+  invoke_restore_allocation_hook(RestoreAllocationStage::global_priority_directory_reserve);
+  restored->impl_->active_priorities_.reserve(
+      static_cast<std::size_t>(snapshot.active_order_count));
+
+  // Establish an explicitly unpublished staging state in every book first.
+  // Allocation failures from any later reserve/insert are then cleaned without
+  // requiring the ordinary fully-linked InstrumentBook invariant.
+  for (const auto& instrument : snapshot.instruments) {
+    auto* const entry = restored->impl_->find_book(instrument.instrument_id);
+    if (entry == nullptr) {
+      throw std::invalid_argument{"snapshot references an unconfigured instrument"};
+    }
+    entry->book.begin_snapshot_restore();
+
+    const auto order_count = static_cast<std::size_t>(instrument.active_order_count);
+    invoke_restore_allocation_hook(RestoreAllocationStage::book_storage_reserve);
+    entry->book.reserve_snapshot_storage(order_count);
+    invoke_restore_allocation_hook(RestoreAllocationStage::book_index_reserve);
+    entry->book.reserve_snapshot_index(order_count);
+  }
+
+  // Allocate every price level before any intrusive link is published.
+  for (const auto& instrument : snapshot.instruments) {
+    auto* const entry = restored->impl_->find_book(instrument.instrument_id);
+    const auto allocate_levels = [entry](const auto& levels, domain::Side side) {
+      for (const auto& level : levels) {
+        invoke_restore_allocation_hook(RestoreAllocationStage::price_level);
+        if (entry->book.allocate_snapshot_level(side, level.price) == nullptr) {
+          throw std::invalid_argument{"snapshot price level could not be allocated"};
+        }
+      }
+    };
+    allocate_levels(instrument.bids, domain::Side::buy);
+    allocate_levels(instrument.asks, domain::Side::sell);
+  }
+
+  // Allocate stable nodes plus both non-owning identity indexes. All
+  // allocation-capable mutations complete before FIFO linkage begins.
+  for (const auto& instrument : snapshot.instruments) {
+    auto* const entry = restored->impl_->find_book(instrument.instrument_id);
+    const auto allocate_orders = [&restored, entry](const auto& levels) {
+      for (const auto& level : levels) {
+        for (const auto& order : level.orders) {
+          invoke_restore_allocation_hook(RestoreAllocationStage::order_storage);
+          auto* const node = entry->book.allocate_snapshot_order({
+              .order_id = order.order_id,
+              .client_id = order.client_id,
+              .instrument_id = order.instrument_id,
+              .side = order.side,
+              .price = order.price,
+              .remaining_quantity = order.remaining_quantity,
+              .priority_sequence = order.priority_sequence,
+          });
+          if (node == nullptr) {
+            throw std::invalid_argument{"snapshot order storage could not be allocated"};
+          }
+
+          invoke_restore_allocation_hook(RestoreAllocationStage::order_index);
+          if (!entry->book.index_snapshot_order(*node)) {
+            throw std::invalid_argument{"snapshot order index could not be allocated"};
+          }
+
+          invoke_restore_allocation_hook(RestoreAllocationStage::global_identity);
+          const auto [position, inserted] = restored->impl_->active_orders_.emplace(
+              order.order_id, Identity{
+                                  .instrument_id = order.instrument_id,
+                                  .client_id = order.client_id,
+                                  .priority_sequence = order.priority_sequence,
+                              });
+          static_cast<void>(position);
+          if (!inserted) {
+            throw std::invalid_argument{"snapshot contains a duplicate active identity"};
+          }
+
+          invoke_restore_allocation_hook(RestoreAllocationStage::global_priority_identity);
+          const auto [priority_position, priority_inserted] =
+              restored->impl_->active_priorities_.emplace(order.priority_sequence, order.order_id);
+          static_cast<void>(priority_position);
+          if (!priority_inserted) {
+            throw std::invalid_argument{"snapshot contains a duplicate active priority"};
+          }
+        }
+      }
+    };
+    allocate_orders(instrument.bids);
+    allocate_orders(instrument.asks);
+  }
+
+  // From this point through completion, reconstruction is allocation-free.
+  // The decoded snapshot was fully validated, so any linkage failure is an
+  // internal contract violation and the trusted InstrumentBook seam
+  // terminates rather than publishing a partial engine.
+  for (const auto& instrument : snapshot.instruments) {
+    auto* const entry = restored->impl_->find_book(instrument.instrument_id);
+    const auto link_orders = [entry](const auto& levels) noexcept {
+      for (const auto& level : levels) {
+        for (const auto& order : level.orders) {
+          auto* const node = entry->book.find_snapshot_order(order.order_id);
+          if (node == nullptr) {
+            std::terminate();
+          }
+          entry->book.link_snapshot_order(*node);
+        }
+      }
+    };
+    link_orders(instrument.bids);
+    link_orders(instrument.asks);
+    entry->book.complete_snapshot_restore();
+  }
+
+  restored->impl_->sequencer_.restore_after(snapshot.last_sequence, snapshot.sequence_exhausted);
+  if (!restored->impl_->validate_invariants()) {
+    throw std::invalid_argument{"restored snapshot violates engine invariants"};
+  }
+  if (restored->snapshot() != snapshot) {
+    throw std::invalid_argument{"restored engine does not reproduce the snapshot"};
+  }
+  if (expected_digest.has_value() && restored->state_digest() != *expected_digest) {
+    throw std::invalid_argument{"restored engine digest does not match the snapshot"};
+  }
+  return restored;
+}
+
+void core::MultiInstrumentEngineAccess::set_restore_allocation_hook_for_testing(
+    RestoreAllocationHook hook) noexcept {
+  restore_allocation_hook = hook;
+}
+
+void core::MultiInstrumentEngineAccess::set_order_priority_for_testing(
+    MultiInstrumentEngine& engine, domain::OrderId order_id, domain::Sequence priority) {
+  const auto identity = engine.impl_->active_orders_.find(order_id);
+  if (identity == engine.impl_->active_orders_.end()) {
+    throw std::invalid_argument{"unknown test order"};
+  }
+  auto* const entry = engine.impl_->find_book(identity->second.instrument_id);
+  auto* const node = entry == nullptr ? nullptr : entry->book.find(order_id);
+  if (node == nullptr) {
+    throw std::logic_error{"test order identity is inconsistent"};
+  }
+  node->priority_sequence_ = priority;
 }
 
 void core::MultiInstrumentEngineAccess::set_next_sequence_for_testing(

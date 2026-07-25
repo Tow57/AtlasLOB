@@ -129,28 +129,38 @@ endfunction()
 
 atlas_configure_core(atlas_core)
 
+set(
+  ATLAS_PERSISTENCE_PRIVATE_SOURCES
+  src/persistence/binary_codec.cpp
+  src/persistence/binary_codec.hpp
+  src/persistence/command_log_codec.cpp
+  src/persistence/command_log_codec.hpp
+  src/persistence/configuration_digest.cpp
+  src/persistence/crc32c.cpp
+  src/persistence/crc32c.hpp
+  src/persistence/inspection.cpp
+  src/persistence/log_io.cpp
+  src/persistence/log_io.hpp
+  src/persistence/log_scanner.cpp
+  src/persistence/log_scanner.hpp
+  src/persistence/logged_engine.cpp
+  src/persistence/logged_engine_internal.hpp
+  src/persistence/replay.cpp
+  src/persistence/replay_internal.hpp
+  src/persistence/reports.cpp
+  src/persistence/reports.hpp
+  src/persistence/snapshot_codec.cpp
+  src/persistence/snapshot_codec.hpp
+  src/persistence/snapshot_recovery.cpp
+  src/persistence/snapshot_store.cpp
+  src/persistence/snapshot_store_internal.hpp
+)
+
 add_library(atlas_persistence)
 add_library(AtlasLOB::persistence ALIAS atlas_persistence)
 target_sources(
   atlas_persistence
-  PRIVATE
-    src/persistence/binary_codec.cpp
-    src/persistence/binary_codec.hpp
-    src/persistence/command_log_codec.cpp
-    src/persistence/command_log_codec.hpp
-    src/persistence/configuration_digest.cpp
-    src/persistence/crc32c.cpp
-    src/persistence/crc32c.hpp
-    src/persistence/inspection.cpp
-    src/persistence/log_io.cpp
-    src/persistence/log_io.hpp
-    src/persistence/log_scanner.cpp
-    src/persistence/log_scanner.hpp
-    src/persistence/logged_engine.cpp
-    src/persistence/logged_engine_internal.hpp
-    src/persistence/replay.cpp
-    src/persistence/reports.cpp
-    src/persistence/reports.hpp
+  PRIVATE ${ATLAS_PERSISTENCE_PRIVATE_SOURCES}
   PUBLIC
     FILE_SET HEADERS
     BASE_DIRS include
@@ -160,6 +170,8 @@ target_sources(
       include/atlaslob/persistence/inspection.hpp
       include/atlaslob/persistence/logged_engine.hpp
       include/atlaslob/persistence/replay.hpp
+      include/atlaslob/persistence/snapshot.hpp
+      include/atlaslob/persistence/snapshot_store.hpp
       include/atlaslob/persistence/types.hpp
 )
 target_link_libraries(
@@ -186,13 +198,38 @@ if(ATLAS_BUILD_FUZZERS)
     )
   endif()
 
-  foreach(decoder IN ITEMS log_header log_record)
+  # Keep libFuzzer coverage instrumentation isolated from the ordinary
+  # persistence library and tools while compiling the complete decoder
+  # implementation into every fuzz executable.
+  add_library(
+    atlas_persistence_fuzz
+    STATIC
+    ${ATLAS_PERSISTENCE_PRIVATE_SOURCES}
+  )
+  target_link_libraries(
+    atlas_persistence_fuzz
+    PUBLIC AtlasLOB::core
+    PRIVATE atlas_internal_utility
+  )
+  target_include_directories(
+    atlas_persistence_fuzz
+    PRIVATE
+      "${CMAKE_CURRENT_SOURCE_DIR}/src/core"
+      "${CMAKE_CURRENT_SOURCE_DIR}/src/persistence"
+  )
+  target_compile_features(atlas_persistence_fuzz PUBLIC cxx_std_20)
+  target_compile_options(atlas_persistence_fuzz PRIVATE -fsanitize=fuzzer-no-link)
+  set_target_properties(atlas_persistence_fuzz PROPERTIES CXX_EXTENSIONS OFF)
+  atlas_set_project_warnings(atlas_persistence_fuzz)
+  atlas_enable_sanitizers(atlas_persistence_fuzz)
+
+  foreach(decoder IN ITEMS log_header log_record snapshot)
     set(fuzzer_target "atlas_fuzz_${decoder}_decoder")
     add_executable(
       ${fuzzer_target}
       "tests/fuzz/${decoder}_decoder_fuzz.cpp"
     )
-    target_link_libraries(${fuzzer_target} PRIVATE AtlasLOB::persistence)
+    target_link_libraries(${fuzzer_target} PRIVATE atlas_persistence_fuzz)
     target_include_directories(
       ${fuzzer_target}
       PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src/persistence"

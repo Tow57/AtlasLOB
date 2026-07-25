@@ -10,6 +10,8 @@
 
 namespace atlaslob::core {
 
+class InstrumentBook;
+
 enum class StorageError : std::uint8_t {
   none = 0,
   invalid_order_id = 1,
@@ -117,9 +119,12 @@ class HeapOrderStorage final : public OrderStorage {
   [[nodiscard]] bool owns(const OrderNode& node) const noexcept;
 
  private:
+  friend class InstrumentBook;
 #if defined(ATLAS_ENABLE_TEST_ACCESS) && ATLAS_ENABLE_TEST_ACCESS
   friend class test::CoreAccess;
 #endif
+
+  void reserve_for_snapshot_restore(std::size_t order_count) { orders_.reserve(order_count); }
 
   using OwnedOrderNode = std::unique_ptr<OrderNode, OrderNodeDeleter>;
   using Orders =

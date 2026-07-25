@@ -147,7 +147,10 @@ non-owning per-book active-order index provides direct ID lookup. `InstrumentBoo
 its index, and FIFO traversal in exact one-to-one correspondence and validates identity, linkage,
 cardinality, uncrossed best prices, and component-local invariants. `MultiInstrumentEngine` adds a
 separate engine-wide `OrderId -> {InstrumentId, ClientId}` directory that must equal the union of
-all per-book active indexes.
+all per-book active indexes. It also maintains a private `Sequence -> OrderId` directory for every
+active priority. Ordinary command publication updates both directories transactionally.
+Whole-engine validation walks the books and both directories with a fixed number of hash lookups
+per active entry, rather than performing a pairwise duplicate-priority scan.
 
 The terminal-removal order is:
 
@@ -188,8 +191,8 @@ nor caller-selected sequences are installed public API.
 
 ## Command-log and replay contract
 
-ADR 0013 freezes `ATLSLG01` command-log format V1. Its PR2 implementation is complete locally;
-hosted Clang, sanitizer, libFuzzer, pull-request, and merge gates remain pending.
+ADR 0013 freezes `ATLSLG01` command-log format V1. Its implementation is complete locally; hosted
+Clang, sanitizer, actual Clang libFuzzer execution, pull-request, and merge gates remain pending.
 
 The header contains semantic/configuration identity, one opaque 16-byte log ID, first sequence 1,
 the sorted instrument catalog, an `ATLSCF01` configuration digest, and CRC32C. Every multibyte
@@ -233,6 +236,17 @@ Diagnostic replay checks invariants after every command and stops at the first d
 Strict tail policy rejects a torn tail; valid-prefix policy replays the complete prefix with an
 explicit warning and never ignores corruption.
 
+`LoggedEngine::recover`, `recover_from_snapshot`, and `recover_from_snapshot_directory` make a
+successful clean recovery writable again. All validation passes retain one opened read source.
+Only after successful recovery does the adapter reopen the existing path with append-only,
+no-create/no-truncate flags and require its extent to equal the validated end offset. The recovered
+sink is already published, so failure or destruction cannot delete the existing log.
+
+Writable recovery always requires a clean tail. A torn tail under `valid-prefix` may still produce
+standalone replay state and a warning, but it does not produce a writable `LoggedEngine`. The
+copy-only repair operation must first create a distinct clean log. Missing logs are not created,
+and complete corruption is neither repaired nor reopened.
+
 `ATLSLG01` stores an expected event count and digest, not complete expected event bodies.
 Diagnostic replay can compare that metadata with actual recomputed events, but cannot reconstruct
 a field-level expected event body without a separate exact transcript.
@@ -240,6 +254,42 @@ a field-level expected event body without a separate exact transcript.
 Machine-readable inspection and replay reports use `ATLAS_LOG_REPORT_V1` and
 `ATLAS_REPLAY_REPORT_V1`. Counts, sequences, sizes, and offsets are canonical decimal strings;
 reports contain no elapsed times or host paths.
+
+## Persisted snapshot and recovery contract
+
+ADR 0014 freezes and the working PR3 branch implements `ATLSSN01` persisted-snapshot format V1.
+It stores the exact `ATLSLG01` log ID and byte boundary, authoritative global sequence/exhaustion
+state, canonical catalog and capacity, every configured instrument, nonempty levels in best-price
+order, orders in FIFO order, redundant aggregates/counts, `ATLSCF01`, `ATLSME01`, and one
+whole-file CRC32C. The default accepted size is 256 MiB. All lengths, counts, host conversions,
+hierarchy relationships, ordering, identities, priorities, aggregates, capacities, and digests are
+validated before restoration.
+
+Restoration builds a private temporary multi-instrument engine. It reserves book storage, local
+indexes, and both coordinator directories; allocates every level, stable node, local index,
+active-ID entry, and active-priority entry; and only then links FIFO state without allocation.
+It restores the global sequencer after books and directories are complete, then checks exact
+snapshot equality, whole-engine invariants, and the state digest. Allocation or validation failure
+destroys only temporary state; no partial engine is published.
+
+Snapshot publication first synchronizes the authoritative log through the captured boundary. It
+writes and synchronizes a unique same-directory temporary file, closes and rereads it, verifies the
+complete decoded value against the captured engine, and atomically renames without replacing an
+existing canonical name. A log-sync failure poisons the session. Later temporary-file failure
+leaves the engine and earlier snapshots unchanged; no universal hardware or power-loss durability
+claim follows from successful platform calls. Cleanup failure is surfaced. A late platform error
+may be reported after the new final name is visible, so visibility and success are separate result
+fields; no earlier final is replaced.
+
+Explicit recovery requires that exact snapshot. Directory recovery validates canonical candidates
+newest to oldest, records matching candidates it skips, and falls back to full-log replay when none
+is usable. A selected snapshot must end at an exact validated record boundary and the first suffix
+record must be the next sequence. Strict and valid-prefix tail policies retain their log meanings.
+Discovery never follows a canonical snapshot symlink; candidate-local status/read/codec/restore
+failures are skippable, while directory enumeration failure is terminal.
+Standalone inspection uses `ATLAS_SNAPSHOT_REPORT_V1`; snapshot-aware recovery uses
+`ATLAS_REPLAY_REPORT_V2`; log-only V1 remains unchanged. Reports contain no elapsed times or host
+paths.
 
 ## Error boundaries
 
@@ -257,6 +307,14 @@ reports contain no elapsed times or host paths.
   session, and require recovery; they are not domain rejections.
 - An impossible mismatch after a successfully persisted record begins core commit permanently
   poisons the persistence session and returns `state_not_recoverable`; recovery is mandatory.
+- Invalid or incompatible persisted snapshots fail before engine publication. A bad directory
+  candidate may be recorded and skipped; an explicit bad snapshot does not silently fall back.
+- Snapshot publication failure never becomes a domain rejection. A pre-publication log-sync
+  failure poisons the session; a later file-publication failure leaves the engine and previous
+  final snapshots unchanged, even if a fully verified new final became visible before a late
+  platform error was reported.
+- Torn-tail valid-prefix replay is standalone recovery evidence, not authorization to append to
+  that file. Writable recovery requires a clean exact extent after safe repair.
 
 ## Matching planning and execution boundary
 
@@ -355,7 +413,8 @@ multi-engine observers additionally expose catalog membership, total active coun
 top/snapshot values, one complete engine snapshot, and the engine-wide state digest. Node
 addresses, levels, indexes, planners, prepared transactions, and detailed internal component
 errors are not public API. Allocation failure propagates. The command-log/replay contract and local
-PR2 implementation are complete; persisted restoration remains later Phase 4 work.
+PR2 implementation plus the persisted-snapshot/recovery PR3 implementation are complete locally;
+full PR3 and hosted validation remain pending.
 
 ## Canonical snapshots and digests
 

@@ -74,11 +74,12 @@ tick increment (two's-complement `i64`), and maximum active orders (`u64`). For 
 The in-memory `SIZE_MAX` unbounded-capacity sentinel encodes as `UINT64_MAX`, preserving the
 cross-host rule established by ADR 0012.
 
-The ordinary create-new session obtains 16 opaque bytes from the implementation's operating-system
-randomness source. The low-level codec and an explicit C++ construction seam accept any
-caller-supplied 16-byte value so golden tests and controlled recovery tools are deterministic.
-The value has no UUID layout and carries no cryptographic uniqueness, secrecy, or authentication
-claim.
+The ordinary create-new session asks `std::random_device` for 16 opaque bytes. The C++ standard
+does not require that facility to be backed by operating-system entropy, so no operating-system or
+cryptographic randomness guarantee is claimed. The low-level codec and an explicit C++
+construction seam accept any caller-supplied 16-byte value so golden tests and controlled recovery
+tools are deterministic. The value has no UUID layout and carries no cryptographic uniqueness,
+secrecy, or authentication claim.
 
 The configuration digest input is:
 
@@ -391,7 +392,9 @@ PR2 acceptance requires:
   equivalence guard that poisons the session on any impossible returned mismatch;
 - clean-log refusal, torn-tail inspection, and non-overwriting repair tests;
 - fast, verify, and diagnostic replay with both tail policies;
-- byte-identical reports and final digests across repeated verified replay; and
+- a file-backed workload replayed independently twice in verify mode, with byte-identical
+  JSON/text reports, equal counts, exact reconstructed snapshots/digests, and identical
+  subsequent-command events and state; and
 - compiler, sanitizer, formatting, and fuzz-smoke gates.
 
 The implementation and local evidence are complete. Hosted Clang, sanitizer, libFuzzer, pull

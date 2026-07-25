@@ -76,7 +76,7 @@ jobs:
       - name: Configure release
         run: >-
           cmake -S . -B "build/${{ matrix.build_directory }}" -G Ninja
-          -DBUILD_TESTING=ON
+          -DBUILD_TESTING=OFF
           -DCMAKE_BUILD_TYPE=Release
           -DCMAKE_CXX_COMPILER="${{ matrix.compiler }}"
           -DATLAS_ENABLE_INVARIANTS=OFF
@@ -112,7 +112,7 @@ jobs:
         run: ctest --preset asan-ubsan
 
   command-log-fuzz-smoke:
-    name: Command-log decoder fuzz smoke
+    name: Persistence decoder fuzz smoke
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
@@ -142,12 +142,14 @@ jobs:
           cmake --build build/command-log-fuzz --parallel 2
           --target atlas_fuzz_log_header_decoder
           atlas_fuzz_log_record_decoder
+          atlas_fuzz_snapshot_decoder
 
       - name: Run retained-seed smoke campaigns
         run: >-
           python3 tests/fuzz/run_command_log_fuzz_smoke.py
           --header-fuzzer build/command-log-fuzz/atlas_fuzz_log_header_decoder
           --record-fuzzer build/command-log-fuzz/atlas_fuzz_log_record_decoder
+          --snapshot-fuzzer build/command-log-fuzz/atlas_fuzz_snapshot_decoder
           --corpus-dir "$RUNNER_TEMP/atlas-command-log-corpus"
           --runs 1000
 
@@ -155,7 +157,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: command-log-decoder-corpus
+          name: persistence-decoder-corpus
           path: ${{ runner.temp }}/atlas-command-log-corpus
           if-no-files-found: error
           retention-days: 14

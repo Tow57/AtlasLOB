@@ -1,4 +1,4 @@
-"""Run deterministic bounded smoke campaigns for both command-log decoders."""
+"""Run deterministic bounded smoke campaigns for the persistence decoders."""
 
 from __future__ import annotations
 
@@ -37,6 +37,23 @@ RECORD_SEEDS = (
     ),
 )
 
+SNAPSHOT_SEED = (
+    "41544c53534e30310001000601020304000000000000023100000000000000e10011223344556677"
+    "8899aabbccddeeff000000000000000700000000000001c800000000000000000400000000000000"
+    "1e00000002000000000000003800000002000000000000014ca370b7f2421f4f54ebfdb409c0e957"
+    "70c09f9d7bcd34e979459faac90fb1f396957270029cbc49b98c90553190ea1e918b67fb080eab4cf"
+    "ddc5762c2f6f1f2a40000000700000000000000640000000000000005000000000000000a00000009"
+    "00000000000000c8000000000000000a000000000000001400000000000001280000000700000000"
+    "00000004000000000000000200000000000000010000000000000072000000000000006400000000"
+    "0000000c000000000000000200000000000000010000000b00000007010000000000000064000000"
+    "0000000005000000000000000100000000000000020000000c000000070100000000000000640000"
+    "00000000000700000000000000020000000000000049000000000000005a00000000000000030000"
+    "00000000000100000000000000040000000e0000000701000000000000005a000000000000000300"
+    "000000000000030000000000000049000000000000006e0000000000000009000000000000000100"
+    "000000000000030000000d0000000702000000000000006e00000000000000090000000000000004"
+    "000000000000002400000009000000000000000000000000000000000000000000000000f3a24bf4"
+)
+
 
 def write_seed(directory: Path, name: str, encoded: str) -> None:
     directory.mkdir(parents=True, exist_ok=True)
@@ -62,6 +79,7 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--header-fuzzer", required=True, type=Path)
     parser.add_argument("--record-fuzzer", required=True, type=Path)
+    parser.add_argument("--snapshot-fuzzer", required=True, type=Path)
     parser.add_argument("--corpus-dir", required=True, type=Path)
     parser.add_argument("--runs", type=int, default=1_000)
     arguments = parser.parse_args()
@@ -73,6 +91,8 @@ def main() -> int:
     write_seed(header_corpus, "canonical-atlslg01", HEADER_SEED)
     for index, encoded in enumerate(RECORD_SEEDS, start=1):
         write_seed(record_corpus, f"canonical-record-{index}", encoded)
+    snapshot_corpus = arguments.corpus_dir / "snapshot"
+    write_seed(snapshot_corpus, "canonical-atlssn01", SNAPSHOT_SEED)
 
     run_fuzzer(
         arguments.header_fuzzer,
@@ -85,6 +105,12 @@ def main() -> int:
         record_corpus,
         arguments.runs,
         64 * 1024,
+    )
+    run_fuzzer(
+        arguments.snapshot_fuzzer,
+        snapshot_corpus,
+        arguments.runs,
+        1024 * 1024,
     )
     return 0
 

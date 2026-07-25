@@ -120,6 +120,7 @@ LogRepairReport repair_log_tail(const std::filesystem::path& input,
       .inspection = make_report(std::move(repaired.scan), visitor),
       .output_created = repaired.output_created,
       .output_bytes = output_bytes,
+      .unpublished_artifact = std::move(repaired.unpublished_artifact),
   };
 }
 

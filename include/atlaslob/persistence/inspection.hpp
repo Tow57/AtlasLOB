@@ -64,6 +64,7 @@ struct LogRepairReport final {
   LogInspectionReport inspection;
   bool output_created{};
   std::optional<std::uint64_t> output_bytes;
+  std::optional<std::filesystem::path> unpublished_artifact;
 };
 
 [[nodiscard]] LogInspectionReport inspect_log(const std::filesystem::path& path,

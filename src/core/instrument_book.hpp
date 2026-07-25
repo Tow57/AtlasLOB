@@ -13,6 +13,8 @@
 
 namespace atlaslob::core {
 
+class MultiInstrumentEngineAccess;
+
 enum class PreparationAllocationStage : std::uint8_t {
   detached_level = 1,
   staging_level = 2,
@@ -392,6 +394,7 @@ class InstrumentBook final {
   [[nodiscard]] InstrumentBookInvariantResult validate_invariants() const noexcept;
 
  private:
+  friend class MultiInstrumentEngineAccess;
 #if defined(ATLAS_ENABLE_TEST_ACCESS) && ATLAS_ENABLE_TEST_ACCESS
   friend class test::CoreAccess;
   PreparationAllocationHook preparation_allocation_hook_{};
@@ -405,6 +408,16 @@ class InstrumentBook final {
   [[nodiscard]] OrderNode* commit_prepared_no_check(PreparedRest& prepared_rest) noexcept;
   void enforce_postconditions() const noexcept;
   void drain() noexcept;
+  void begin_snapshot_restore() noexcept;
+  void reserve_snapshot_storage(std::size_t order_count);
+  void reserve_snapshot_index(std::size_t order_count);
+  [[nodiscard]] PriceLevel* allocate_snapshot_level(domain::Side side, domain::PriceTicks price);
+  [[nodiscard]] OrderNode* allocate_snapshot_order(const OrderNodeSpec& spec);
+  [[nodiscard]] bool index_snapshot_order(OrderNode& node);
+  [[nodiscard]] OrderNode* find_snapshot_order(domain::OrderId order_id) noexcept;
+  void link_snapshot_order(OrderNode& node) noexcept;
+  void complete_snapshot_restore() noexcept;
+  void abandon_snapshot_restore() noexcept;
 
   domain::InstrumentId instrument_id_{};
   HeapOrderStorage storage_;
@@ -417,6 +430,7 @@ class InstrumentBook final {
   // Public direct mutation paths reject this exact active ID; unrelated
   // passive orders remain mutable.
   domain::OrderId pending_replacement_old_id_{};
+  bool snapshot_restore_staging_{};
 };
 
 }  // namespace atlaslob::core

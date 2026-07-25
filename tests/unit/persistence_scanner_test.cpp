@@ -32,11 +32,31 @@ static_assert(default_max_log_header_bytes == 1024U * 1024U);
 static_assert(default_max_log_record_bytes == 64U * 1024U);
 static_assert(default_log_io_chunk_bytes == 64U * 1024U);
 
+std::size_t remove_hook_calls{};
+
+[[nodiscard]] std::error_code fail_remove_file(const std::filesystem::path&) noexcept {
+  ++remove_hook_calls;
+  return std::make_error_code(std::errc::permission_denied);
+}
+
+class RemoveHookReset final {
+ public:
+  RemoveHookReset() = default;
+  RemoveHookReset(const RemoveHookReset&) = delete;
+  RemoveHookReset& operator=(const RemoveHookReset&) = delete;
+  ~RemoveHookReset() { set_remove_file_hook_for_testing(nullptr); }
+};
+
 class ScriptedSource final : public LogSource {
  public:
   explicit ScriptedSource(std::vector<std::uint8_t> bytes) : bytes_{std::move(bytes)} {}
 
   [[nodiscard]] LogExtentResult extent() noexcept override {
+    ++extent_calls_;
+    if (replace_on_extent_call_.has_value() && extent_calls_ == *replace_on_extent_call_) {
+      bytes_.swap(replacement_bytes_);
+      replace_on_extent_call_.reset();
+    }
     if (fail_extent_) {
       return {
           .extent = 0U,
@@ -91,10 +111,17 @@ class ScriptedSource final : public LogSource {
   void fail_at(std::uint64_t offset) noexcept { fail_at_ = offset; }
   void zero_progress_at(std::uint64_t offset) noexcept { zero_progress_at_ = offset; }
   void replace_bytes(std::vector<std::uint8_t> bytes) { bytes_ = std::move(bytes); }
+  void replace_bytes_on_extent_call(std::size_t call, std::vector<std::uint8_t> bytes) {
+    replace_on_extent_call_ = call;
+    replacement_bytes_ = std::move(bytes);
+  }
 
  private:
   std::vector<std::uint8_t> bytes_;
+  std::vector<std::uint8_t> replacement_bytes_;
   std::size_t max_read_{std::numeric_limits<std::size_t>::max()};
+  std::size_t extent_calls_{};
+  std::optional<std::size_t> replace_on_extent_call_;
   std::optional<std::uint64_t> fail_at_;
   std::optional<std::uint64_t> zero_progress_at_;
   bool fail_extent_{};
@@ -695,6 +722,85 @@ TEST(CommandLogRepair, WritesANewValidatedPrefixAndRefusesUnsafeOutputs) {
   static_cast<void>(std::filesystem::remove(clean_refused_output, ignored));
 }
 
+TEST(CommandLogRepair, ValidatesBeforeCreatingAndPublishesOnlyAStableSourceIdentity) {
+  const auto header = encoded_header();
+  const auto first = encoded_record(new_record(1U));
+  const auto second = encoded_record(new_record(2U));
+  auto valid_prefix = header;
+  append(valid_prefix, first);
+  auto torn = valid_prefix;
+  append(torn, std::span<const std::uint8_t>{second}.first(9U));
+
+  auto changed = torn;
+  changed[header.size() + 30U] ^= 0x01U;
+  ScriptedSource changing_source{torn};
+  // Validation and two raw identities use six extent calls. Copying starts on
+  // call seven; changing the same-size source at its final extent check proves
+  // that a fully populated temporary prefix is never published.
+  changing_source.replace_bytes_on_extent_call(8U, changed);
+
+  const auto output = temporary_path("identity-change-output.log");
+  std::error_code ignored;
+  static_cast<void>(std::filesystem::remove(output, ignored));
+  const auto changed_result = repair_command_log_source_to_new_file(changing_source, output);
+  EXPECT_FALSE(changed_result.output_created);
+  EXPECT_EQ(changed_result.scan.termination, LogScanTermination::io_failure);
+  EXPECT_EQ(changed_result.scan.error.category, LogErrorCategory::io_failure);
+  EXPECT_EQ(changed_result.scan.error.system_error,
+            std::make_error_code(std::errc::state_not_recoverable));
+  EXPECT_FALSE(changed_result.unpublished_artifact.has_value());
+  EXPECT_FALSE(std::filesystem::exists(output));
+
+  ScriptedSource clean_source{valid_prefix};
+  const auto clean_output = temporary_path("clean-never-created.log");
+  static_cast<void>(std::filesystem::remove(clean_output, ignored));
+  remove_hook_calls = 0U;
+  RemoveHookReset reset;
+  set_remove_file_hook_for_testing(fail_remove_file);
+  const auto clean_result = repair_command_log_source_to_new_file(clean_source, clean_output);
+  EXPECT_TRUE(clean_result.scan.clean());
+  EXPECT_FALSE(clean_result.output_created);
+  EXPECT_FALSE(clean_result.unpublished_artifact.has_value());
+  EXPECT_EQ(remove_hook_calls, 0U);
+  EXPECT_FALSE(std::filesystem::exists(clean_output));
+}
+
+TEST(CommandLogRepair, ReportsTheExactUnpublishedArtifactWhenCleanupFails) {
+  const auto header = encoded_header();
+  const auto first = encoded_record(new_record(1U));
+  const auto second = encoded_record(new_record(2U));
+  auto torn = header;
+  append(torn, first);
+  append(torn, std::span<const std::uint8_t>{second}.first(9U));
+  auto changed = torn;
+  changed[header.size() + 30U] ^= 0x01U;
+
+  ScriptedSource changing_source{torn};
+  changing_source.replace_bytes_on_extent_call(8U, changed);
+  const auto output = temporary_path("cleanup-failure-output.log");
+  std::error_code ignored;
+  static_cast<void>(std::filesystem::remove(output, ignored));
+
+  remove_hook_calls = 0U;
+  {
+    RemoveHookReset reset;
+    set_remove_file_hook_for_testing(fail_remove_file);
+    const auto result = repair_command_log_source_to_new_file(changing_source, output);
+    EXPECT_FALSE(result.output_created);
+    EXPECT_EQ(result.scan.termination, LogScanTermination::io_failure);
+    EXPECT_EQ(result.scan.error.system_error, std::make_error_code(std::errc::permission_denied));
+    ASSERT_TRUE(result.unpublished_artifact.has_value());
+    EXPECT_NE(*result.unpublished_artifact, output);
+    EXPECT_TRUE(std::filesystem::exists(*result.unpublished_artifact));
+    EXPECT_FALSE(std::filesystem::exists(output));
+    EXPECT_GT(remove_hook_calls, 0U);
+
+    set_remove_file_hook_for_testing(nullptr);
+    static_cast<void>(std::filesystem::remove(*result.unpublished_artifact, ignored));
+  }
+  EXPECT_FALSE(std::filesystem::exists(output));
+}
+
 TEST(NativeAppendFileSink, SeparatesBufferedFlushAndSyncSessionBoundaries) {
   const auto path = temporary_path("append.log");
   const auto abandoned_path = temporary_path("abandoned.log");
@@ -737,6 +843,48 @@ TEST(NativeAppendFileSink, SeparatesBufferedFlushAndSyncSessionBoundaries) {
 
   static_cast<void>(std::filesystem::remove(path, ignored));
   static_cast<void>(std::filesystem::remove(abandoned_path, ignored));
+}
+
+TEST(NativeAppendFileSink, ReopensOnlyAnExistingFileAtTheExactValidatedExtent) {
+  const auto path = temporary_path("existing-append.log");
+  const auto missing = temporary_path("missing-existing-append.log");
+  std::error_code ignored;
+  static_cast<void>(std::filesystem::remove(path, ignored));
+  static_cast<void>(std::filesystem::remove(missing, ignored));
+  const auto header = encoded_header();
+  write_file(path, header);
+
+  const auto wrong_extent =
+      open_native_existing_append_log_sink(path, static_cast<std::uint64_t>(header.size() + 1U));
+  EXPECT_FALSE(wrong_extent);
+  EXPECT_EQ(wrong_extent.failure.operation, LogIoOperation::inspect_extent);
+  EXPECT_EQ(read_file(path), header);
+
+  const auto missing_open = open_native_existing_append_log_sink(missing, 0U);
+  EXPECT_FALSE(missing_open);
+  EXPECT_EQ(missing_open.failure.operation, LogIoOperation::open_destination);
+  EXPECT_FALSE(std::filesystem::exists(missing));
+
+  const std::array<std::uint8_t, 3U> suffix{0xaaU, 0xbbU, 0xccU};
+  {
+    auto opened =
+        open_native_existing_append_log_sink(path, static_cast<std::uint64_t>(header.size()));
+    ASSERT_TRUE(opened);
+    EXPECT_TRUE(opened.sink->header_published());
+    EXPECT_EQ(opened.sink->position(), header.size());
+    const auto write = opened.sink->write(std::as_bytes(std::span{suffix}));
+    ASSERT_TRUE(write);
+    EXPECT_EQ(write.bytes_written, suffix.size());
+    EXPECT_FALSE(opened.sink->flush());
+    EXPECT_FALSE(opened.sink->sync());
+    EXPECT_FALSE(opened.sink->close());
+  }
+
+  auto expected = header;
+  expected.insert(expected.end(), suffix.begin(), suffix.end());
+  EXPECT_EQ(read_file(path), expected);
+
+  static_cast<void>(std::filesystem::remove(path, ignored));
 }
 
 TEST(NativeNewFileSink, SurfacesCleanupFailureAndAllowsAnExplicitRetry) {

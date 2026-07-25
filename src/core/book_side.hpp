@@ -13,6 +13,8 @@
 
 namespace atlaslob::core {
 
+class InstrumentBook;
+
 enum class BookSideError : std::uint8_t {
   none = 0,
   invalid_price = 1,
@@ -463,9 +465,34 @@ class BookSide final {
   }
 
  private:
+  friend class InstrumentBook;
 #if defined(ATLAS_ENABLE_TEST_ACCESS) && ATLAS_ENABLE_TEST_ACCESS
   friend class test::CoreAccess;
 #endif
+
+  [[nodiscard]] PriceLevel* allocate_level_for_snapshot_restore(domain::PriceTicks price) {
+    auto level = std::make_unique<PriceLevel>(price);
+    auto* const address = level.get();
+    const auto [position, inserted] = levels_.try_emplace(price, std::move(level));
+    static_cast<void>(position);
+    return inserted ? address : nullptr;
+  }
+
+  void clear_for_snapshot_restore() noexcept {
+    for (auto& [price, level] : levels_) {
+      static_cast<void>(price);
+      if (level == nullptr) {
+        std::terminate();
+      }
+      while (level->head() != nullptr) {
+        auto* const node = level->head();
+        if (level->erase(*node) != PriceLevelError::none) {
+          std::terminate();
+        }
+      }
+    }
+    levels_.clear();
+  }
 
   Levels levels_;
 };

@@ -6,6 +6,7 @@
 #include <string>
 #include <string_view>
 #include <system_error>
+#include <utility>
 #include <vector>
 
 #include "atlaslob/persistence/inspection.hpp"
@@ -103,6 +104,21 @@ using namespace atlaslob::persistence::detail;
       .error = {},
       .divergence = std::nullopt,
       .final_state_digest = digest_from(0x50U),
+  };
+}
+
+[[nodiscard]] SnapshotRecoveryReport successful_snapshot_recovery() {
+  auto replay = successful_replay();
+  replay.records_replayed = 0U;
+  return {
+      .recovery_source = RecoverySource::explicit_snapshot,
+      .selected_snapshot = std::nullopt,
+      .covered_sequence = domain::Sequence{1U},
+      .covered_log_byte_offset = 226U,
+      .snapshot_state_digest = digest_from(0x50U),
+      .skipped_snapshots = {},
+      .snapshot_error = {},
+      .replay = std::move(replay),
   };
 }
 
@@ -297,6 +313,32 @@ TEST(PersistenceReports, TornRepairReportUsesWarningAndNeverMislabelsItAsCorrupt
                 " records_scanned=1 last_sequence=1 input_bytes=230 "
                 "valid_prefix_bytes=226 output_bytes=226 tail=torn "
                 "warning=truncated_final_record@226 error=null records=null\n");
+}
+
+TEST(PersistenceReports, RepairCleanupFailureSurfacesAPathFreeArtifactStatus) {
+  auto report = clean_log_report(false);
+  report.input_bytes = 230U;
+  report.valid_prefix_bytes = 226U;
+  report.tail = LogTail::torn;
+  report.error = {
+      .category = LogErrorCategory::io_failure,
+      .byte_offset = 226U,
+      .system_error = std::make_error_code(std::errc::permission_denied),
+  };
+
+  const auto json =
+      render_log_report_json(report, LogReportOperation::repair_tail, std::nullopt, true);
+  EXPECT_NE(json.find("\"status\":\"io_error\""), std::string::npos);
+  EXPECT_NE(json.find("\"output_bytes\":null,"
+                      "\"unpublished_artifact_present\":true,\"tail\":\"torn\""),
+            std::string::npos);
+  EXPECT_EQ(json.find("permission_denied"), std::string::npos);
+
+  const auto text =
+      render_log_report_text(report, LogReportOperation::repair_tail, std::nullopt, true);
+  EXPECT_NE(text.find("status=io_error"), std::string::npos);
+  EXPECT_NE(text.find("output_bytes=null unpublished_artifact_present=true tail=torn"),
+            std::string::npos);
 }
 
 TEST(PersistenceReports, CorruptionUsesTheErrorSlotAndOmitsSystemDetails) {
@@ -689,6 +731,145 @@ TEST(PersistenceReports, RepeatedVerifiedReportsAreByteIdenticalAndLeakNoAmbient
     EXPECT_EQ(report.find("elapsed"), std::string::npos);
     EXPECT_EQ(report.find("timestamp"), std::string::npos);
   }
+}
+
+TEST(PersistenceReports, SnapshotReplayV2ExplicitSuccessMatchesExactJsonAndText) {
+  const auto report = successful_snapshot_recovery();
+  const std::string expected_json =
+      "{\"schema\":\"ATLAS_REPLAY_REPORT_V2\",\"status\":\"ok\","
+      "\"mode\":\"verify\",\"tail_policy\":\"strict\","
+      "\"semantics_version\":\"6\",\"log_id\":\"" +
+      std::string{log_id_hex} +
+      "\",\"first_sequence\":\"1\",\"last_sequence\":\"1\","
+      "\"records_available\":\"1\",\"records_covered_by_snapshot\":\"1\","
+      "\"records_replayed\":\"0\",\"committed\":\"1\",\"rejected\":\"0\","
+      "\"final_state_digest\":\"" +
+      std::string{state_digest_hex} +
+      "\",\"tail\":\"clean\",\"recovery_source\":\"explicit_snapshot\","
+      "\"snapshot\":{\"covered_sequence\":\"1\",\"covered_log_offset\":\"226\","
+      "\"state_digest\":\"" +
+      std::string{state_digest_hex} +
+      "\"},\"skipped_snapshots\":[],\"warnings\":[],\"error\":null,"
+      "\"divergence\":null}\n";
+  const std::string expected_text =
+      "schema=ATLAS_REPLAY_REPORT_V2 status=ok mode=verify tail_policy=strict "
+      "records_available=1 records_covered_by_snapshot=1 records_replayed=0 "
+      "committed=1 rejected=0 recovery_source=explicit_snapshot "
+      "skipped_snapshots=0 final_state_digest=" +
+      std::string{state_digest_hex} + " error=null divergence=null\n";
+
+  EXPECT_EQ(render_snapshot_replay_report_json(report), expected_json);
+  EXPECT_EQ(render_snapshot_replay_report_text(report), expected_text);
+}
+
+TEST(PersistenceReports, SnapshotReplayV2CandidateSkipMatchesExactJsonAndText) {
+  auto report = successful_snapshot_recovery();
+  report.recovery_source = RecoverySource::directory_snapshot;
+  report.skipped_snapshots.push_back({
+      .path = {},
+      .filename_sequence = domain::Sequence{2U},
+      .error =
+          {
+              .category = SnapshotErrorCategory::bad_checksum,
+              .byte_offset = 561U,
+          },
+  });
+  const std::string expected_json =
+      "{\"schema\":\"ATLAS_REPLAY_REPORT_V2\",\"status\":\"warning\","
+      "\"mode\":\"verify\",\"tail_policy\":\"strict\","
+      "\"semantics_version\":\"6\",\"log_id\":\"" +
+      std::string{log_id_hex} +
+      "\",\"first_sequence\":\"1\",\"last_sequence\":\"1\","
+      "\"records_available\":\"1\",\"records_covered_by_snapshot\":\"1\","
+      "\"records_replayed\":\"0\",\"committed\":\"1\",\"rejected\":\"0\","
+      "\"final_state_digest\":\"" +
+      std::string{state_digest_hex} +
+      "\",\"tail\":\"clean\",\"recovery_source\":\"directory_snapshot\","
+      "\"snapshot\":{\"covered_sequence\":\"1\",\"covered_log_offset\":\"226\","
+      "\"state_digest\":\"" +
+      std::string{state_digest_hex} +
+      "\"},\"skipped_snapshots\":[{\"candidate_sequence\":\"2\","
+      "\"category\":\"bad_checksum\",\"offset\":\"561\"}],"
+      "\"warnings\":[{\"category\":\"snapshot_candidates_skipped\","
+      "\"offset\":null}],\"error\":null,\"divergence\":null}\n";
+  const std::string expected_text =
+      "schema=ATLAS_REPLAY_REPORT_V2 status=warning mode=verify tail_policy=strict "
+      "records_available=1 records_covered_by_snapshot=1 records_replayed=0 "
+      "committed=1 rejected=0 recovery_source=directory_snapshot "
+      "skipped_snapshots=1 final_state_digest=" +
+      std::string{state_digest_hex} +
+      " error=null divergence=null\n"
+      "skipped_snapshot candidate_sequence=2 category=bad_checksum offset=561\n";
+
+  EXPECT_EQ(render_snapshot_replay_report_json(report), expected_json);
+  EXPECT_EQ(render_snapshot_replay_report_text(report), expected_text);
+}
+
+TEST(PersistenceReports, SnapshotReplayV2FullLogFallbackMatchesExactJsonAndText) {
+  auto report = successful_snapshot_recovery();
+  report.recovery_source = RecoverySource::full_log;
+  report.covered_sequence.reset();
+  report.covered_log_byte_offset.reset();
+  report.snapshot_state_digest.reset();
+  report.replay.records_replayed = 1U;
+  const std::string expected_json =
+      "{\"schema\":\"ATLAS_REPLAY_REPORT_V2\",\"status\":\"warning\","
+      "\"mode\":\"verify\",\"tail_policy\":\"strict\","
+      "\"semantics_version\":\"6\",\"log_id\":\"" +
+      std::string{log_id_hex} +
+      "\",\"first_sequence\":\"1\",\"last_sequence\":\"1\","
+      "\"records_available\":\"1\",\"records_covered_by_snapshot\":\"0\","
+      "\"records_replayed\":\"1\",\"committed\":\"1\",\"rejected\":\"0\","
+      "\"final_state_digest\":\"" +
+      std::string{state_digest_hex} +
+      "\",\"tail\":\"clean\",\"recovery_source\":\"full_log\","
+      "\"snapshot\":null,\"skipped_snapshots\":[],"
+      "\"warnings\":[{\"category\":\"snapshot_fallback_full_log\","
+      "\"offset\":null}],\"error\":null,\"divergence\":null}\n";
+  const std::string expected_text =
+      "schema=ATLAS_REPLAY_REPORT_V2 status=warning mode=verify tail_policy=strict "
+      "records_available=1 records_covered_by_snapshot=0 records_replayed=1 "
+      "committed=1 rejected=0 recovery_source=full_log skipped_snapshots=0 "
+      "final_state_digest=" +
+      std::string{state_digest_hex} + " error=null divergence=null\n";
+
+  EXPECT_EQ(render_snapshot_replay_report_json(report), expected_json);
+  EXPECT_EQ(render_snapshot_replay_report_text(report), expected_text);
+}
+
+TEST(PersistenceReports, SnapshotReplayV2StrictTornFailureMatchesExactJsonAndText) {
+  auto report = successful_snapshot_recovery();
+  report.covered_sequence.reset();
+  report.covered_log_byte_offset.reset();
+  report.snapshot_state_digest.reset();
+  report.replay.tail = ReplayTail::torn;
+  report.replay.final_state_digest.reset();
+  report.replay.error = {
+      .category = LogErrorCategory::truncated_final_record,
+      .byte_offset = 226U,
+  };
+  const std::string expected_json =
+      "{\"schema\":\"ATLAS_REPLAY_REPORT_V2\",\"status\":\"invalid\","
+      "\"mode\":\"verify\",\"tail_policy\":\"strict\","
+      "\"semantics_version\":\"6\",\"log_id\":\"" +
+      std::string{log_id_hex} +
+      "\",\"first_sequence\":\"1\",\"last_sequence\":\"1\","
+      "\"records_available\":\"1\",\"records_covered_by_snapshot\":\"0\","
+      "\"records_replayed\":\"0\",\"committed\":\"1\",\"rejected\":\"0\","
+      "\"final_state_digest\":null,\"tail\":\"torn\","
+      "\"recovery_source\":\"explicit_snapshot\",\"snapshot\":null,"
+      "\"skipped_snapshots\":[],\"warnings\":[],"
+      "\"error\":{\"category\":\"truncated_final_record\",\"offset\":\"226\"},"
+      "\"divergence\":null}\n";
+  const std::string expected_text =
+      "schema=ATLAS_REPLAY_REPORT_V2 status=invalid mode=verify tail_policy=strict "
+      "records_available=1 records_covered_by_snapshot=0 records_replayed=0 "
+      "committed=1 rejected=0 recovery_source=explicit_snapshot "
+      "skipped_snapshots=0 final_state_digest=null "
+      "error=truncated_final_record@226 divergence=null\n";
+
+  EXPECT_EQ(render_snapshot_replay_report_json(report), expected_json);
+  EXPECT_EQ(render_snapshot_replay_report_text(report), expected_text);
 }
 
 }  // namespace

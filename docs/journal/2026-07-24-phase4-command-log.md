@@ -117,6 +117,9 @@ PR2 supplies:
 - clean-log refusal, new-file-only torn-tail repair, and complete-corruption refusal;
 - fast, verify, and diagnostic replay with invariant checking, exact evidence comparison, and a
   validated-prefix SHA-256 guard against same-size changes between structural and semantic scans;
+- a real file-backed workload replayed into two independent engines in verify mode, comparing
+  exact JSON/text report bytes, counts, reconstructed snapshots/digests, and the events and state
+  from a subsequent crossing command;
 - deterministic JSON/text reports and direct CLI parser/exit-code tests;
 - `atlas_inspect` and `atlas_replay`;
 - header and record libFuzzer targets with canonical seed generation and a bounded hosted smoke
