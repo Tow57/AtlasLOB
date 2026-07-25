@@ -16,8 +16,8 @@ GCC Debug and Release each pass 482/482 CTest cases. Python reports 354 passes w
 Windows canonical-symlink skips, plus 11 campaign/fuzz passes. Ruff, strict mypy, and formatting
 pass. The real binding smokes cover batch-mode parity, Unicode persistence, clean and torn
 recovery, same-engine noninterleaving, released-GIL thread progress, and returned-value lifetime.
-Hosted PR4 validation and stacked integration remain pending, so this journal does not claim
-Phase 4 completion.
+All 15 hosted PR4 checks pass on implementation commit `0525c9b`. Stacked integration remains
+pending, so this journal does not claim Phase 4 completion.
 
 ## Starting point
 
@@ -213,12 +213,13 @@ CI retains wheel and source artifacts. Phase 4 does not publish to PyPI.
 - [x] Four manylinux x86-64 wheels: contents, auditwheel, exact extension exports, and
   clean-container smoke.
 - [x] PEP 517 source distribution: contents, clean build/install, smoke, and `pip check`.
-- [ ] Hosted PR4 validation.
-- [ ] PR4 publication and stacked integration.
+- [x] Hosted PR4 validation.
+- [x] PR4 publication as draft PR #9.
+- [ ] Stacked integration.
 
 ## Claim boundary
 
-This record claims only the implemented working-branch surfaces and local validation listed above.
-It does not claim hosted PR4 acceptance, merge, PyPI publication, Windows or macOS wheels, `abi3`,
-PyPy, free-threaded CPython, benchmark results, latency or throughput, universal durability,
+This record claims the implemented draft-PR surfaces plus the local and hosted validation listed
+above. It does not claim merge, PyPI publication, Windows or macOS wheels, `abi3`, PyPy,
+free-threaded CPython, benchmark results, latency or throughput, universal durability,
 authentication, security, scalability, or production readiness.

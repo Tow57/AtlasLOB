@@ -134,8 +134,8 @@ remote `main` still ends at Phase 2.
   sanitizer/libFuzzer smoke on the PR3 stack; merge pending.
 - [ ] Canonical persisted snapshot plus log-suffix recovery - implemented and validated by the
   full local gates and green hosted PR3 checks; merge pending.
-- [ ] pybind11 batch API and distributable native-backed Python package - implemented and locally
-  validated; hosted PR4 validation and merge pending.
+- [ ] pybind11 batch API and distributable native-backed Python package - implemented with all 15
+  hosted PR4 checks green; merge pending.
 
 [ADR 0012](docs/decisions/0012-multi-instrument-routing-and-global-sequencing.md) defines the first
 Phase 4 slice. The local `codex/phase4-router` work adds an immutable, eagerly constructed
@@ -202,8 +202,9 @@ formatting. `cibuildwheel==4.1.0` builds CPython 3.11-3.14 manylinux x86-64 whee
 contents, auditwheel, and clean-container smoke checks. The PEP 517 source distribution also
 builds, installs, and smokes in a clean environment. Real-binding tests cover batch-mode parity,
 Unicode persistence paths, clean and torn recovery, same-engine noninterleaving, released-GIL
-thread progress, and ownership after later mutation. Hosted PR4 validation and integration remain
-pending. Current evidence status is indexed in
+thread progress, and ownership after later mutation. All 15 hosted PR4 compiler, sanitizer,
+fuzz-smoke, Python, formatting, differential, wheel, and source-distribution checks pass. Stacked
+integration remains pending. Current evidence status is indexed in
 [the Phase 4 evidence record](docs/evidence/phase4/README.md).
 
 ## Phase 5 - Measured portfolio release

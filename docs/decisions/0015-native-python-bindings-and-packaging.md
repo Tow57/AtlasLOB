@@ -2,8 +2,8 @@
 
 - Status: accepted
 - Date: 2026-07-25
-- Implementation state: implemented and locally validated on the Phase 4 PR4 working branch;
-  hosted PR4 validation and integration pending.
+- Implementation state: implemented and locally validated on Phase 4 draft PR #9; all 15 hosted
+  PR4 checks pass and stacked integration remains pending.
 
 ## Context
 
@@ -342,6 +342,6 @@ pass. cibuildwheel 4.1.0 produces four CPython-minor-specific manylinux x86-64 w
 through 3.14; each passes content validation, auditwheel policy validation, and clean-container
 smoke. The PEP 517 source distribution builds, installs, and smokes in a clean environment.
 
-These are local working-branch results. Hosted PR4 validation and integration remain required
-before Phase 4 completion. No benchmark, universal durability, security, or production-readiness
-claim follows from this evidence.
+The local results are independently revalidated by all 15 hosted PR4 checks on implementation
+commit `0525c9b`. Stacked integration remains required before Phase 4 completion. No benchmark,
+universal durability, security, or production-readiness claim follows from this evidence.

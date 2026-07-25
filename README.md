@@ -18,8 +18,8 @@ latency claims.
 **Phase 2 matching MVP remains on remote `main`. Phase 3 is complete on published draft PR #5;
 its required hosted GCC/Clang Release, ASan/UBSan, Python 3.11-3.14, formatting, fixed PR corpus,
 wheel, and Linux link-safety checks passed. Phase 4 is represented by four sequential slices:
-router draft PR #7, command-log/replay draft PR #8, snapshot/recovery draft PR #6, and the current
-native-Python working branch. PR3's 13 hosted compiler, sanitizer, fuzz-smoke, Python, formatting,
+router draft PR #7, command-log/replay draft PR #8, snapshot/recovery draft PR #6, and
+native-Python draft PR #9. PR3's 13 hosted compiler, sanitizer, fuzz-smoke, Python, formatting,
 wheel, and differential checks are green. PR4 now implements the lazy `atlaslob.Engine` API over
 a private pybind11 extension, strict all-before-execution conversion, owned
 object/column/summary batches,
@@ -28,7 +28,7 @@ serialization, and released-GIL native work. The package is version 0.2.0 and it
 gate builds and clean-smokes CPython 3.11-3.14 manylinux x86-64 wheels plus a PEP 517 source
 distribution. Local GCC Debug and Release each pass 482/482 CTest cases; Python reports 354 passes
 with two expected Windows canonical-symlink skips plus 11 campaign/fuzz passes; Ruff, strict mypy,
-and formatting pass. Hosted PR4 validation and integration remain pending.**
+and formatting pass. All 15 hosted PR4 checks pass; stacked integration and merge remain pending.**
 
 See the [Phase 4 evidence index](docs/evidence/phase4/README.md) for the current validation
 boundary.
@@ -76,8 +76,8 @@ boundary.
 | Python `ReferenceRouter` and Generator V2 | Hosted PR3 checks passed; integration pending | V2 workload, manifest, and interleaving tests |
 | Append-only command log, scanner, repair, and replay | Hosted PR3 checks passed; integration pending | [ADR 0013](docs/decisions/0013-command-log-and-replay.md), [format](docs/command-log-format.md), 85 persistence tests |
 | Persisted snapshot codec, publication, recovery, and clean-tail log resumption | Hosted PR3 checks passed; integration pending | [ADR 0014](docs/decisions/0014-persisted-snapshots-and-log-suffix-recovery.md), [format](docs/snapshot-format.md), PR #6 |
-| Native pybind11 engine, strict batches, logging, recovery, and snapshots | Complete locally; hosted PR4 gate pending | [ADR 0015](docs/decisions/0015-native-python-bindings-and-packaging.md), Python binding and packaging tests |
-| CPython 3.11-3.14 manylinux wheels and source distribution | Complete locally; hosted PR4 gate pending | `cibuildwheel==4.1.0`, clean wheel/auditwheel and PEP 517 sdist smoke |
+| Native pybind11 engine, strict batches, logging, recovery, and snapshots | Hosted PR4 checks passed; integration pending | [ADR 0015](docs/decisions/0015-native-python-bindings-and-packaging.md), Python binding and packaging tests |
+| CPython 3.11-3.14 manylinux wheels and source distribution | Hosted PR4 checks passed; integration pending | `cibuildwheel==4.1.0`, clean wheel/auditwheel and PEP 517 sdist smoke |
 | Resting book structure | Complete | `stress.InstrumentBookStress*` |
 | Matching and normalized command execution | Complete | Phase 2 |
 | Benchmarks and gateway | Planned | Later gated phases |

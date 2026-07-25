@@ -468,7 +468,8 @@ addresses, levels, indexes, planners, prepared transactions, and detailed intern
 errors are not public API. Allocation failure propagates. The command-log/replay contract and local
 PR2 implementation plus the persisted-snapshot/recovery PR3 implementation are complete. PR3's
 hosted checks are green; stacked integration remains pending. The native Python adapter is
-implemented and locally validated, with hosted PR4 validation pending.
+implemented, locally validated, and green across all 15 hosted PR4 checks; stacked integration
+remains pending.
 
 ## Canonical snapshots and digests
 

@@ -239,7 +239,7 @@ The format is based on Keep a Changelog, and public releases will follow semanti
   passes with two expected Windows canonical-symlink skips plus 11 campaign/fuzz passes, and Ruff,
   strict mypy, and formatting pass. Local cibuildwheel builds and clean-smokes CPython 3.11-3.14
   manylinux x86-64 wheels with the required contents and no unexpected auditwheel dependency; a
-  PEP 517 source distribution also builds, installs, and smokes cleanly. Hosted PR4 validation and
-  merge remain pending.
+  PEP 517 source distribution also builds, installs, and smokes cleanly. All 15 hosted PR4 checks
+  pass; stacked integration and merge remain pending.
 - ADR 0011, the Phase 3 evidence index, and documented dependency deferrals for Phase 4,
   Phase 6, and future persistence-format fuzzing.
