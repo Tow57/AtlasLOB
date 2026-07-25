@@ -2,15 +2,17 @@ from __future__ import annotations
 
 import os
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 
 import pytest
+from atlaslob.canonical import engine_state_digest, event_digest
 from atlaslob.domain import (
     I64_MAX,
     I64_MIN,
     CancelOrder,
     Command,
+    EventBatch,
     InstrumentConfig,
     MatchingConfig,
     MultiInstrumentEngineConfig,
@@ -20,6 +22,7 @@ from atlaslob.domain import (
     ReplaceOrder,
     Side,
     TimeInForce,
+    TradeEvent,
 )
 from atlaslob.generation import WorkloadProfile, resolve_workload_spec
 from atlaslob.multi_differential import capture_reference_router
@@ -347,6 +350,153 @@ def test_v2_decoder_rejects_impossible_error_terminals() -> None:
                 expected_commands=commands,
                 returncode=returncode,
             )
+
+    with pytest.raises(MultiNativeProtocolError):
+        decode_multi_jsonl(
+            impossible_exit_class,
+            expected_mode="exact",
+            expected_input=config,
+            returncode=3,
+        )
+
+
+def test_v2_decoder_binds_checkpoint_and_final_snapshots_to_sequence_progress() -> None:
+    stdout, config, commands = _valid_transcript()
+    invalid_checkpoint = stdout.replace(
+        '"last_sequence":"1"',
+        '"last_sequence":"2"',
+        1,
+    )
+
+    with pytest.raises(MultiNativeProtocolError, match="checkpoint sequence"):
+        decode_multi_jsonl(
+            invalid_checkpoint,
+            expected_mode="exact",
+            expected_input=config,
+            expected_commands=commands,
+            returncode=0,
+        )
+
+    no_checkpoint = MultiNativeInput(
+        _catalog(),
+        MultiInstrumentEngineConfig(8),
+        checkpoint_interval=0,
+    )
+    run = run_multi_native(_executable(), no_checkpoint, commands)
+    final = run.transcript.final
+    assert final is not None
+    advanced_snapshot = replace(final.snapshot, last_sequence=2)
+    advanced_digest = engine_state_digest(advanced_snapshot)
+    invalid_final = run.stdout.replace(
+        final.final_state_digest,
+        advanced_digest,
+    ).replace(
+        '"last_sequence":"1"',
+        '"last_sequence":"2"',
+        1,
+    )
+
+    with pytest.raises(MultiNativeProtocolError, match="final snapshot sequence"):
+        decode_multi_jsonl(
+            invalid_final,
+            expected_mode="exact",
+            expected_input=no_checkpoint,
+            expected_commands=commands,
+            returncode=0,
+        )
+
+
+def test_v2_decoder_binds_event_instrument_to_submitted_command() -> None:
+    config = MultiNativeInput(
+        _catalog(),
+        MultiInstrumentEngineConfig(8),
+    )
+    commands: tuple[Command, ...] = (
+        NewOrder(11, 1, 7, 255, OrderType.LIMIT, TimeInForce.GTC, 100, 5),
+    )
+    run = run_multi_native(_executable(), config, commands)
+    result = run.transcript.results[0]
+    assert result.events is not None
+    assert result.event_digest is not None
+    event = result.events[0]
+    routed_elsewhere = replace(
+        event,
+        header=replace(event.header, instrument_id=9),
+    )
+    routed_digest = event_digest(EventBatch((routed_elsewhere,)))
+    lines = run.stdout.splitlines()
+    lines[1] = (
+        lines[1]
+        .replace(
+            '"event_index":"0","instrument_id":"7"',
+            '"event_index":"0","instrument_id":"9"',
+            1,
+        )
+        .replace(
+            result.event_digest,
+            routed_digest,
+            1,
+        )
+    )
+    invalid = "\n".join(lines) + "\n"
+
+    with pytest.raises(MultiNativeProtocolError, match="event instrument"):
+        decode_multi_jsonl(
+            invalid,
+            expected_mode="exact",
+            expected_input=config,
+            expected_commands=commands,
+            returncode=0,
+        )
+
+
+def test_v2_decoder_checks_event_prices_against_instrument_config() -> None:
+    config = MultiNativeInput(
+        (
+            InstrumentConfig(
+                7,
+                MatchingConfig(1_000, 5, 8),
+            ),
+        ),
+        MultiInstrumentEngineConfig(8),
+    )
+    commands: tuple[Command, ...] = (
+        NewOrder(11, 1, 7, Side.SELL, OrderType.LIMIT, TimeInForce.GTC, 95, 5),
+        NewOrder(22, 2, 7, Side.BUY, OrderType.LIMIT, TimeInForce.GTC, 100, 5),
+    )
+    run = run_multi_native(_executable(), config, commands)
+    result = run.transcript.results[1]
+    assert result.events is not None
+    assert result.event_digest is not None
+    altered_events = tuple(
+        replace(event, execution_price=96) if isinstance(event, TradeEvent) else event
+        for event in result.events
+    )
+    altered_digest = event_digest(EventBatch(altered_events))
+    lines = run.stdout.splitlines()
+    lines[2] = (
+        lines[2]
+        .replace(
+            '"execution_price":"95"',
+            '"execution_price":"96"',
+            1,
+        )
+        .replace(
+            result.event_digest,
+            altered_digest,
+            1,
+        )
+    )
+    invalid = "\n".join(lines) + "\n"
+
+    with pytest.raises(MultiNativeProtocolError, match="aligned"):
+        decode_multi_jsonl(
+            invalid,
+            expected_mode="exact",
+            expected_input=config,
+            expected_commands=commands,
+            returncode=0,
+        )
 
 
 def test_importing_v2_adapter_does_not_change_v1_fixture_bytes() -> None:

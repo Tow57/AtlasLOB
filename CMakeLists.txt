@@ -18,6 +18,7 @@ option(ATLAS_ENABLE_ASAN "Enable AddressSanitizer" OFF)
 option(ATLAS_ENABLE_UBSAN "Enable UndefinedBehaviorSanitizer" OFF)
 option(ATLAS_ENABLE_TSAN "Enable ThreadSanitizer" OFF)
 option(ATLAS_ENABLE_INVARIANTS "Enable expensive internal invariant checks" ON)
+option(ATLAS_BUILD_FUZZERS "Build Clang libFuzzer decoder targets" OFF)
 
 add_library(atlas_domain)
 add_library(AtlasLOB::domain ALIAS atlas_domain)
@@ -40,6 +41,22 @@ target_compile_features(atlas_domain PUBLIC cxx_std_20)
 set_target_properties(atlas_domain PROPERTIES CXX_EXTENSIONS OFF)
 atlas_set_project_warnings(atlas_domain)
 atlas_enable_sanitizers(atlas_domain)
+
+add_library(
+  atlas_internal_utility
+  src/utility/sha256.cpp
+  src/utility/sha256.hpp
+)
+target_include_directories(
+  atlas_internal_utility
+  PUBLIC
+    "${CMAKE_CURRENT_SOURCE_DIR}/include"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/utility"
+)
+target_compile_features(atlas_internal_utility PUBLIC cxx_std_20)
+set_target_properties(atlas_internal_utility PROPERTIES CXX_EXTENSIONS OFF)
+atlas_set_project_warnings(atlas_internal_utility)
+atlas_enable_sanitizers(atlas_internal_utility)
 
 add_library(atlas_core)
 add_library(AtlasLOB::core ALIAS atlas_core)
@@ -94,7 +111,11 @@ function(atlas_configure_core target_name)
         include/atlaslob/matching_engine.hpp
         include/atlaslob/multi_instrument_engine.hpp
   )
-  target_link_libraries(${target_name} PUBLIC AtlasLOB::domain)
+  target_link_libraries(
+    ${target_name}
+    PUBLIC AtlasLOB::domain
+    PRIVATE atlas_internal_utility
+  )
   target_include_directories(${target_name} PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src/core")
   target_compile_features(${target_name} PUBLIC cxx_std_20)
   target_compile_definitions(
@@ -107,6 +128,124 @@ function(atlas_configure_core target_name)
 endfunction()
 
 atlas_configure_core(atlas_core)
+
+add_library(atlas_persistence)
+add_library(AtlasLOB::persistence ALIAS atlas_persistence)
+target_sources(
+  atlas_persistence
+  PRIVATE
+    src/persistence/binary_codec.cpp
+    src/persistence/binary_codec.hpp
+    src/persistence/command_log_codec.cpp
+    src/persistence/command_log_codec.hpp
+    src/persistence/configuration_digest.cpp
+    src/persistence/crc32c.cpp
+    src/persistence/crc32c.hpp
+    src/persistence/inspection.cpp
+    src/persistence/log_io.cpp
+    src/persistence/log_io.hpp
+    src/persistence/log_scanner.cpp
+    src/persistence/log_scanner.hpp
+    src/persistence/logged_engine.cpp
+    src/persistence/logged_engine_internal.hpp
+    src/persistence/replay.cpp
+    src/persistence/reports.cpp
+    src/persistence/reports.hpp
+  PUBLIC
+    FILE_SET HEADERS
+    BASE_DIRS include
+    FILES
+      include/atlaslob/persistence/command_log.hpp
+      include/atlaslob/persistence/configuration_digest.hpp
+      include/atlaslob/persistence/inspection.hpp
+      include/atlaslob/persistence/logged_engine.hpp
+      include/atlaslob/persistence/replay.hpp
+      include/atlaslob/persistence/types.hpp
+)
+target_link_libraries(
+  atlas_persistence
+  PUBLIC AtlasLOB::core
+  PRIVATE atlas_internal_utility
+)
+target_include_directories(
+  atlas_persistence
+  PRIVATE
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/core"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/persistence"
+)
+target_compile_features(atlas_persistence PUBLIC cxx_std_20)
+set_target_properties(atlas_persistence PROPERTIES CXX_EXTENSIONS OFF)
+atlas_set_project_warnings(atlas_persistence)
+atlas_enable_sanitizers(atlas_persistence)
+
+if(ATLAS_BUILD_FUZZERS)
+  if(NOT CMAKE_CXX_COMPILER_ID MATCHES "Clang" OR MSVC)
+    message(
+      FATAL_ERROR
+      "ATLAS_BUILD_FUZZERS requires a non-MSVC Clang toolchain"
+    )
+  endif()
+
+  foreach(decoder IN ITEMS log_header log_record)
+    set(fuzzer_target "atlas_fuzz_${decoder}_decoder")
+    add_executable(
+      ${fuzzer_target}
+      "tests/fuzz/${decoder}_decoder_fuzz.cpp"
+    )
+    target_link_libraries(${fuzzer_target} PRIVATE AtlasLOB::persistence)
+    target_include_directories(
+      ${fuzzer_target}
+      PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src/persistence"
+    )
+    target_compile_features(${fuzzer_target} PRIVATE cxx_std_20)
+    target_compile_options(${fuzzer_target} PRIVATE -fsanitize=fuzzer-no-link)
+    target_link_options(${fuzzer_target} PRIVATE -fsanitize=fuzzer)
+    set_target_properties(${fuzzer_target} PROPERTIES CXX_EXTENSIONS OFF)
+    atlas_set_project_warnings(${fuzzer_target})
+    atlas_enable_sanitizers(${fuzzer_target})
+  endforeach()
+endif()
+
+add_library(
+  atlas_persistence_cli_support
+  src/tools/platform_cli.cpp
+  src/tools/platform_cli.hpp
+  src/tools/persistence_cli.cpp
+  src/tools/persistence_cli.hpp
+)
+target_link_libraries(
+  atlas_persistence_cli_support
+  PUBLIC AtlasLOB::persistence
+)
+target_include_directories(
+  atlas_persistence_cli_support
+  PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/src/tools"
+  PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src/persistence"
+)
+target_compile_features(atlas_persistence_cli_support PUBLIC cxx_std_20)
+if(WIN32)
+  target_link_libraries(atlas_persistence_cli_support PRIVATE shell32)
+endif()
+set_target_properties(
+  atlas_persistence_cli_support
+  PROPERTIES CXX_EXTENSIONS OFF
+)
+atlas_set_project_warnings(atlas_persistence_cli_support)
+atlas_enable_sanitizers(atlas_persistence_cli_support)
+
+add_executable(atlas_inspect src/tools/atlas_inspect_main.cpp)
+target_link_libraries(atlas_inspect PRIVATE atlas_persistence_cli_support)
+target_compile_features(atlas_inspect PRIVATE cxx_std_20)
+set_target_properties(atlas_inspect PROPERTIES CXX_EXTENSIONS OFF)
+atlas_set_project_warnings(atlas_inspect)
+atlas_enable_sanitizers(atlas_inspect)
+
+add_executable(atlas_replay src/tools/atlas_replay_main.cpp)
+target_link_libraries(atlas_replay PRIVATE atlas_persistence_cli_support)
+target_compile_features(atlas_replay PRIVATE cxx_std_20)
+set_target_properties(atlas_replay PROPERTIES CXX_EXTENSIONS OFF)
+atlas_set_project_warnings(atlas_replay)
+atlas_enable_sanitizers(atlas_replay)
 
 add_library(
   atlas_cli_support
@@ -318,6 +457,61 @@ if(BUILD_TESTING)
     TEST_PREFIX "core."
     PROPERTIES LABELS "core"
   )
+
+  file(
+    GLOB ATLAS_PERSISTENCE_TEST_SOURCES
+    CONFIGURE_DEPENDS
+    "${CMAKE_CURRENT_SOURCE_DIR}/tests/unit/persistence_*_test.cpp"
+  )
+  add_executable(
+    atlas_persistence_tests
+    ${ATLAS_PERSISTENCE_TEST_SOURCES}
+  )
+  target_link_libraries(
+    atlas_persistence_tests
+    PRIVATE
+      AtlasLOB::persistence
+      GTest::gtest_main
+      atlas_persistence_cli_support
+  )
+  target_include_directories(
+    atlas_persistence_tests
+    PRIVATE
+      "${CMAKE_CURRENT_SOURCE_DIR}/src/core"
+      "${CMAKE_CURRENT_SOURCE_DIR}/src/persistence"
+      "${CMAKE_CURRENT_SOURCE_DIR}/src/tools"
+      "${CMAKE_CURRENT_SOURCE_DIR}/src/utility"
+      "${CMAKE_CURRENT_SOURCE_DIR}/tests/support"
+  )
+  target_compile_features(atlas_persistence_tests PRIVATE cxx_std_20)
+  set_target_properties(
+    atlas_persistence_tests
+    PROPERTIES CXX_EXTENSIONS OFF
+  )
+  atlas_set_project_warnings(atlas_persistence_tests)
+  atlas_enable_sanitizers(atlas_persistence_tests)
+
+  gtest_discover_tests(
+    atlas_persistence_tests
+    TEST_PREFIX "persistence."
+    PROPERTIES LABELS "persistence"
+  )
+
+  find_package(Python3 3.11 COMPONENTS Interpreter QUIET)
+  if(Python3_Interpreter_FOUND)
+    add_test(
+      NAME persistence.cli_executable_boundary
+      COMMAND
+        "${Python3_EXECUTABLE}"
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/integration/persistence_cli_boundary_test.py"
+        --inspect "$<TARGET_FILE:atlas_inspect>"
+        --replay "$<TARGET_FILE:atlas_replay>"
+    )
+    set_tests_properties(
+      persistence.cli_executable_boundary
+      PROPERTIES LABELS "persistence;integration"
+    )
+  endif()
 
   file(
     GLOB ATLAS_STRESS_TEST_SOURCES

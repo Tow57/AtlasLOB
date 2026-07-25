@@ -78,7 +78,6 @@ class CommandSequencer final {
   [[nodiscard]] domain::Sequence next_sequence() const noexcept { return next_sequence_; }
   [[nodiscard]] bool exhausted() const noexcept { return exhausted_; }
 
-#if defined(ATLAS_ENABLE_TEST_ACCESS) && ATLAS_ENABLE_TEST_ACCESS
   void set_next_sequence_for_testing(domain::Sequence next_sequence) {
     if (next_sequence.value() == 0U) {
       throw std::invalid_argument{"test sequence must be nonzero"};
@@ -87,6 +86,7 @@ class CommandSequencer final {
     exhausted_ = false;
   }
 
+#if defined(ATLAS_ENABLE_TEST_ACCESS) && ATLAS_ENABLE_TEST_ACCESS
   void set_state_for_testing(domain::Sequence next_sequence, bool exhausted) noexcept {
     next_sequence_ = next_sequence;
     exhausted_ = exhausted;

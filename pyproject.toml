@@ -53,4 +53,4 @@ select = ["B", "E", "F", "I", "UP"]
 [tool.mypy]
 python_version = "3.11"
 strict = true
-files = ["python/src", "python/tests"]
+files = ["python/src", "python/tests", "tests/fuzz/run_command_log_fuzz_smoke.py"]

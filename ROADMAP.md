@@ -129,8 +129,10 @@ at Phase 2.
 
 - [ ] Multi-instrument routing and global sequencing - implemented and locally validated; hosted
   validation and merge pending.
-- [ ] Explicit append-only command log codec.
-- [ ] Inspector, replay, corruption, and truncated-tail tests.
+- [ ] Explicit append-only command log codec - implemented and locally validated; hosted validation
+  and merge pending.
+- [ ] Inspector, replay, corruption, and truncated-tail tests - implemented and locally validated;
+  hosted sanitizer/libFuzzer validation and merge pending.
 - [ ] pybind11 batch API and distributable native-backed Python package.
 - [ ] Canonical persisted snapshot plus log-suffix recovery.
 
@@ -153,10 +155,22 @@ precommit batch, staged book mutation, exact identity removals, preallocated dir
 and reserved sequence under one lease. The later persistence slice can append between preparation
 and its allocation-free no-throw publication of book, directory, and sequence state.
 
-This local implementation is still under its PR1 test, sanitizer, formatting, typing, and
-differential gates. It is not remotely merged, and it does not complete the command-log, replay,
-snapshot-recovery, or native-binding portions of Phase 4. Current evidence status is indexed in
-[the Phase 4 router evidence record](docs/evidence/phase4/README.md).
+[ADR 0013](docs/decisions/0013-command-log-and-replay.md) and the
+[command-log format reference](docs/command-log-format.md) define the implemented `ATLSLG01` V1
+contract: a canonical header/catalog digest, fixed command records, CRC32C, bounded scanning,
+write-ahead durability modes, sticky session poisoning, safe copy-only tail repair, and
+fast/verify/diagnostic replay. A post-WAL engine commit is required to be production-infallible; an
+impossible detected mismatch returns sticky `state_not_recoverable` and forces authoritative-log
+recovery rather than permitting the session to continue. Since the log stores event count and
+digest rather than complete expected events, diagnostic replay cannot reconstruct an expected
+field-level event body without a separate transcript.
+
+PR1 and PR2 are locally validated with hosted integration pending. PR2 passes 418 Debug and Release
+CTest cases, including 85 persistence cases, plus the 288-test non-campaign Python gate, strict
+typing/linting, production-only build, and pinned formatting. The local Windows toolchain lacks
+ASan/UBSan runtimes and Clang libFuzzer, so those authoritative hosted gates remain pending. Neither
+slice completes snapshot recovery or native bindings. Current evidence status is indexed in
+[the Phase 4 evidence record](docs/evidence/phase4/README.md).
 
 ## Phase 5 - Measured portfolio release
 
