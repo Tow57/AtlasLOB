@@ -119,17 +119,44 @@ the marked campaign/fuzz selection passes 11 with 246 deselected; and the fixed 
 passes 10 exact 5,000-command cases. Checked evidence records a passing epoch-0 nightly case with
 1,000,000 compact commands. GCC Debug and Release CTest each pass 288/288; the production-only
 build, pinned clang-format, Ruff, strict mypy, and wheel build/install smoke gates also pass
-locally. The published Phase 3 PR implementation head passed every required hosted compiler,
-sanitizer, Python, formatting, wheel, PR-corpus, and Linux link-safety gate. This closes Phase 3.
-Phase 4 remains not started.
+locally. Published PR #5 head `29049756` passed every required hosted GCC/Clang Release,
+ASan/UBSan, Python 3.11-3.14, formatting, wheel, PR-corpus, and Linux link-safety gate. This closes
+the Phase 3 implementation and evidence gate. PR #5 remains open rather than remotely merged
+because GitHub authentication is unavailable in this session; remote `main` therefore still ends
+at Phase 2.
 
 ## Phase 4 - Deterministic infrastructure and Python
 
-- [ ] Multi-instrument routing and global sequencing.
+- [ ] Multi-instrument routing and global sequencing - implemented and locally validated; hosted
+  validation and merge pending.
 - [ ] Explicit append-only command log codec.
 - [ ] Inspector, replay, corruption, and truncated-tail tests.
 - [ ] pybind11 batch API and distributable native-backed Python package.
-- [ ] Optional canonical snapshot plus log-suffix recovery.
+- [ ] Canonical persisted snapshot plus log-suffix recovery.
+
+[ADR 0012](docs/decisions/0012-multi-instrument-routing-and-global-sequencing.md) defines the first
+Phase 4 slice. The local `codex/phase4-router` work adds an immutable, eagerly constructed
+instrument catalog; one global command sequence; one engine-wide active-order identity directory;
+projected per-instrument and global capacity; complete multi-engine snapshots; and the separate
+`ATLSME01` state digest. The existing `MatchingEngine` delegates through the same execution path,
+while semantic version 6 and the frozen `ATLSST01`, `ATLSEV01`, and `ATLAS_DIFF_V1` contracts
+remain unchanged.
+
+The independent Python side adds `ReferenceRouter`, Generator V2, canonical V2 workload/manifest
+schemas, multi-engine digest parity, and a constrained independent-instrument reinterleaving
+property that normalizes only the absolute global sequence and priority values that interleaving
+is expected to change. A separate test-only `atlas_diff_multi_native` target accepts the strict
+`ATLAS_DIFF_V2` catalog/command stream and emits exact or compact `atlas_diff_v2` JSON Lines; the
+Python process boundary strictly decodes and binds those records to the requested workload and
+independent reference capture. A move-only engine-wide preparation owns the command, complete
+precommit batch, staged book mutation, exact identity removals, preallocated directory addition,
+and reserved sequence under one lease. The later persistence slice can append between preparation
+and its allocation-free no-throw publication of book, directory, and sequence state.
+
+This local implementation is still under its PR1 test, sanitizer, formatting, typing, and
+differential gates. It is not remotely merged, and it does not complete the command-log, replay,
+snapshot-recovery, or native-binding portions of Phase 4. Current evidence status is indexed in
+[the Phase 4 router evidence record](docs/evidence/phase4/README.md).
 
 ## Phase 5 - Measured portfolio release
 

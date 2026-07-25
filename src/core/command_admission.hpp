@@ -16,6 +16,7 @@ enum class CommandAdmissionError : std::uint8_t {
   sequence_exhausted = 1,
   invalid_policy = 2,
   book_invariant_violation = 3,
+  invalid_sequence = 4,
 };
 
 [[nodiscard]] constexpr std::string_view to_string(CommandAdmissionError error) noexcept {
@@ -28,6 +29,8 @@ enum class CommandAdmissionError : std::uint8_t {
       return "invalid_policy";
     case CommandAdmissionError::book_invariant_violation:
       return "book_invariant_violation";
+    case CommandAdmissionError::invalid_sequence:
+      return "invalid_sequence";
   }
   return "unknown";
 }
@@ -72,6 +75,18 @@ class CommandAdmission final {
   [[nodiscard]] CommandAdmissionResult admit(const domain::CancelOrder& order) noexcept;
   [[nodiscard]] CommandAdmissionResult admit(const domain::ReplaceOrder& order) noexcept;
   [[nodiscard]] CommandAdmissionResult admit(const domain::Command& command) noexcept;
+
+  // Validates a command against an already-reserved engine-wide sequence without
+  // advancing this admission object's local sequencer. This is an internal seam
+  // for the multi-instrument coordinator and persistence preparation boundary.
+  [[nodiscard]] CommandAdmissionResult admit_at(const domain::NewOrder& order,
+                                                domain::Sequence sequence) noexcept;
+  [[nodiscard]] CommandAdmissionResult admit_at(const domain::CancelOrder& order,
+                                                domain::Sequence sequence) noexcept;
+  [[nodiscard]] CommandAdmissionResult admit_at(const domain::ReplaceOrder& order,
+                                                domain::Sequence sequence) noexcept;
+  [[nodiscard]] CommandAdmissionResult admit_at(const domain::Command& command,
+                                                domain::Sequence sequence) noexcept;
 
   [[nodiscard]] const ExecutionPolicy& policy() const noexcept { return policy_; }
   [[nodiscard]] domain::Sequence next_sequence() const noexcept {

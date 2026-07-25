@@ -1,6 +1,11 @@
 """Independent correctness evidence for AtlasLOB."""
 
-from atlaslob.canonical import event_digest, state_digest
+from atlaslob.canonical import (
+    engine_state_bytes,
+    engine_state_digest,
+    event_digest,
+    state_digest,
+)
 from atlaslob.domain import (
     ATLASLOB_SEMANTICS_VERSION,
     AcceptedEvent,
@@ -13,11 +18,15 @@ from atlaslob.domain import (
     DoneEvent,
     DoneReason,
     EngineError,
+    EngineSnapshot,
     Event,
     EventBatch,
     EventHeader,
     EventType,
+    InstrumentConfig,
+    InstrumentSnapshot,
     MatchingConfig,
+    MultiInstrumentEngineConfig,
     NewOrder,
     OrderSnapshot,
     OrderType,
@@ -43,6 +52,7 @@ from atlaslob.native import (
     run_native,
 )
 from atlaslob.reference import BookTop, ReferenceEngine
+from atlaslob.router import ReferenceRouter
 
 __all__ = [
     "ATLASLOB_SEMANTICS_VERSION",
@@ -56,12 +66,16 @@ __all__ = [
     "CommandType",
     "DoneEvent",
     "DoneReason",
+    "EngineSnapshot",
     "EngineError",
     "Event",
     "EventBatch",
     "EventHeader",
     "EventType",
+    "InstrumentConfig",
+    "InstrumentSnapshot",
     "MatchingConfig",
+    "MultiInstrumentEngineConfig",
     "NewOrder",
     "NativeInputConfig",
     "NativeProtocolError",
@@ -72,6 +86,7 @@ __all__ = [
     "PriceLevelSnapshot",
     "ReferenceResult",
     "ReferenceEngine",
+    "ReferenceRouter",
     "RejectReason",
     "RejectedEvent",
     "ReplaceOrder",
@@ -82,6 +97,8 @@ __all__ = [
     "TopOfBookLevel",
     "TradeEvent",
     "decode_jsonl",
+    "engine_state_bytes",
+    "engine_state_digest",
     "encode_stream",
     "event_digest",
     "run_native",

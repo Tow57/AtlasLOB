@@ -216,6 +216,7 @@ therefore require a version change and review rather than silently changing name
 - Local `BUILD_TESTING=OFF` production build, pinned clang-format, Ruff, strict mypy, and wheel
   build/install smoke gates passed.
 
-The published Phase 3 PR implementation head passed the required hosted GCC, Clang, Release,
-ASan/UBSan, Python, formatting, wheel, PR-corpus, and Linux link-safety checks. ADR 0011 is fully
-evidenced and Phase 3 is complete. Phase 4 has not started.
+Published Phase 3 PR #5 head `29049756` passed the required hosted GCC, Clang, Release,
+ASan/UBSan, Python 3.11-3.14, formatting, wheel, PR-corpus, and Linux link-safety checks. ADR 0011
+is fully evidenced and Phase 3 is complete. PR #5 remains open because GitHub authentication is
+unavailable in this session; the local Phase 4 router slice is implemented and under validation.

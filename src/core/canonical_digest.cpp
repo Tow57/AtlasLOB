@@ -2,6 +2,7 @@
 #include <bit>
 #include <cstddef>
 #include <cstdint>
+#include <limits>
 #include <optional>
 #include <span>
 #include <string>
@@ -10,6 +11,7 @@
 #include <variant>
 
 #include "atlaslob/digest.hpp"
+#include "atlaslob/multi_instrument_engine.hpp"
 
 #if defined(ATLAS_ENABLE_TEST_ACCESS) && ATLAS_ENABLE_TEST_ACCESS
 #include "canonical_digest.hpp"
@@ -19,7 +21,16 @@ namespace atlaslob {
 namespace {
 
 constexpr std::array<std::uint8_t, 8U> state_prefix{'A', 'T', 'L', 'S', 'S', 'T', '0', '1'};
+constexpr std::array<std::uint8_t, 8U> multi_engine_state_prefix{'A', 'T', 'L', 'S',
+                                                                 'M', 'E', '0', '1'};
 constexpr std::array<std::uint8_t, 8U> event_prefix{'A', 'T', 'L', 'S', 'E', 'V', '0', '1'};
+
+[[nodiscard]] constexpr std::uint64_t canonical_capacity(std::size_t value) noexcept {
+  if (value == std::numeric_limits<std::size_t>::max()) {
+    return std::numeric_limits<std::uint64_t>::max();
+  }
+  return static_cast<std::uint64_t>(value);
+}
 
 class Sha256 final {
  public:
@@ -322,6 +333,37 @@ Digest256 state_digest(const BookSnapshot& snapshot) noexcept {
   encoder.u64(static_cast<std::uint64_t>(snapshot.asks.size()));
   for (const auto& level : snapshot.asks) {
     encode_level(encoder, level);
+  }
+  return encoder.finish();
+}
+
+Digest256 state_digest(const EngineSnapshot& snapshot) noexcept {
+  CanonicalEncoder encoder;
+  encoder.bytes(multi_engine_state_prefix);
+  encoder.u16(snapshot.semantics_version);
+  encoder.u64(canonical_capacity(snapshot.engine_config.max_total_active_orders));
+  encoder.u64(static_cast<std::uint64_t>(snapshot.catalog.size()));
+  for (const auto& config : snapshot.catalog) {
+    encoder.u32(config.instrument_id.value());
+    encoder.u64(config.matching.max_order_quantity.value());
+    encoder.i64(config.matching.tick_increment.value());
+    encoder.u64(canonical_capacity(config.matching.max_active_orders));
+  }
+  encoder.u64(snapshot.last_sequence.value());
+  encoder.boolean(snapshot.sequence_exhausted);
+  encoder.u64(snapshot.active_order_count);
+  encoder.u64(static_cast<std::uint64_t>(snapshot.instruments.size()));
+  for (const auto& instrument : snapshot.instruments) {
+    encoder.u32(instrument.instrument_id.value());
+    encoder.u64(instrument.active_order_count);
+    encoder.u64(static_cast<std::uint64_t>(instrument.bids.size()));
+    for (const auto& level : instrument.bids) {
+      encode_level(encoder, level);
+    }
+    encoder.u64(static_cast<std::uint64_t>(instrument.asks.size()));
+    for (const auto& level : instrument.asks) {
+      encode_level(encoder, level);
+    }
   }
   return encoder.finish();
 }

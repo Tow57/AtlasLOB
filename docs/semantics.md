@@ -2,8 +2,8 @@
 
 This document defines AtlasLOB's implemented command vocabulary, pure validation behavior, stable
 order-node ownership, ordered resting book, direct cancellation, command admission, value-only
-event batches, read-only matching plans, atomic New/Cancel/Replace execution, and public
-single-instrument engine boundary with canonical deterministic evidence.
+event batches, read-only matching plans, atomic New/Cancel/Replace execution, and public single-
+and multi-instrument engine boundaries with canonical deterministic evidence.
 
 ## Values and enumerations
 
@@ -56,19 +56,24 @@ stateful decisions represented in the rejection vocabulary but not produced by t
 
 - Representation and numeric-conversion failures occur outside the domain and consume no engine
   sequence.
-- Command admission assigns one nonzero monotonically increasing sequence to every command that
-  enters domain processing, including commands that receive pure or stateful domain rejections.
+- A public engine reserves one nonzero monotonically increasing sequence for every command that
+  enters domain processing. Successful commands and pure or stateful domain rejections publish
+  exactly that sequence.
 - A successfully resting new or replacement order uses that command sequence as its immutable
   priority sequence.
 - Sequence zero means unassigned. The maximum 64-bit value is issued once; later allocation
   reports sticky internal exhaustion and never rolls over or becomes a client rejection.
-- Order IDs are unique while active and may be reused only after the previous order is terminal.
-- Cancel and Replace require both client and instrument identity to match.
-- A default `CommandExecutor` starts at sequence one and therefore requires an empty book. Resumed
-  books require an explicit first sequence greater than every active priority; persisted replay
-  state must additionally preserve the authoritative next sequence across terminal orders.
-- Executor attachment is rejected while a prepared residual transaction is outstanding, because
-  pending nodes are intentionally hidden from visible active counts and priority traversal.
+- Internal preparation/allocation failure abandons the reserved sequence together with every
+  staged resource, so public sequence state and visible semantic state remain unchanged.
+- In a multi-instrument engine, order IDs are unique while active across the complete engine and
+  may be reused on any configured instrument only after the previous order becomes terminal.
+- Cancel and Replace require both client and instrument identity to match the engine-wide active
+  identity directory.
+- The internal default `CommandExecutor` can still own a local sequencer for isolated component
+  tests. The public facades instead give it the coordinator-reserved sequence through a private
+  externally sequenced execution path; clients cannot select priority or command sequence.
+- At most one move-only prepared executor command may be live for a book. A second preparation or
+  executor attachment is rejected while that lease or a prepared residual is outstanding.
 
 ## Normalized events
 
@@ -138,14 +143,16 @@ Deliberate-corruption access is compiled only into a separate test core; the pro
 `atlas_core` class definitions contain no test friendship.
 
 Ordered bid and ask sides own stable `PriceLevel` objects in best-price-first maps. A checked
-non-owning active-order index provides direct ID lookup. `InstrumentBook` keeps storage, index, and
-FIFO traversal in exact one-to-one correspondence and validates identity, linkage, cardinality,
-uncrossed best prices, and component-local invariants.
+non-owning per-book active-order index provides direct ID lookup. `InstrumentBook` keeps storage,
+its index, and FIFO traversal in exact one-to-one correspondence and validates identity, linkage,
+cardinality, uncrossed best prices, and component-local invariants. `MultiInstrumentEngine` adds a
+separate engine-wide `OrderId -> {InstrumentId, ClientId}` directory that must equal the union of
+all per-book active indexes.
 
 The terminal-removal order is:
 
 1. Unlink the node from its price level.
-2. Remove its pointer from the global active-order index.
+2. Remove its pointer from the per-book active-order index.
 3. Remove the price level if it is empty.
 4. Destroy the node through owning storage.
 
@@ -161,6 +168,24 @@ pins that exact active order against direct reduction, removal, or cancellation 
 commit or rollback. Unrelated passive orders remain mutable. Preparation guards must not outlive
 their owning book.
 
+`PreparedCommandExecution` lifts the allocation-before-mutation boundary to one complete internal
+command. It owns the immutable event batch, prevalidated reductions, projected top, and optional
+prepared residual for an externally reserved sequence. Destruction without commit abandons all
+staging through RAII. Its one-shot commit applies only prevalidated, allocation-free book
+mutations.
+
+`PreparedMultiInstrumentCommand` composes that book token with the submitted command, reserved
+global sequence, complete event result, exact terminal identity removals, and any possible new
+identity. A resting addition is preallocated as an extracted hash-map node after reserving directory
+capacity. One engine-wide lease covers accepted, rejected, and internal-error preparations.
+Destruction abandons both coordinator and book staging and releases the lease.
+
+Its one-shot no-throw commit publishes the preallocated identity addition and removals, commits the
+prevalidated book mutation, publishes the reserved sequence, and checks allocation-free
+whole-engine invariants. Ordinary `execute()` uses this same prepare-then-commit path. The private
+access seam lets the later persistence target append between those operations; neither the token
+nor caller-selected sequences are installed public API.
+
 ## Error boundaries
 
 - Parse errors describe malformed adapter input and are not domain rejections.
@@ -170,7 +195,8 @@ their owning book.
 - A projected final active-order limit or projected resting-level aggregate overflow produces
   `capacity_exceeded` before mutation. Allocation failure itself is never translated to that
   rejection.
-- Allocation failure is a propagated resource failure, not ordinary command rejection.
+- Allocation failure is a propagated resource failure, not ordinary command rejection. From a
+  public engine it does not publish the reserved sequence.
 - Invariant failures indicate implementation bugs and are not converted into client rejections.
 
 ## Matching planning and execution boundary
@@ -188,7 +214,8 @@ identity/price/quantity/priority, and leaves the book unchanged.
 
 New execution then:
 
-1. Assigns a sequence and emits a singleton rejection for expected pure/state failure.
+1. Uses the coordinator-reserved sequence and emits a singleton rejection for expected pure/state
+   failure.
 2. Plans, checks the final active count, and re-walks the opposite book in exact price/FIFO order
    to bind every planned value to its current node.
 3. Projects the final top of book and prepares any GTC residual.
@@ -209,8 +236,8 @@ remaining quantity.
 
 Replace execution:
 
-1. Assigns one sequence and validates the exact old owner/instrument plus a distinct inactive new
-   ID.
+1. Uses one coordinator-reserved sequence and validates the exact old owner/instrument plus a
+   distinct inactive new ID.
 2. Synthesizes a limit GTC order retaining the old client, instrument, and side, then plans and
    binds its passive trades.
 3. Projects final capacity after removing the old order and terminal passives, and projects final
@@ -230,23 +257,46 @@ fully filled replacement leaves both old and new IDs terminal.
 All returnable execution failures occur before the first semantic write. Once batch mutation
 starts, a component failure is an impossible internal contract violation and terminates rather
 than returning a partially changed book. A test-only failpoint proves that an exception after GTC
-residual preparation consumes the sequence but rolls storage, index, staging FIFO, and visible
-top of book back exactly.
+residual preparation leaves the reserved sequence unpublished and rolls storage, the per-book
+index, provisional global identity, staging FIFO, and visible top of book back exactly.
 
-## Public matching engine
+## Public matching engines
 
 `atlaslob::MatchingEngine` is the supported single-instrument, single-writer facade. It owns the
-private book and executor behind a PImpl and accepts typed New, Cancel, and Replace values or the
-`Command` variant. Its move-only result has private mutually exclusive state created through
+shared coordinator path behind a PImpl and accepts typed New, Cancel, and Replace values or the
+`Command` variant. Its API and `ATLSST01` behavior remain unchanged.
+
+`atlaslob::MultiInstrumentEngine` is the corresponding multi-instrument, single-writer facade. Its
+constructor accepts a nonempty immutable catalog of unique nonzero instrument IDs and valid
+per-instrument policies, constructs every book eagerly in sorted ID order, and owns a separate
+maximum-total-active-orders policy. Commands route only to their submitted instrument; books never
+match with one another.
+
+The multi-engine coordinator owns the authoritative global sequence and active-ID directory.
+Stateful precedence after pure validation is:
+
+- New: configured instrument, quantity/tick policy, global duplicate ID, then projected local and
+  global capacity.
+- Cancel: configured instrument, global unknown ID, client ownership, then instrument mismatch.
+- Replace: configured instrument, quantity/tick policy, global unknown old ID, client ownership,
+  instrument mismatch, globally active new ID, then projected local and global capacity.
+
+Capacity is checked against the planned final state. Terminal passive orders and the old
+replacement ID are removed before a possible resting residual is counted, so a full initial book
+or engine can still accept a command that does not increase final active count.
+
+Both facades return the same move-only result with private mutually exclusive state created through
 validated success/failure factories: either one complete normalized `EventBatch` or a concrete
 internal `EngineError`. A normal domain rejection is a valid one-event batch, not an engine
 failure. A moved-from result is an explicit inert state and cannot appear successful.
 
-Read-only observers expose the configured instrument, active order count, emptiness, current best
-bid/ask price and aggregate, next sequence, and sticky sequence exhaustion. Node addresses,
-levels, indexes, planners, prepared transactions, and detailed internal component errors are not
-public API. Allocation failure propagates. Multi-instrument routing and durable replay remain
-future infrastructure.
+Read-only single-engine observers expose the configured instrument, active order count, emptiness,
+current best bid/ask price and aggregate, next sequence, and sticky sequence exhaustion. The
+multi-engine observers additionally expose catalog membership, total active count, per-instrument
+top/snapshot values, one complete engine snapshot, and the engine-wide state digest. Node
+addresses, levels, indexes, planners, prepared transactions, and detailed internal component
+errors are not public API. Allocation failure propagates. Durable logging, replay, and persisted
+restoration remain later Phase 4 work.
 
 ## Canonical snapshots and digests
 
@@ -269,6 +319,17 @@ payload, and optional ID/top-of-book presence. The complete byte layout is froze
 These values support deterministic comparison and replay evidence; they are not authentication,
 a persistence format, or a performance protocol.
 
+`MultiInstrumentEngine::snapshot()` records semantic version 6, the canonical catalog and engine
+policy, one global last-sequence/exhaustion pair, total active count, and every configured
+instrument in sorted order, including empty books. Each instrument retains best-price/FIFO level
+ordering but does not duplicate sequence state.
+
+The multi-engine state domain begins with ASCII `ATLSME01`. It then encodes semantic version,
+engine capacity, the sorted catalog and per-instrument policies, global sequence state, total
+active count, and every sorted instrument snapshot with the same level/order scalar layout frozen
+by ADR 0009. The exact layout is recorded in ADR 0012. This separate prefix preserves
+`ATLSST01`, `ATLSEV01`, and semantic version 6 byte-for-byte.
+
 ## Deterministic engine fixture
 
 `atlas_cli engine-fixture <instrument_id> <path>` executes the canonical text command grammar
@@ -288,3 +349,14 @@ command streams compare exact batches, snapshots, observers, and digests after e
 This is Phase 2 regression evidence, not a substitute for the separately packaged Python oracle,
 shrinking, long campaigns, and fuzzing that provide the completed Phase 3 independent-evidence
 layer.
+
+Phase 4 adds a standard-library-only Python `ReferenceRouter` with independent global sequencing,
+identity, routing, and capacity logic. Generator V2 and its workload/manifest schemas remain
+separate from frozen Generator V1. Same-stream evidence compares exact global sequences and
+`ATLSME01`; the independent-instrument reinterleaving property normalizes absolute global
+sequence/priority values while preserving per-instrument command order, outcomes, economic state,
+and FIFO. The non-installed `atlas_diff_multi_native` adapter parses a complete strict
+`ATLAS_DIFF_V2` catalog/command stream before submission and exposes exact or compact
+`atlas_diff_v2` evidence without changing the V1 process boundary. `atlaslob.multi_native`
+strictly binds and decodes that transcript and compares exact native results with the independent
+reference capture.

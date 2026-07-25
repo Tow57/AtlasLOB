@@ -4,10 +4,17 @@ Phase 3 compares the public C++ matching engine with an independent Python imple
 native side of that comparison is the test-only `atlas_diff_native` executable. It is available
 only when `BUILD_TESTING=ON`, is not installed, and is not a production protocol.
 
+Phase 4 PR1 adds a separate multi-instrument reference and generation family without changing the
+V1 adapter, generator, campaign, failure, or retention contracts documented below. That local PR1
+implementation has passed its available local C++ and Python validation; hosted validation and
+remote integration remain pending.
+
 The design boundary and independence rules are recorded in
 [ADR 0010](decisions/0010-independent-python-oracle-boundary.md). Deterministic workload,
 campaign, retention, and reduction policy is recorded in
-[ADR 0011](decisions/0011-deterministic-differential-campaigns.md).
+[ADR 0011](decisions/0011-deterministic-differential-campaigns.md). Multi-instrument routing,
+normalization, and compatibility are recorded in
+[ADR 0012](decisions/0012-multi-instrument-routing-and-global-sequencing.md).
 
 ## Input: `ATLAS_DIFF_V1`
 
@@ -138,6 +145,82 @@ and snapshot values are revalidated before they may be used as correctness evide
 counts must sum to the active count, empty and nonempty side summaries must agree with their top
 observers, total quantities must fit the configured order-count/quantity envelope, and checkpoint
 summaries are recomputed from every level and order in the canonical snapshot.
+
+## Phase 4 multi-instrument evidence V2
+
+The local router slice adds a standard-library-only `ReferenceRouter`. It owns one independent
+`ReferenceEngine` per sorted catalog entry and separately implements the global sequence,
+active-order directory, routing precedence, and projected engine-wide capacity. It does not call
+the C++ router or private transition helpers.
+
+V2 is a separate family rather than an in-place change to V1:
+
+| Surface | Version or schema |
+| --- | --- |
+| Generator | `MULTI_GENERATOR_VERSION = 2` |
+| Resolved specification | `atlas_workload_spec_v2` |
+| Canonical stream header | `atlas_workload_stream_v2` |
+| Canonical command record | `atlas_workload_command_v2` |
+| Workload manifest | `atlas_workload_manifest_v2` |
+| Reference capture | `atlas_differential_capture_v2` |
+| Multi-engine state digest | `ATLSME01` |
+
+The resolved V2 specification contains one or more uniquely routed per-instrument V1 workload
+specifications plus one maximum-total-active-orders policy. The canonical stream requires sorted
+catalog entries, records every command's instrument, and binds the complete stream and statistics
+with SHA-256. Numeric values retain the same lossless canonical decimal conventions used by V1.
+
+Same-stream comparison requires exact classification, rejection reason, global sequence, normalized
+events, complete multi-engine snapshot, and `ATLSME01` state digest. The digest includes semantic
+version 6, engine capacity, sorted catalog/policies, global sequence state, total active count, and
+every sorted instrument's best-price/FIFO state. Its independent C++ and Python encoders use the
+layout frozen by ADR 0012.
+
+The independent-instrument reinterleaving property is intentionally narrower. It requires only
+configured instruments, disjoint per-instrument order IDs, and nonbinding engine-wide capacity,
+then preserves command order within each instrument while changing cross-instrument interleaving.
+Absolute global command and priority sequences are normalized because they are expected to change.
+Per-instrument classifications, event structure, economic state, and FIFO order must remain equal.
+
+The non-installed `atlas_diff_multi_native` target provides the strict native V2 process boundary.
+Its LF-delimited input begins with:
+
+```text
+ATLAS_DIFF_V2 <max_total_active_u64> <catalog_count_u64> <command_count_u64> <checkpoint_interval_u64>
+I <instrument_u32> <max_quantity_u64> <tick_increment_i64> <max_active_u64>
+```
+
+Exactly `catalog_count` instrument records and `command_count` numeric New/Cancel/Replace records
+follow. Command records use the V1 numeric field layout. The adapter requires canonical single
+spaces and LF endings, rejects duplicate instrument IDs and trailing input, and parses the complete
+catalog and command stream before constructing or submitting to the engine. A malformed adapter
+stream therefore consumes no sequence. Catalog order on input is not semantic; the accepted
+catalog and all snapshots are emitted in sorted instrument-ID order.
+
+Output is `atlas_diff_v2` JSON Lines:
+
+- `config` binds mode, semantic version, engine capacity, sorted catalog, command count, and
+  checkpoint interval;
+- each `result` binds the source line, command type, outcome/error, authoritative global sequence,
+  rejection reason, event digest, post-state digest, exact events or compact `null`, and an
+  optional complete checkpoint snapshot;
+- `final` includes declared/processed and outcome counts, final `ATLSME01`, and the complete engine
+  snapshot; and
+- `error` reports the physical line and one closed-vocabulary adapter code.
+
+Exact and compact mode spelling and exit meanings remain aligned with V1: zero for a completely
+processed stream, two for adapter input failure, and three for engine/resource/output failure.
+The Python `atlaslob.multi_native` module encodes the requested input, invokes the selected V2
+target, and strictly decodes the closed record schema. It binds output to the requested catalog,
+mode, commands, checkpoint cadence, result positions, and process exit; revalidates event/state
+digests and snapshot structure; and compares exact records with `MultiDifferentialCapture`.
+
+The V2 target has direct C++ integration coverage and the strict Python process boundary has focused
+parity and malformed-transcript tests. The local gate includes a deterministic generated
+cross-language V2 campaign and exact/compact named-fixture parity.
+
+Generator V1, `ATLAS_DIFF_V1`, Phase 3 campaign sizes/seeds, failure signatures, and retained
+corpora remain unchanged.
 
 ## Runner executable selection
 
@@ -322,8 +405,9 @@ prior-regression inputs.
 
 Some useful properties depend on infrastructure outside Phase 3:
 
-- snapshot/restore continuation and independent multi-instrument reordering are deferred to
-  Phase 4;
+- snapshot/restore continuation remains deferred to a later Phase 4 persistence slice;
+- independent multi-instrument reordering is implemented locally in the Phase 4 router slice and
+  remains subject to that PR's final validation;
 - protocol encode/decode identity and incremental decoder fuzzing are deferred to Phase 6; and
 - corrupt command-log and snapshot-deserializer fuzzing is deferred until those persistence
   formats exist.
@@ -345,8 +429,12 @@ nightly case with 1,000,000 compact commands. GCC Debug and Release CTest each p
 `BUILD_TESTING=OFF` production build, pinned clang-format, Ruff, strict mypy, and wheel
 build/install smoke gates also passed locally. Hosted CI subsequently passed GCC, Clang, Release
 GCC/Clang, ASan/UBSan, Python 3.11-3.14, the fixed PR corpus and marked proofs, wheel smoke,
-formatting, and Linux link-safety checks. Together with the retained local evidence, this closes
-the Phase 3 correctness-evidence gate. Phase 4 has not started. See
+formatting, and Linux link-safety checks. Published PR #5 head `29049756` therefore closes the
+Phase 3 correctness-evidence gate. It remains open rather than remotely merged because GitHub
+authentication is unavailable in this session. The local Phase 4 router slice described above
+passes its available local Debug/Release, formatting, Python, stress, and cross-language gates;
+hosted validation and remote integration remain pending. Later Phase 4 persistence and binding work
+has not started. See
 [the Phase 3 evidence index](evidence/phase3/README.md) for the complete record.
 
 Command counts and elapsed campaign time are correctness-test metadata. They make no latency,

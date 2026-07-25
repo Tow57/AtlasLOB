@@ -1,12 +1,12 @@
 #include "command_executor.hpp"
 
 #include <algorithm>
-#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <exception>
 #include <limits>
 #include <optional>
+#include <span>
 #include <stdexcept>
 #include <utility>
 #include <vector>
@@ -368,6 +368,134 @@ template <domain::Side RestingSide>
 
 }  // namespace
 
+PreparedCommandExecution::PreparedCommandExecution(CommandExecutionResult result) noexcept
+    : result_{std::move(result)} {}
+
+PreparedCommandExecution::PreparedCommandExecution(
+    InstrumentBook& book, CommandExecutionResult result, MutationKind mutation,
+    std::vector<PrevalidatedBookReduction> passive_reductions,
+    std::optional<PrevalidatedBookReduction> primary_reduction,
+    std::optional<InstrumentBook::PreparedRest> prepared_rest,
+    TopOfBookSnapshot projected_top) noexcept
+    : book_{&book},
+      result_{std::move(result)},
+      passive_reductions_{std::move(passive_reductions)},
+      primary_reduction_{std::move(primary_reduction)},
+      prepared_rest_{std::move(prepared_rest)},
+      projected_top_{std::move(projected_top)},
+      mutation_{mutation} {}
+
+PreparedCommandExecution::PreparedCommandExecution(PreparedCommandExecution&& other) noexcept
+    : lease_owner_{std::exchange(other.lease_owner_, nullptr)},
+      book_{std::exchange(other.book_, nullptr)},
+      result_{std::move(other.result_)},
+      passive_reductions_{std::move(other.passive_reductions_)},
+      primary_reduction_{std::move(other.primary_reduction_)},
+      prepared_rest_{std::move(other.prepared_rest_)},
+      projected_top_{std::move(other.projected_top_)},
+      mutation_{std::exchange(other.mutation_, MutationKind::none)},
+      consumed_{std::exchange(other.consumed_, true)} {}
+
+PreparedCommandExecution& PreparedCommandExecution::operator=(
+    PreparedCommandExecution&& other) noexcept {
+  if (this != &other) {
+    abandon();
+    lease_owner_ = std::exchange(other.lease_owner_, nullptr);
+    book_ = std::exchange(other.book_, nullptr);
+    result_ = std::move(other.result_);
+    passive_reductions_ = std::move(other.passive_reductions_);
+    primary_reduction_ = std::move(other.primary_reduction_);
+    prepared_rest_ = std::move(other.prepared_rest_);
+    projected_top_ = std::move(other.projected_top_);
+    mutation_ = std::exchange(other.mutation_, MutationKind::none);
+    consumed_ = std::exchange(other.consumed_, true);
+  }
+  return *this;
+}
+
+PreparedCommandExecution::~PreparedCommandExecution() noexcept { abandon(); }
+
+bool PreparedCommandExecution::has_value() const noexcept {
+  return !consumed_ && result_.has_value();
+}
+
+const domain::EventBatch* PreparedCommandExecution::batch() const noexcept {
+  return has_value() ? &*result_.batch : nullptr;
+}
+
+bool PreparedCommandExecution::rejected() const noexcept {
+  const auto* const prepared_batch = batch();
+  return prepared_batch != nullptr &&
+         domain::event_type((*prepared_batch)[0]) == domain::EventType::rejected;
+}
+
+bool PreparedCommandExecution::committed() const noexcept { return has_value() && !rejected(); }
+
+void PreparedCommandExecution::abandon() noexcept {
+  prepared_rest_.reset();
+  book_ = nullptr;
+  mutation_ = MutationKind::none;
+  consumed_ = true;
+  release_lease();
+}
+
+void PreparedCommandExecution::release_lease() noexcept {
+  if (lease_owner_ == nullptr) {
+    return;
+  }
+  if (!lease_owner_->preparation_active_) {
+    std::terminate();
+  }
+  lease_owner_->preparation_active_ = false;
+  lease_owner_ = nullptr;
+}
+
+CommandExecutionResult PreparedCommandExecution::commit() noexcept {
+  if (consumed_) {
+    auto consumed = fail(CommandExecutionError::book_mutation_failure);
+    consumed.book_mutation_error = PrevalidatedBatchError::preparation_mismatch;
+    return consumed;
+  }
+
+  if (mutation_ == MutationKind::none) {
+    consumed_ = true;
+    release_lease();
+    return std::move(result_);
+  }
+
+  PrevalidatedBatchStatus mutation_status{
+      .error = PrevalidatedBatchError::preparation_mismatch,
+  };
+  if (book_ != nullptr && result_.has_value()) {
+    auto* const prepared_rest = prepared_rest_.has_value() ? &*prepared_rest_ : nullptr;
+    if (mutation_ == MutationKind::replace && primary_reduction_.has_value()) {
+      mutation_status = book_->apply_prevalidated_replace_batch(*primary_reduction_,
+                                                                passive_reductions_, prepared_rest);
+    } else if (mutation_ == MutationKind::batch) {
+      const std::span<const PrevalidatedBookReduction> reductions =
+          primary_reduction_.has_value()
+              ? std::span<const PrevalidatedBookReduction>{&*primary_reduction_, 1U}
+              : std::span<const PrevalidatedBookReduction>{passive_reductions_};
+      mutation_status = book_->apply_prevalidated_batch(reductions, prepared_rest);
+    }
+  }
+
+  if (!mutation_status) {
+    result_.batch.reset();
+    result_.error = CommandExecutionError::book_mutation_failure;
+    result_.book_mutation_error = mutation_status.error;
+  } else if (snapshot_top_of_book(*book_) != projected_top_) {
+    std::terminate();
+  }
+
+  prepared_rest_.reset();
+  book_ = nullptr;
+  mutation_ = MutationKind::none;
+  consumed_ = true;
+  release_lease();
+  return std::move(result_);
+}
+
 CommandExecutor::CommandExecutor(InstrumentBook& book, ExecutionPolicy policy)
     : book_{book}, admission_{book, policy} {
   if (!book_.validate_invariants()) {
@@ -396,15 +524,59 @@ CommandExecutor::CommandExecutor(InstrumentBook& book, ExecutionPolicy policy,
   }
 }
 
+CommandExecutor::~CommandExecutor() noexcept {
+  if (preparation_active_) {
+    std::terminate();
+  }
+}
+
 CommandExecutionResult CommandExecutor::execute(const domain::NewOrder& order) {
-  const auto admission = admission_.admit(order);
+  if (preparation_active_) {
+    return fail(CommandExecutionError::preparation_in_progress);
+  }
+  preparation_active_ = true;
+  try {
+    const auto admission = admission_.admit(order);
+    auto prepared = prepare_admitted(order, admission);
+    prepared.lease_owner_ = this;
+    return prepared.commit();
+  } catch (...) {
+    preparation_active_ = false;
+    throw;
+  }
+}
+
+CommandExecutionResult CommandExecutor::execute_at(const domain::NewOrder& order,
+                                                   domain::Sequence sequence) {
+  return prepare_at(order, sequence).commit();
+}
+
+PreparedCommandExecution CommandExecutor::prepare_at(const domain::NewOrder& order,
+                                                     domain::Sequence sequence) {
+  if (preparation_active_) {
+    return PreparedCommandExecution{fail(CommandExecutionError::preparation_in_progress)};
+  }
+  preparation_active_ = true;
+  try {
+    const auto admission = admission_.admit_at(order, sequence);
+    auto prepared = prepare_admitted(order, admission);
+    prepared.lease_owner_ = this;
+    return prepared;
+  } catch (...) {
+    preparation_active_ = false;
+    throw;
+  }
+}
+
+PreparedCommandExecution CommandExecutor::prepare_admitted(
+    const domain::NewOrder& order, const CommandAdmissionResult& admission) {
   if (!admission.processed()) {
-    return admission_failure(admission);
+    return PreparedCommandExecution{admission_failure(admission)};
   }
   if (admission.rejected()) {
-    return make_rejection(admission.command_sequence, order.instrument_id,
-                          domain::CommandType::new_order, admission.reject_reason,
-                          admission.relevant_order_id);
+    return PreparedCommandExecution{make_rejection(
+        admission.command_sequence, order.instrument_id, domain::CommandType::new_order,
+        admission.reject_reason, admission.relevant_order_id)};
   }
 
   const auto before = snapshot_top_of_book(book_);
@@ -412,7 +584,7 @@ CommandExecutionResult CommandExecutor::execute(const domain::NewOrder& order) {
   if (!planned) {
     auto result = fail(CommandExecutionError::match_plan_failure);
     result.match_plan_error = planned.error;
-    return result;
+    return PreparedCommandExecution{std::move(result)};
   }
 
   const auto active_projection =
@@ -420,32 +592,32 @@ CommandExecutionResult CommandExecutor::execute(const domain::NewOrder& order) {
   if (!active_projection) {
     auto result = fail(CommandExecutionError::active_order_projection_failure);
     result.active_order_projection_error = active_projection.error;
-    return result;
+    return PreparedCommandExecution{std::move(result)};
   }
   if (!active_projection.within_limit(admission_.policy().max_active_orders)) {
-    return make_rejection(admission.command_sequence, order.instrument_id,
-                          domain::CommandType::new_order, domain::RejectReason::capacity_exceeded,
-                          order.order_id);
+    return PreparedCommandExecution{make_rejection(
+        admission.command_sequence, order.instrument_id, domain::CommandType::new_order,
+        domain::RejectReason::capacity_exceeded, order.order_id)};
   }
 
   auto bound = bind_match_plan(order, planned.plan, book_);
   if (!bound.has_value()) {
     auto result = fail(CommandExecutionError::passive_binding_failure);
     result.passive_binding_error = bound.error;
-    return result;
+    return PreparedCommandExecution{std::move(result)};
   }
 
   const auto residual = projected_residual(order, planned.plan);
   const auto top_projection = project_new_top_of_book(book_, order.side, planned.plan, residual);
   if (!top_projection) {
     if (top_projection.error == ExecutionProjectionError::aggregate_overflow) {
-      return make_rejection(admission.command_sequence, order.instrument_id,
-                            domain::CommandType::new_order, domain::RejectReason::capacity_exceeded,
-                            order.order_id);
+      return PreparedCommandExecution{make_rejection(
+          admission.command_sequence, order.instrument_id, domain::CommandType::new_order,
+          domain::RejectReason::capacity_exceeded, order.order_id)};
     }
     auto result = fail(CommandExecutionError::top_of_book_projection_failure);
     result.top_of_book_projection_error = top_projection.error;
-    return result;
+    return PreparedCommandExecution{std::move(result)};
   }
 
   std::optional<InstrumentBook::PreparedRest> prepared_rest;
@@ -461,13 +633,13 @@ CommandExecutionResult CommandExecutor::execute(const domain::NewOrder& order) {
     });
     if (!prepared) {
       if (is_representational_capacity(prepared.status())) {
-        return make_rejection(admission.command_sequence, order.instrument_id,
-                              domain::CommandType::new_order,
-                              domain::RejectReason::capacity_exceeded, order.order_id);
+        return PreparedCommandExecution{make_rejection(
+            admission.command_sequence, order.instrument_id, domain::CommandType::new_order,
+            domain::RejectReason::capacity_exceeded, order.order_id)};
       }
       auto result = fail(CommandExecutionError::residual_preparation_failure);
       result.residual_preparation_status = prepared.status();
-      return result;
+      return PreparedCommandExecution{std::move(result)};
     }
     prepared_rest.emplace(std::move(prepared));
   }
@@ -481,7 +653,7 @@ CommandExecutionResult CommandExecutor::execute(const domain::NewOrder& order) {
   const bool book_changed = before != top_projection.snapshot;
   std::size_t event_count{};
   if (!checked_new_event_count(planned.plan.trades.size(), book_changed, event_count)) {
-    return fail(CommandExecutionError::event_count_overflow);
+    return PreparedCommandExecution{fail(CommandExecutionError::event_count_overflow)};
   }
 
   EventBatchBuilder builder{admission.command_sequence, order.instrument_id, event_count};
@@ -490,36 +662,71 @@ CommandExecutionResult CommandExecutor::execute(const domain::NewOrder& order) {
   if (append_error != EventBatchBuilderError::none) {
     auto result = fail(CommandExecutionError::event_batch_failure);
     result.event_batch_error = append_error;
-    return result;
+    return PreparedCommandExecution{std::move(result)};
   }
   auto result = finish_events(builder);
   if (!result) {
-    return result;
+    return PreparedCommandExecution{std::move(result)};
   }
 
-  const auto mutation_status = book_.apply_prevalidated_batch(
-      bound.reductions, prepared_rest.has_value() ? &*prepared_rest : nullptr);
-  if (!mutation_status) {
-    result.batch.reset();
-    result.error = CommandExecutionError::book_mutation_failure;
-    result.book_mutation_error = mutation_status.error;
-    return result;
-  }
-  if (snapshot_top_of_book(book_) != top_projection.snapshot) {
-    std::terminate();
-  }
-  return result;
+  return PreparedCommandExecution{
+      book_,
+      std::move(result),
+      PreparedCommandExecution::MutationKind::batch,
+      std::move(bound.reductions),
+      std::nullopt,
+      std::move(prepared_rest),
+      top_projection.snapshot,
+  };
 }
 
 CommandExecutionResult CommandExecutor::execute(const domain::CancelOrder& order) {
-  const auto admission = admission_.admit(order);
+  if (preparation_active_) {
+    return fail(CommandExecutionError::preparation_in_progress);
+  }
+  preparation_active_ = true;
+  try {
+    const auto admission = admission_.admit(order);
+    auto prepared = prepare_admitted(order, admission);
+    prepared.lease_owner_ = this;
+    return prepared.commit();
+  } catch (...) {
+    preparation_active_ = false;
+    throw;
+  }
+}
+
+CommandExecutionResult CommandExecutor::execute_at(const domain::CancelOrder& order,
+                                                   domain::Sequence sequence) {
+  return prepare_at(order, sequence).commit();
+}
+
+PreparedCommandExecution CommandExecutor::prepare_at(const domain::CancelOrder& order,
+                                                     domain::Sequence sequence) {
+  if (preparation_active_) {
+    return PreparedCommandExecution{fail(CommandExecutionError::preparation_in_progress)};
+  }
+  preparation_active_ = true;
+  try {
+    const auto admission = admission_.admit_at(order, sequence);
+    auto prepared = prepare_admitted(order, admission);
+    prepared.lease_owner_ = this;
+    return prepared;
+  } catch (...) {
+    preparation_active_ = false;
+    throw;
+  }
+}
+
+PreparedCommandExecution CommandExecutor::prepare_admitted(
+    const domain::CancelOrder& order, const CommandAdmissionResult& admission) {
   if (!admission.processed()) {
-    return admission_failure(admission);
+    return PreparedCommandExecution{admission_failure(admission)};
   }
   if (admission.rejected()) {
-    return make_rejection(admission.command_sequence, order.instrument_id,
-                          domain::CommandType::cancel, admission.reject_reason,
-                          admission.relevant_order_id);
+    return PreparedCommandExecution{
+        make_rejection(admission.command_sequence, order.instrument_id, domain::CommandType::cancel,
+                       admission.reject_reason, admission.relevant_order_id)};
   }
 
   const auto before = snapshot_top_of_book(book_);
@@ -528,7 +735,7 @@ CommandExecutionResult CommandExecutor::execute(const domain::CancelOrder& order
       node->instrument_id() != order.instrument_id) {
     auto result = fail(CommandExecutionError::passive_binding_failure);
     result.passive_binding_error = PassiveBindingError::book_mismatch;
-    return result;
+    return PreparedCommandExecution{std::move(result)};
   }
 
   const auto target = make_cancel_projection_target(*node);
@@ -536,22 +743,20 @@ CommandExecutionResult CommandExecutor::execute(const domain::CancelOrder& order
   if (!projected) {
     auto result = fail(CommandExecutionError::top_of_book_projection_failure);
     result.top_of_book_projection_error = projected.error;
-    return result;
+    return PreparedCommandExecution{std::move(result)};
   }
 
   const auto canceled_quantity = node->remaining_quantity();
-  const std::array reductions{
-      PrevalidatedBookReduction{
-          .node = node,
-          .order_id = node->order_id(),
-          .client_id = node->client_id(),
-          .side = node->side(),
-          .price = node->price(),
-          .remaining_before = canceled_quantity,
-          .reduction = canceled_quantity,
-          .remaining_after = {},
-          .priority_sequence = node->priority_sequence(),
-      },
+  const PrevalidatedBookReduction reduction{
+      .node = node,
+      .order_id = node->order_id(),
+      .client_id = node->client_id(),
+      .side = node->side(),
+      .price = node->price(),
+      .remaining_before = canceled_quantity,
+      .reduction = canceled_quantity,
+      .remaining_after = {},
+      .priority_sequence = node->priority_sequence(),
   };
 
   const bool book_changed = before != projected.snapshot;
@@ -582,35 +787,71 @@ CommandExecutionResult CommandExecutor::execute(const domain::CancelOrder& order
   if (append_error != EventBatchBuilderError::none) {
     auto result = fail(CommandExecutionError::event_batch_failure);
     result.event_batch_error = append_error;
-    return result;
+    return PreparedCommandExecution{std::move(result)};
   }
   auto result = finish_events(builder);
   if (!result) {
-    return result;
+    return PreparedCommandExecution{std::move(result)};
   }
 
-  const auto mutation_status = book_.apply_prevalidated_batch(reductions);
-  if (!mutation_status) {
-    result.batch.reset();
-    result.error = CommandExecutionError::book_mutation_failure;
-    result.book_mutation_error = mutation_status.error;
-    return result;
-  }
-  if (snapshot_top_of_book(book_) != projected.snapshot) {
-    std::terminate();
-  }
-  return result;
+  return PreparedCommandExecution{
+      book_,
+      std::move(result),
+      PreparedCommandExecution::MutationKind::batch,
+      {},
+      reduction,
+      std::nullopt,
+      projected.snapshot,
+  };
 }
 
 CommandExecutionResult CommandExecutor::execute(const domain::ReplaceOrder& order) {
-  const auto admission = admission_.admit(order);
+  if (preparation_active_) {
+    return fail(CommandExecutionError::preparation_in_progress);
+  }
+  preparation_active_ = true;
+  try {
+    const auto admission = admission_.admit(order);
+    auto prepared = prepare_admitted(order, admission);
+    prepared.lease_owner_ = this;
+    return prepared.commit();
+  } catch (...) {
+    preparation_active_ = false;
+    throw;
+  }
+}
+
+CommandExecutionResult CommandExecutor::execute_at(const domain::ReplaceOrder& order,
+                                                   domain::Sequence sequence) {
+  return prepare_at(order, sequence).commit();
+}
+
+PreparedCommandExecution CommandExecutor::prepare_at(const domain::ReplaceOrder& order,
+                                                     domain::Sequence sequence) {
+  if (preparation_active_) {
+    return PreparedCommandExecution{fail(CommandExecutionError::preparation_in_progress)};
+  }
+  preparation_active_ = true;
+  try {
+    const auto admission = admission_.admit_at(order, sequence);
+    auto prepared = prepare_admitted(order, admission);
+    prepared.lease_owner_ = this;
+    return prepared;
+  } catch (...) {
+    preparation_active_ = false;
+    throw;
+  }
+}
+
+PreparedCommandExecution CommandExecutor::prepare_admitted(
+    const domain::ReplaceOrder& order, const CommandAdmissionResult& admission) {
   if (!admission.processed()) {
-    return admission_failure(admission);
+    return PreparedCommandExecution{admission_failure(admission)};
   }
   if (admission.rejected()) {
-    return make_rejection(admission.command_sequence, order.instrument_id,
-                          domain::CommandType::replace, admission.reject_reason,
-                          admission.relevant_order_id);
+    return PreparedCommandExecution{make_rejection(
+        admission.command_sequence, order.instrument_id, domain::CommandType::replace,
+        admission.reject_reason, admission.relevant_order_id)};
   }
 
   const auto before = snapshot_top_of_book(book_);
@@ -620,7 +861,7 @@ CommandExecutionResult CommandExecutor::execute(const domain::ReplaceOrder& orde
       book_.find(order.new_order_id) != nullptr) {
     auto result = fail(CommandExecutionError::passive_binding_failure);
     result.passive_binding_error = PassiveBindingError::book_mismatch;
-    return result;
+    return PreparedCommandExecution{std::move(result)};
   }
 
   const domain::NewOrder replacement{
@@ -651,7 +892,7 @@ CommandExecutionResult CommandExecutor::execute(const domain::ReplaceOrder& orde
   if (!planned) {
     auto result = fail(CommandExecutionError::match_plan_failure);
     result.match_plan_error = planned.error;
-    return result;
+    return PreparedCommandExecution{std::move(result)};
   }
 
   const auto active_projection =
@@ -659,19 +900,19 @@ CommandExecutionResult CommandExecutor::execute(const domain::ReplaceOrder& orde
   if (!active_projection) {
     auto result = fail(CommandExecutionError::active_order_projection_failure);
     result.active_order_projection_error = active_projection.error;
-    return result;
+    return PreparedCommandExecution{std::move(result)};
   }
   if (!active_projection.within_limit(admission_.policy().max_active_orders)) {
-    return make_rejection(admission.command_sequence, order.instrument_id,
-                          domain::CommandType::replace, domain::RejectReason::capacity_exceeded,
-                          order.new_order_id);
+    return PreparedCommandExecution{make_rejection(
+        admission.command_sequence, order.instrument_id, domain::CommandType::replace,
+        domain::RejectReason::capacity_exceeded, order.new_order_id)};
   }
 
   auto bound = bind_match_plan(replacement, planned.plan, book_);
   if (!bound.has_value()) {
     auto result = fail(CommandExecutionError::passive_binding_failure);
     result.passive_binding_error = bound.error;
-    return result;
+    return PreparedCommandExecution{std::move(result)};
   }
 
   const auto residual = projected_residual(replacement, planned.plan);
@@ -679,13 +920,13 @@ CommandExecutionResult CommandExecutor::execute(const domain::ReplaceOrder& orde
       project_replace_top_of_book(book_, old_target, replacement, planned.plan, residual);
   if (!top_projection) {
     if (top_projection.error == ExecutionProjectionError::aggregate_overflow) {
-      return make_rejection(admission.command_sequence, order.instrument_id,
-                            domain::CommandType::replace, domain::RejectReason::capacity_exceeded,
-                            order.new_order_id);
+      return PreparedCommandExecution{make_rejection(
+          admission.command_sequence, order.instrument_id, domain::CommandType::replace,
+          domain::RejectReason::capacity_exceeded, order.new_order_id)};
     }
     auto result = fail(CommandExecutionError::top_of_book_projection_failure);
     result.top_of_book_projection_error = top_projection.error;
-    return result;
+    return PreparedCommandExecution{std::move(result)};
   }
 
   std::optional<InstrumentBook::PreparedRest> prepared_rest;
@@ -703,13 +944,13 @@ CommandExecutionResult CommandExecutor::execute(const domain::ReplaceOrder& orde
         *old_node);
     if (!prepared) {
       if (is_representational_capacity(prepared.status())) {
-        return make_rejection(admission.command_sequence, order.instrument_id,
-                              domain::CommandType::replace, domain::RejectReason::capacity_exceeded,
-                              order.new_order_id);
+        return PreparedCommandExecution{make_rejection(
+            admission.command_sequence, order.instrument_id, domain::CommandType::replace,
+            domain::RejectReason::capacity_exceeded, order.new_order_id)};
       }
       auto result = fail(CommandExecutionError::residual_preparation_failure);
       result.residual_preparation_status = prepared.status();
-      return result;
+      return PreparedCommandExecution{std::move(result)};
     }
     prepared_rest.emplace(std::move(prepared));
   }
@@ -723,7 +964,7 @@ CommandExecutionResult CommandExecutor::execute(const domain::ReplaceOrder& orde
   const bool book_changed = before != top_projection.snapshot;
   std::size_t event_count{};
   if (!checked_replace_event_count(planned.plan.trades.size(), book_changed, event_count)) {
-    return fail(CommandExecutionError::event_count_overflow);
+    return PreparedCommandExecution{fail(CommandExecutionError::event_count_overflow)};
   }
 
   EventBatchBuilder builder{admission.command_sequence, order.instrument_id, event_count};
@@ -733,25 +974,22 @@ CommandExecutionResult CommandExecutor::execute(const domain::ReplaceOrder& orde
   if (append_error != EventBatchBuilderError::none) {
     auto result = fail(CommandExecutionError::event_batch_failure);
     result.event_batch_error = append_error;
-    return result;
+    return PreparedCommandExecution{std::move(result)};
   }
   auto result = finish_events(builder);
   if (!result) {
-    return result;
+    return PreparedCommandExecution{std::move(result)};
   }
 
-  const auto mutation_status = book_.apply_prevalidated_replace_batch(
-      old_reduction, bound.reductions, prepared_rest.has_value() ? &*prepared_rest : nullptr);
-  if (!mutation_status) {
-    result.batch.reset();
-    result.error = CommandExecutionError::book_mutation_failure;
-    result.book_mutation_error = mutation_status.error;
-    return result;
-  }
-  if (snapshot_top_of_book(book_) != top_projection.snapshot) {
-    std::terminate();
-  }
-  return result;
+  return PreparedCommandExecution{
+      book_,
+      std::move(result),
+      PreparedCommandExecution::MutationKind::replace,
+      std::move(bound.reductions),
+      old_reduction,
+      std::move(prepared_rest),
+      top_projection.snapshot,
+  };
 }
 
 }  // namespace atlaslob::core

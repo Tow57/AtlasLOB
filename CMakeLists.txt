@@ -66,6 +66,8 @@ set(
   src/core/instrument_book.cpp
   src/core/instrument_book.hpp
   src/core/matching_engine.cpp
+  src/core/multi_instrument_engine.cpp
+  src/core/multi_instrument_engine_access.hpp
   src/core/match_plan.cpp
   src/core/match_plan.hpp
   src/core/order_node.hpp
@@ -90,6 +92,7 @@ function(atlas_configure_core target_name)
         include/atlaslob/book_snapshot.hpp
         include/atlaslob/digest.hpp
         include/atlaslob/matching_engine.hpp
+        include/atlaslob/multi_instrument_engine.hpp
   )
   target_link_libraries(${target_name} PUBLIC AtlasLOB::domain)
   target_include_directories(${target_name} PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src/core")
@@ -148,6 +151,23 @@ if(BUILD_TESTING)
   atlas_enable_sanitizers(atlas_diff_native)
 
   add_executable(
+    atlas_diff_multi_native
+    tests/differential/multi_native_driver.cpp
+  )
+  target_link_libraries(atlas_diff_multi_native PRIVATE AtlasLOB::core)
+  target_include_directories(
+    atlas_diff_multi_native
+    PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/tests/differential"
+  )
+  target_compile_features(atlas_diff_multi_native PRIVATE cxx_std_20)
+  set_target_properties(
+    atlas_diff_multi_native
+    PROPERTIES CXX_EXTENSIONS OFF
+  )
+  atlas_set_project_warnings(atlas_diff_multi_native)
+  atlas_enable_sanitizers(atlas_diff_multi_native)
+
+  add_executable(
     atlas_native_diff_tests
     tests/differential/native_driver.cpp
     tests/integration/native_diff_driver_test.cpp
@@ -165,6 +185,37 @@ if(BUILD_TESTING)
 
   gtest_discover_tests(
     atlas_native_diff_tests
+    TEST_PREFIX "differential."
+    PROPERTIES LABELS "integration\\;differential"
+  )
+
+  add_executable(
+    atlas_multi_native_diff_tests
+    tests/differential/multi_native_driver.cpp
+    tests/integration/multi_native_diff_driver_test.cpp
+  )
+  target_link_libraries(
+    atlas_multi_native_diff_tests
+    PRIVATE AtlasLOB::core GTest::gtest_main
+  )
+  target_include_directories(
+    atlas_multi_native_diff_tests
+    PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/tests/differential"
+  )
+  target_compile_definitions(
+    atlas_multi_native_diff_tests
+    PRIVATE ATLAS_DIFF_MULTI_NATIVE_NO_MAIN=1
+  )
+  target_compile_features(atlas_multi_native_diff_tests PRIVATE cxx_std_20)
+  set_target_properties(
+    atlas_multi_native_diff_tests
+    PROPERTIES CXX_EXTENSIONS OFF
+  )
+  atlas_set_project_warnings(atlas_multi_native_diff_tests)
+  atlas_enable_sanitizers(atlas_multi_native_diff_tests)
+
+  gtest_discover_tests(
+    atlas_multi_native_diff_tests
     TEST_PREFIX "differential."
     PROPERTIES LABELS "integration\\;differential"
   )

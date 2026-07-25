@@ -237,7 +237,35 @@ class ReferenceEngine:
         sequence = self._issue_sequence()
         if sequence is None:
             return ReferenceResult(error=EngineError.SEQUENCE_EXHAUSTED)
+        return self._execute_issued(command, sequence)
 
+    def _execute_at_sequence(self, command: Command, sequence: int) -> ReferenceResult:
+        """Execute at an externally issued, strictly increasing sequence.
+
+        ``ReferenceRouter`` is the only intended caller.  Keeping this seam
+        private preserves the single-book public contract while allowing
+        routed books to observe gaps in the engine-wide sequence.
+        """
+
+        self._ensure_usable()
+        self._require_representable(command)
+        if (
+            isinstance(sequence, bool)
+            or not isinstance(sequence, int)
+            or not 1 <= sequence <= U64_MAX
+        ):
+            raise ValueError("sequence must be a nonzero u64")
+        if self._sequence_exhausted or sequence <= self._last_sequence:
+            raise ValueError("sequence must be newer than the routed book")
+        self._last_sequence = sequence
+        if sequence == U64_MAX:
+            self._next_sequence = 0
+            self._sequence_exhausted = True
+        else:
+            self._next_sequence = sequence + 1
+        return self._execute_issued(command, sequence)
+
+    def _execute_issued(self, command: Command, sequence: int) -> ReferenceResult:
         try:
             if isinstance(command, NewOrder):
                 result = self._execute_new(command, sequence)

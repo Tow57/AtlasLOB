@@ -32,6 +32,16 @@ namespace {
   };
 }
 
+[[nodiscard]] CommandAdmissionResult invalid_sequence(domain::CommandType command_type) noexcept {
+  return {
+      .command_sequence = {},
+      .command_type = command_type,
+      .reject_reason = domain::RejectReason::none,
+      .relevant_order_id = std::nullopt,
+      .internal_error = CommandAdmissionError::invalid_sequence,
+  };
+}
+
 }  // namespace
 
 CommandAdmission::CommandAdmission(const InstrumentBook& book, ExecutionPolicy policy)
@@ -97,6 +107,39 @@ CommandAdmissionResult CommandAdmission::admit(const domain::ReplaceOrder& order
 
 CommandAdmissionResult CommandAdmission::admit(const domain::Command& command) noexcept {
   return std::visit([this](const auto& value) noexcept { return admit(value); }, command);
+}
+
+CommandAdmissionResult CommandAdmission::admit_at(const domain::NewOrder& order,
+                                                  domain::Sequence sequence) noexcept {
+  if (sequence.value() == 0U) {
+    return invalid_sequence(domain::CommandType::new_order);
+  }
+  return complete_admission(sequence, domain::CommandType::new_order,
+                            validate_state(order, book_, policy_));
+}
+
+CommandAdmissionResult CommandAdmission::admit_at(const domain::CancelOrder& order,
+                                                  domain::Sequence sequence) noexcept {
+  if (sequence.value() == 0U) {
+    return invalid_sequence(domain::CommandType::cancel);
+  }
+  return complete_admission(sequence, domain::CommandType::cancel,
+                            validate_state(order, book_, policy_));
+}
+
+CommandAdmissionResult CommandAdmission::admit_at(const domain::ReplaceOrder& order,
+                                                  domain::Sequence sequence) noexcept {
+  if (sequence.value() == 0U) {
+    return invalid_sequence(domain::CommandType::replace);
+  }
+  return complete_admission(sequence, domain::CommandType::replace,
+                            validate_state(order, book_, policy_));
+}
+
+CommandAdmissionResult CommandAdmission::admit_at(const domain::Command& command,
+                                                  domain::Sequence sequence) noexcept {
+  return std::visit(
+      [this, sequence](const auto& value) noexcept { return admit_at(value, sequence); }, command);
 }
 
 }  // namespace atlaslob::core

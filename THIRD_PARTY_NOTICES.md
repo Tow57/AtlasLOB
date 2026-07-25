@@ -16,9 +16,11 @@ or command-line executable.
 
 ## Python development and evidence tools
 
-The Python correctness package has no runtime dependency outside the Python standard library. Its
-isolated build uses setuptools 83.0.0 under the MIT license. Its optional development/test group
-declares these exactly pinned top-level tools:
+The Python correctness package has no runtime dependency outside the Python standard library. The
+Phase 4 `ReferenceRouter`, Generator V2, canonical evidence, and shrinking modules preserve that
+boundary and add no third-party runtime dependency. The isolated build uses setuptools 83.0.0
+under the MIT license. Its optional development/test group declares these exactly pinned
+top-level tools:
 
 | Project | Version | Source | License |
 | --- | --- | --- | --- |
