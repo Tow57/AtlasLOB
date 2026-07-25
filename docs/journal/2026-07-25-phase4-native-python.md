@@ -3,8 +3,8 @@
 ## Outcome
 
 The Phase 4 PR4 native Python contract is frozen in
-[ADR 0015](../decisions/0015-native-python-bindings-and-packaging.md) and implemented on the
-working branch.
+[ADR 0015](../decisions/0015-native-python-bindings-and-packaging.md), implemented through PR #9,
+and integrated on `main`.
 
 Version 0.2.0 adds the lazy public `atlaslob.Engine` facade over a private pybind11 extension,
 strict all-before-execution input conversion, owned object/column/summary batches, logged
@@ -16,8 +16,9 @@ GCC Debug and Release each pass 482/482 CTest cases. Python reports 354 passes w
 Windows canonical-symlink skips, plus 11 campaign/fuzz passes. Ruff, strict mypy, and formatting
 pass. The real binding smokes cover batch-mode parity, Unicode persistence, clean and torn
 recovery, same-engine noninterleaving, released-GIL thread progress, and returned-value lifetime.
-All 15 hosted PR4 checks pass on implementation commit `0525c9b`. Stacked integration remains
-pending, so this journal does not claim Phase 4 completion.
+All 15 hosted PR4 checks pass. PRs #7, #8, #6, and #9 were revalidated and squash-merged
+sequentially after Phase 3 PR #5; final implementation commit `075d29a` and its uncancelled
+push-to-main workflow are green. This closes Phase 4.
 
 ## Starting point
 
@@ -215,11 +216,12 @@ CI retains wheel and source artifacts. Phase 4 does not publish to PyPI.
 - [x] PEP 517 source distribution: contents, clean build/install, smoke, and `pip check`.
 - [x] Hosted PR4 validation.
 - [x] PR4 publication as draft PR #9.
-- [ ] Stacked integration.
+- [x] Sequential stacked integration through PRs #7, #8, #6, and #9.
+- [x] Final uncancelled `main` workflow.
 
 ## Claim boundary
 
-This record claims the implemented draft-PR surfaces plus the local and hosted validation listed
-above. It does not claim merge, PyPI publication, Windows or macOS wheels, `abi3`, PyPy,
-free-threaded CPython, benchmark results, latency or throughput, universal durability,
+This record claims the implemented and merged Phase 4 surfaces plus the local and hosted
+validation listed above. It does not claim PyPI publication, Windows or macOS wheels, `abi3`,
+PyPy, free-threaded CPython, benchmark results, latency or throughput, universal durability,
 authentication, security, scalability, or production readiness.

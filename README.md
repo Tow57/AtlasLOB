@@ -15,20 +15,16 @@ latency claims.
 
 ## Current status
 
-**Phase 2 matching MVP remains on remote `main`. Phase 3 is complete on published draft PR #5;
-its required hosted GCC/Clang Release, ASan/UBSan, Python 3.11-3.14, formatting, fixed PR corpus,
-wheel, and Linux link-safety checks passed. Phase 4 is represented by four sequential slices:
-router draft PR #7, command-log/replay draft PR #8, snapshot/recovery draft PR #6, and
-native-Python draft PR #9. PR3's 13 hosted compiler, sanitizer, fuzz-smoke, Python, formatting,
-wheel, and differential checks are green. PR4 now implements the lazy `atlaslob.Engine` API over
-a private pybind11 extension, strict all-before-execution conversion, owned
-object/column/summary batches,
-logged submission, clean or read-only valid-prefix recovery, snapshot publication, per-engine
-serialization, and released-GIL native work. The package is version 0.2.0 and its local packaging
-gate builds and clean-smokes CPython 3.11-3.14 manylinux x86-64 wheels plus a PEP 517 source
-distribution. Local GCC Debug and Release each pass 482/482 CTest cases; Python reports 354 passes
-with two expected Windows canonical-symlink skips plus 11 campaign/fuzz passes; Ruff, strict mypy,
-and formatting pass. All 15 hosted PR4 checks pass; stacked integration and merge remain pending.**
+**Phases 0 through 4 are integrated on remote `main`. Phase 3 merged through PR #5, followed by
+the four sequential Phase 4 slices: router PR #7, command-log/replay PR #8, snapshot/recovery PR
+#6, and native-Python PR #9. The final Phase 4 merge is `075d29a`; its uncancelled `main` workflow
+passes the compiler, Release, sanitizer, decoder-fuzz, Python 3.11-3.14, formatting, native
+extension, source-distribution, and manylinux wheel gates. Phase 4 includes deterministic
+multi-instrument routing, write-ahead logging and replay, persisted snapshots and recovery, and the
+lazy native-only `atlaslob.Engine` API with strict owned batch outputs. Package version 0.2.0
+builds and clean-smokes CPython 3.11-3.14 manylinux x86-64 wheels plus a PEP 517 source
+distribution. Phase 5 measurement work is next; no benchmark or production-readiness claim is
+made.**
 
 See the [Phase 4 evidence index](docs/evidence/phase4/README.md) for the current validation
 boundary.
@@ -69,15 +65,15 @@ boundary.
 | GCC and Clang CI | Passed on published Phase 3 PR head | `.github/workflows/ci.yml` |
 | ASan and UBSan CI | Passed on published Phase 3 PR head | `asan-ubsan` preset and CI job |
 | Pinned clang-format gate | Passed on published Phase 3 PR head | `format-check` CI job |
-| Multi-instrument facade and immutable catalog | Hosted PR3 checks passed; integration pending | `atlaslob::MultiInstrumentEngine`, ADR 0012 |
-| Global sequence, active-ID directory, and capacity | Hosted PR3 checks passed; integration pending | Router unit and stress coverage |
-| Multi-engine snapshots and `ATLSME01` digest | Hosted PR3 checks passed; integration pending | Independent C++/Python golden evidence |
-| Native multi-instrument adapter and strict decoder | Hosted PR3 checks passed; integration pending | `atlas_diff_multi_native`, `ATLAS_DIFF_V2` |
-| Python `ReferenceRouter` and Generator V2 | Hosted PR3 checks passed; integration pending | V2 workload, manifest, and interleaving tests |
-| Append-only command log, scanner, repair, and replay | Hosted PR3 checks passed; integration pending | [ADR 0013](docs/decisions/0013-command-log-and-replay.md), [format](docs/command-log-format.md), 85 persistence tests |
-| Persisted snapshot codec, publication, recovery, and clean-tail log resumption | Hosted PR3 checks passed; integration pending | [ADR 0014](docs/decisions/0014-persisted-snapshots-and-log-suffix-recovery.md), [format](docs/snapshot-format.md), PR #6 |
-| Native pybind11 engine, strict batches, logging, recovery, and snapshots | Hosted PR4 checks passed; integration pending | [ADR 0015](docs/decisions/0015-native-python-bindings-and-packaging.md), Python binding and packaging tests |
-| CPython 3.11-3.14 manylinux wheels and source distribution | Hosted PR4 checks passed; integration pending | `cibuildwheel==4.1.0`, clean wheel/auditwheel and PEP 517 sdist smoke |
+| Multi-instrument facade and immutable catalog | Complete on `main` | `atlaslob::MultiInstrumentEngine`, ADR 0012 |
+| Global sequence, active-ID directory, and capacity | Complete on `main` | Router unit and stress coverage |
+| Multi-engine snapshots and `ATLSME01` digest | Complete on `main` | Independent C++/Python golden evidence |
+| Native multi-instrument adapter and strict decoder | Complete on `main` | `atlas_diff_multi_native`, `ATLAS_DIFF_V2` |
+| Python `ReferenceRouter` and Generator V2 | Complete on `main` | V2 workload, manifest, and interleaving tests |
+| Append-only command log, scanner, repair, and replay | Complete on `main` | [ADR 0013](docs/decisions/0013-command-log-and-replay.md), [format](docs/command-log-format.md), 85 persistence tests |
+| Persisted snapshot codec, publication, recovery, and clean-tail log resumption | Complete on `main` | [ADR 0014](docs/decisions/0014-persisted-snapshots-and-log-suffix-recovery.md), [format](docs/snapshot-format.md), PR #6 |
+| Native pybind11 engine, strict batches, logging, recovery, and snapshots | Complete on `main` | [ADR 0015](docs/decisions/0015-native-python-bindings-and-packaging.md), Python binding and packaging tests |
+| CPython 3.11-3.14 manylinux wheels and source distribution | Complete on `main` | `cibuildwheel==4.1.0`, clean wheel/auditwheel and PEP 517 sdist smoke |
 | Resting book structure | Complete | `stress.InstrumentBookStress*` |
 | Matching and normalized command execution | Complete | Phase 2 |
 | Benchmarks and gateway | Planned | Later gated phases |

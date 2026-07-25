@@ -2,12 +2,13 @@
 
 - Status: accepted
 - Date: 2026-07-25
-- Implementation state: the Phase 4 PR3 contract and implementation are complete on the working
-  branch. The 60-case focused recovery selection reports 59 passes plus one expected Windows
+- Implementation state: the Phase 4 PR3 contract and implementation are complete, locally and
+  hosted validated, and integrated on `main` through PR #6. The 60-case focused recovery selection
+  reports 59 passes plus one expected Windows
   canonical-symlink skip. GCC Debug and Release each pass 482/482 CTest cases, the production-only
   build passes, the 288-test non-campaign and 11-test marked Python selections pass, and the CLI
-  process-boundary check passes. Hosted Clang, ASan/UBSan, actual Clang libFuzzer execution,
-  pull-request, and merge gates remain pending.
+  process-boundary check passes. Hosted Clang, ASan/UBSan, retained Clang libFuzzer smoke,
+  pull-request, and final push-to-main gates pass.
 
 ## Context
 
@@ -390,7 +391,6 @@ publication/recovery/inspection/report, two existing-append sink, and four exact
 goldens. It reports 59 passes plus one expected Windows canonical-symlink skip. The complete GCC
 Debug and Release suites each pass 482/482 CTest cases; the production-only build, 288-test
 non-campaign Python selection, and 11-test marked Python selection also pass. The snapshot decoder
-libFuzzer target and retained canonical seed are implemented, but an actual Clang libFuzzer run
-remains pending. Hosted Clang, ASan/UBSan, pull-request, and merge gates also remain pending. The
-reviewed golden is a checked literal; this ADR does not mislabel it as an independently generated
-implementation.
+libFuzzer target and retained canonical seed pass the bounded hosted Clang smoke campaign. Hosted
+Clang, ASan/UBSan, pull-request, and final push-to-main gates also pass. The reviewed golden is a
+checked literal; this ADR does not mislabel it as an independently generated implementation.

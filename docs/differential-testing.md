@@ -5,9 +5,9 @@ native side of that comparison is the test-only `atlas_diff_native` executable. 
 only when `BUILD_TESTING=ON`, is not installed, and is not a production protocol.
 
 Phase 4 PR1 adds a separate multi-instrument reference and generation family without changing the
-V1 adapter, generator, campaign, failure, or retention contracts documented below. That local PR1
-implementation has passed its available local C++ and Python validation; hosted validation and
-remote integration remain pending.
+V1 adapter, generator, campaign, failure, or retention contracts documented below. That
+implementation passes its local and hosted C++/Python validation and is integrated on `main`
+through PR #7.
 
 The design boundary and independence rules are recorded in
 [ADR 0010](decisions/0010-independent-python-oracle-boundary.md). Deterministic workload,
@@ -430,12 +430,10 @@ nightly case with 1,000,000 compact commands. GCC Debug and Release CTest each p
 build/install smoke gates also passed locally. Hosted CI subsequently passed GCC, Clang, Release
 GCC/Clang, ASan/UBSan, Python 3.11-3.14, the fixed PR corpus and marked proofs, wheel smoke,
 formatting, and Linux link-safety checks. Published PR #5 head `29049756` therefore closes the
-Phase 3 correctness-evidence gate. It remains open rather than remotely merged because GitHub
-authentication is unavailable in this session. The local Phase 4 router slice described above
-passes its available local Debug/Release, formatting, Python, stress, and cross-language gates;
-hosted validation and remote integration remain pending. Later Phase 4 persistence and binding work
-has not started. See
-[the Phase 3 evidence index](evidence/phase3/README.md) for the complete record.
+Phase 3 correctness-evidence gate and was squash-merged through PR #5. The Phase 4 router,
+persistence, recovery, and native-binding slices pass their local and hosted gates and are
+integrated on `main`. See [the Phase 3 evidence index](evidence/phase3/README.md) and
+[the Phase 4 evidence index](evidence/phase4/README.md) for the complete records.
 
 Command counts and elapsed campaign time are correctness-test metadata. They make no latency,
 throughput, allocation, memory, scalability, or production-readiness claim.

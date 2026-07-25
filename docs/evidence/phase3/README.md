@@ -79,10 +79,9 @@ metamorphic, bounded-fuzz, long-case, and release-gate paths.
 
 Published PR #5 head `29049756` passed all required hosted checks, including both Linux
 link-safety tests and the fixed 10-by-5,000 corpus. The Phase 3 implementation and evidence gate is
-satisfied. The PR remains open rather than remotely merged because GitHub authentication is
-unavailable in this session. The manual 10-by-10,000,000 Release campaign remains an on-demand
-policy tier and is not claimed as executed here. Phase 4 PR1 router work is implemented locally and
-under validation; it does not alter this retained Phase 3 evidence.
+satisfied. PR #5 was squash-merged as `3c60e2b` before the Phase 4 stack was integrated. The manual
+10-by-10,000,000 Release campaign remains an on-demand policy tier and is not claimed as executed
+here. Phase 4 does not alter this retained Phase 3 evidence.
 
 ## Reproduction
 

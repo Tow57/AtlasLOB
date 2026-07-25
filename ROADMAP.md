@@ -121,24 +121,19 @@ passes 10 exact 5,000-command cases. Checked evidence records a passing epoch-0 
 build, pinned clang-format, Ruff, strict mypy, and wheel build/install smoke gates also pass
 locally. Published PR #5 head `29049756` passed every required hosted GCC/Clang Release,
 ASan/UBSan, Python 3.11-3.14, formatting, wheel, PR-corpus, and Linux link-safety gate. This closes
-the Phase 3 implementation and evidence gate. PR #5 remains open rather than remotely merged, so
-remote `main` still ends at Phase 2.
+the Phase 3 implementation and evidence gate. PR #5 was squash-merged as `3c60e2b` before Phase 4
+integration began.
 
 ## Phase 4 - Deterministic infrastructure and Python
 
-- [ ] Multi-instrument routing and global sequencing - implemented and green on the hosted PR3
-  stack; merge pending.
-- [ ] Explicit append-only command log codec - implemented and green on the hosted PR3 stack;
-  merge pending.
-- [ ] Inspector, replay, corruption, and truncated-tail tests - implemented and green in hosted
-  sanitizer/libFuzzer smoke on the PR3 stack; merge pending.
-- [ ] Canonical persisted snapshot plus log-suffix recovery - implemented and validated by the
-  full local gates and green hosted PR3 checks; merge pending.
-- [ ] pybind11 batch API and distributable native-backed Python package - implemented with all 15
-  hosted PR4 checks green; merge pending.
+- [x] Multi-instrument routing and global sequencing - merged through PR #7.
+- [x] Explicit append-only command log codec - merged through PR #8.
+- [x] Inspector, replay, corruption, and truncated-tail tests - merged through PR #8.
+- [x] Canonical persisted snapshot plus log-suffix recovery - merged through PR #6.
+- [x] pybind11 batch API and distributable native-backed Python package - merged through PR #9.
 
 [ADR 0012](docs/decisions/0012-multi-instrument-routing-and-global-sequencing.md) defines the first
-Phase 4 slice. The local `codex/phase4-router` work adds an immutable, eagerly constructed
+Phase 4 slice. The implementation adds an immutable, eagerly constructed
 instrument catalog; one global command sequence; one engine-wide active-order identity directory;
 projected per-instrument and global capacity; complete multi-engine snapshots; and the separate
 `ATLSME01` state digest. The existing `MatchingEngine` delegates through the same execution path,
@@ -166,11 +161,11 @@ recovery rather than permitting the session to continue. Since the log stores ev
 digest rather than complete expected events, diagnostic replay cannot reconstruct an expected
 field-level event body without a separate transcript.
 
-PR1 and PR2 are locally validated and revalidated as part of the green hosted PR3 stack; their
-individual integration remains pending. PR3 passes 482/482 GCC Debug and Release CTest cases, the
-production-only build, the 288-test non-campaign and 11-test marked Python selections, and the CLI
-process-boundary check. Its 13 hosted compiler, sanitizer, decoder-fuzz-smoke, Python, formatting,
-wheel, and differential checks are green.
+PR1 and PR2 were independently validated, retargeted to `main`, rerun through their full hosted
+matrices, and squash-merged through PRs #7 and #8. PR3 passes 482/482 GCC Debug and Release CTest
+cases, the production-only build, the 288-test non-campaign and 11-test marked Python selections,
+and the CLI process-boundary check. Its 13 hosted compiler, sanitizer, decoder-fuzz-smoke, Python,
+formatting, wheel, and differential checks are green.
 
 [ADR 0014](docs/decisions/0014-persisted-snapshots-and-log-suffix-recovery.md) and the
 [snapshot format reference](docs/snapshot-format.md) define the implemented `ATLSSN01` V1 slice.
@@ -185,7 +180,7 @@ remains read-only until copy-only repair creates a new clean log.
 The focused 60-case recovery selection reports 59 passes and one expected Windows
 canonical-symlink skip. GCC Debug and Release each pass 482/482 CTest cases, the production-only
 build passes, both Python selections above pass, and the published PR3 head passes all 13 hosted
-checks. Merge remains pending.
+checks. The slice was retargeted, revalidated, and squash-merged through PR #6.
 
 [ADR 0015](docs/decisions/0015-native-python-bindings-and-packaging.md) defines the implemented
 final Phase 4 slice. Version 0.2.0 exposes `atlaslob.Engine` lazily over the private
@@ -203,8 +198,9 @@ contents, auditwheel, and clean-container smoke checks. The PEP 517 source distr
 builds, installs, and smokes in a clean environment. Real-binding tests cover batch-mode parity,
 Unicode persistence paths, clean and torn recovery, same-engine noninterleaving, released-GIL
 thread progress, and ownership after later mutation. All 15 hosted PR4 compiler, sanitizer,
-fuzz-smoke, Python, formatting, differential, wheel, and source-distribution checks pass. Stacked
-integration remains pending. Current evidence status is indexed in
+fuzz-smoke, Python, formatting, differential, wheel, and source-distribution checks pass. PR #9
+was retargeted, revalidated, and squash-merged as `075d29a`; the uncancelled workflow on that
+`main` commit also passes. Current evidence status is indexed in
 [the Phase 4 evidence record](docs/evidence/phase4/README.md).
 
 ## Phase 5 - Measured portfolio release

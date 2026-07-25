@@ -2,8 +2,8 @@
 
 - Status: accepted
 - Date: 2026-07-24
-- Implementation state: Phase 4 PR2 is complete locally; hosted Clang, sanitizer, libFuzzer, pull
-  request, and merge gates remain pending.
+- Implementation state: complete, locally and hosted validated, and integrated on `main` through
+  Phase 4 PR #8.
 
 ## Context
 

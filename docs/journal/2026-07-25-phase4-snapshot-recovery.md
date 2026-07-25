@@ -2,7 +2,8 @@
 
 ## Outcome
 
-The Phase 4 PR3 persistence contract is frozen and implemented on the working branch. Its
+The Phase 4 PR3 persistence contract is frozen, implemented, and integrated on `main` through PR
+#6. Its
 authoritative design references are
 [ADR 0014](../decisions/0014-persisted-snapshots-and-log-suffix-recovery.md) and the
 [byte-level snapshot reference](../snapshot-format.md).
@@ -11,8 +12,8 @@ The 60-case focused recovery selection reports 59 passes plus one expected Windo
 canonical-symlink skip. GCC Debug and Release each pass 482/482 CTest cases, the production-only
 build passes, the 288-test non-campaign and 11-test marked Python selections pass, and the CLI
 process-boundary script passes with Unicode snapshot paths and LF-only versioned JSON. Hosted
-compiler/sanitizer/libFuzzer, pull-request publication, and merge remain pending. This journal
-does not claim that PR3 is fully accepted or integrated.
+compiler, sanitizer, retained libFuzzer smoke, pull-request, and final push-to-main gates also
+pass.
 
 ## Starting point
 

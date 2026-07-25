@@ -7,9 +7,9 @@ The Phase 4 PR2 persistence contract is frozen and implemented in
 [byte-level format reference](../command-log-format.md).
 
 The implementation on `codex/phase4-command-log` passes the local Debug, Release,
-production-only, persistence, Python, typing, linting, and formatting gates recorded below. Hosted
-Clang, ASan/UBSan, and libFuzzer execution remain pending, so this journal does not claim a
-published green PR or merge.
+production-only, persistence, Python, typing, linting, and formatting gates recorded below. It was
+subsequently rerun through the hosted compiler, sanitizer, decoder-fuzz, Python, differential,
+wheel, and formatting gates and squash-merged through PR #8 as `f5c2f11`.
 
 ## Starting point
 
@@ -17,9 +17,9 @@ PR2 branches from the local Phase 4 router commit `dd9bcc2`. That commit supplie
 multi-engine preparation token, global sequence, active-order directory, immutable catalog, and
 canonical event/state evidence needed by write-ahead persistence.
 
-The router slice has local evidence recorded separately. Its hosted integration remains pending.
-PR2 must preserve semantic version 6 and every frozen Phase 0 through Phase 3 encoding while adding
-a separate persistence format.
+The router slice has evidence recorded separately and was integrated first through PR #7. PR2
+preserves semantic version 6 and every frozen Phase 0 through Phase 3 encoding while adding a
+separate persistence format.
 
 ## Frozen byte contract
 
