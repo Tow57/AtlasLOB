@@ -8,6 +8,14 @@ The format is based on Keep a Changelog, and public releases will follow semanti
 
 ### Changed
 
+- Routed the existing single-instrument `MatchingEngine` through the shared multi-instrument
+  coordinator without changing its public API or frozen Phase 2/3 evidence encodings.
+- Moved authoritative publication of command sequences above individual instrument executors.
+  Domain rejections still consume a sequence, while an internal preparation/allocation failure
+  abandons staged work without publishing that reserved sequence.
+- Split the internal executor and coordinator boundaries into move-only prepared commands with an
+  inspectable owned batch, one engine-wide lease, exact identity deltas, RAII abandonment, and a
+  one-shot allocation-free commit that publishes book, directory, and sequence state.
 - Made public `EngineResult` states mutually exclusive through validated factories and read-only
   observers.
 - Replaced prepared replacement raw-pointer identity with a pinned active `OrderId`; direct
@@ -41,6 +49,25 @@ The format is based on Keep a Changelog, and public releases will follow semanti
 
 ### Added
 
+- A non-copyable `MultiInstrumentEngine` facade with an immutable sorted catalog, eager independent
+  books, global sequence observers, per-instrument top/snapshot access, and complete engine
+  snapshots.
+- An engine-wide active-order identity directory, deterministic cross-instrument
+  unknown/ownership/instrument/duplicate precedence, active-ID reuse after terminal state, and
+  projected per-instrument plus global capacity.
+- Whole-engine invariants covering catalog/book correspondence, local indexes, the global
+  directory, active counts, globally unique priorities, and sequence bounds.
+- Canonical big-endian `ATLSME01` multi-engine state encoding and SHA-256 digest while preserving
+  semantic version 6, `ATLSST01`, `ATLSEV01`, and `ATLAS_DIFF_V1`.
+- Independent Python `ReferenceRouter`, Generator V2, canonical V2 workload/manifest schemas,
+  multi-engine evidence capture, deterministic shrinking primitives, and constrained
+  cross-instrument reinterleaving checks.
+- A non-installed `atlas_diff_multi_native` adapter that parses a complete strict
+  `ATLAS_DIFF_V2` catalog/command stream before submission and emits versioned exact or compact
+  `atlas_diff_v2` JSON Lines, plus a strict Python encoder/runner/decoder and exact reference
+  parity checker.
+- ADR 0012 documenting multi-instrument routing, global sequencing and identity, preparation
+  compatibility, invariants, and deterministic V2 evidence.
 - C++20 domain library, CLI, and unit-test foundation.
 - Strong identifier, price, quantity, and sequence values.
 - Deterministic new-order validation and demonstration command.
@@ -137,8 +164,10 @@ The format is based on Keep a Changelog, and public releases will follow semanti
   Python selection, 11 passed/246 deselected in the marked selection, the 10-by-5,000 exact PR
   corpus, one epoch-0 1,000,000-command compact nightly case, both 288-test GCC configurations,
   production-only and formatting gates, Ruff, strict mypy, and wheel build/install smoke. The
-  published Phase 3 PR implementation head passed all required hosted compiler, sanitizer, Python,
-  formatting, wheel, PR-corpus, and Linux link-safety checks. Phase 3 is complete; Phase 4 has not
-  started.
+  published Phase 3 PR #5 head `29049756` passed all required hosted compiler, sanitizer, Python,
+  formatting, wheel, PR-corpus, and Linux link-safety checks. Phase 3 is complete on that published
+  head, but it remains remotely unmerged because GitHub authentication is unavailable in this
+  session. Phase 4 PR1 router work is implemented and passes its available local Debug/Release,
+  formatting, Python, stress, and cross-language gates; hosted validation remains pending.
 - ADR 0011, the Phase 3 evidence index, and documented dependency deferrals for Phase 4,
   Phase 6, and future persistence-format fuzzing.

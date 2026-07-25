@@ -15,17 +15,18 @@ latency claims.
 
 ## Current status
 
-**Phase 2 matching MVP is complete on `main`. Phase 3 is complete on the published pull-request
-implementation head. It includes the independent Python oracle, deterministic valid/invalid
-workload generation, fixed and rotating campaigns, a streaming differential runner, portable
-failure bundles, semantic shrinking, metamorphic checks, and bounded cross-language fuzzing. Local
-closure evidence includes 244 passed, 2 Windows-symlink skips, and 11 deselected in the default
-Python selection; 11 passed and 246 deselected in the marked campaign/fuzz selection; the fixed
-10-by-5,000 exact PR corpus; one checked 1,000,000-command compact case; and GCC Debug and Release
-CTest at 288/288 each. The `BUILD_TESTING=OFF` production build, pinned clang-format, Ruff, strict
-mypy, and wheel build/install smoke also pass locally. Hosted CI passed GCC, Clang, Release
-GCC/Clang, ASan/UBSan, Python 3.11-3.14, the Phase 3 PR differential corpus, wheel smoke,
-formatting, and both Linux link-safety tests. Phase 4 has not started.**
+**Phase 2 matching MVP remains on remote `main`. Phase 3 is complete on published PR #5 head
+`29049756`: its required hosted GCC/Clang Release, ASan/UBSan, Python 3.11-3.14, formatting, fixed
+PR corpus, wheel, and Linux link-safety checks passed. PR #5 remains open and remotely unmerged
+because this session has no GitHub authentication. Phase 4 PR1 is implemented
+and locally validated on `codex/phase4-router`. It adds deterministic multi-instrument
+routing, one global sequence, an engine-wide active-ID directory and capacity, canonical
+`ATLSME01` evidence, a strict test-only `ATLAS_DIFF_V2` adapter, and independent Python
+`ReferenceRouter`/Generator V2 surfaces. Command-log, replay, persisted snapshots, and native
+Python distribution remain later Phase 4 work.**
+
+See the [Phase 4 router evidence index](docs/evidence/phase4/README.md) for the current validation
+boundary.
 
 | Capability | Status | Evidence |
 | --- | --- | --- |
@@ -63,9 +64,15 @@ formatting, and both Linux link-safety tests. Phase 4 has not started.**
 | GCC and Clang CI | Passed on published Phase 3 PR head | `.github/workflows/ci.yml` |
 | ASan and UBSan CI | Passed on published Phase 3 PR head | `asan-ubsan` preset and CI job |
 | Pinned clang-format gate | Passed on published Phase 3 PR head | `format-check` CI job |
+| Multi-instrument facade and immutable catalog | Complete locally; hosted gate pending | `atlaslob::MultiInstrumentEngine`, ADR 0012 |
+| Global sequence, active-ID directory, and capacity | Complete locally; hosted gate pending | Router unit and stress coverage |
+| Multi-engine snapshots and `ATLSME01` digest | Complete locally; hosted gate pending | Independent C++/Python golden evidence |
+| Native multi-instrument adapter and strict decoder | Complete locally; hosted gate pending | `atlas_diff_multi_native`, `ATLAS_DIFF_V2` |
+| Python `ReferenceRouter` and Generator V2 | Complete locally; hosted gate pending | V2 workload, manifest, and interleaving tests |
 | Resting book structure | Complete | `stress.InstrumentBookStress*` |
 | Matching and normalized command execution | Complete | Phase 2 |
-| Replay, Python bindings, benchmarks, gateway | Planned | Later gated phases |
+| Command log, replay, persisted recovery, and Python bindings | Planned | Remaining Phase 4 PRs |
+| Benchmarks and gateway | Planned | Later gated phases |
 
 ## Quick start
 
@@ -209,6 +216,10 @@ developed with MinGW GCC on Windows, but Linux CI is the support authority.
 - ADR 0011 freezes generator V1, ten workload profiles, campaign sizes and seed provenance,
   bounded-memory comparison, fresh exact replay with an explicit large-prefix deferral boundary,
   portable failure bundles, semantic shrinking, and the Phase 3 metamorphic/fuzz boundary.
+- ADR 0012 places one deterministic router above eagerly constructed instrument books, makes
+  sequence and active-order identity engine-wide, defines projected local/global capacity and the
+  internal prepare/commit boundary, and freezes the separate `ATLSME01`/V2 evidence family without
+  changing semantic version 6 or the Phase 2/3 encodings.
 
 See [the semantic contract](docs/semantics.md) and
 [ADR 0001](docs/decisions/0001-core-semantics.md) plus
@@ -221,18 +232,21 @@ See [the semantic contract](docs/semantics.md) and
 [ADR 0008](docs/decisions/0008-atomic-replace-and-public-engine.md) plus
 [ADR 0009](docs/decisions/0009-canonical-deterministic-evidence.md) plus
 [ADR 0010](docs/decisions/0010-independent-python-oracle-boundary.md) plus
-[ADR 0011](docs/decisions/0011-deterministic-differential-campaigns.md) for accepted rules. The
+[ADR 0011](docs/decisions/0011-deterministic-differential-campaigns.md) plus
+[ADR 0012](docs/decisions/0012-multi-instrument-routing-and-global-sequencing.md) for accepted
+rules. The
 test-only process, workload, campaign, and failure schemas are documented in
 [Differential testing interface](docs/differential-testing.md).
 
 ## Roadmap
 
-1. Ordered book sides, a global active-order index, direct cancellation, and full book invariants.
+1. Ordered book sides, a per-book active-order index, direct cancellation, and full book
+   invariants.
 2. Limit/market matching, GTC/IOC residuals, replace, canonical digests, and deterministic
    command-stream evidence.
 3. Independent Python reference model, differential generation, shrinking, and fuzzing.
-4. Command logging, deterministic replay, native-backed Python batch bindings and distribution,
-   and analysis tooling.
+4. Multi-instrument routing, command logging, deterministic replay, persisted recovery, and
+   native-backed Python batch bindings and distribution.
 5. Reproducible benchmarks and a profile-supported optimization study.
 6. Optional versioned protocol and nonblocking Linux gateway after the core release is tagged.
 

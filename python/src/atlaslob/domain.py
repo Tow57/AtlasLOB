@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import IntEnum
 from typing import TypeAlias
 
@@ -99,6 +99,34 @@ class MatchingConfig:
         if self.tick_increment <= 0:
             raise ValueError("tick_increment must be positive")
         _require_u64("max_active_orders", self.max_active_orders)
+
+
+@dataclass(frozen=True, slots=True)
+class InstrumentConfig:
+    """One eagerly constructed instrument in a multi-instrument catalog."""
+
+    instrument_id: int
+    matching: MatchingConfig = field(default_factory=MatchingConfig)
+
+    def __post_init__(self) -> None:
+        if (
+            isinstance(self.instrument_id, bool)
+            or not isinstance(self.instrument_id, int)
+            or not 1 <= self.instrument_id <= U32_MAX
+        ):
+            raise ValueError("instrument_id must be a nonzero u32")
+        if not isinstance(self.matching, MatchingConfig):
+            raise TypeError("matching must be a MatchingConfig")
+
+
+@dataclass(frozen=True, slots=True)
+class MultiInstrumentEngineConfig:
+    """Engine-wide limits that are independent of per-instrument limits."""
+
+    max_total_active_orders: int = U64_MAX
+
+    def __post_init__(self) -> None:
+        _require_u64("max_total_active_orders", self.max_total_active_orders)
 
 
 @dataclass(frozen=True, slots=True)
@@ -336,6 +364,29 @@ class BookSnapshot:
     active_order_count: int
     bids: tuple[PriceLevelSnapshot, ...]
     asks: tuple[PriceLevelSnapshot, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class InstrumentSnapshot:
+    """Canonical value-only state for one book inside a routed engine."""
+
+    instrument_id: int
+    active_order_count: int
+    bids: tuple[PriceLevelSnapshot, ...]
+    asks: tuple[PriceLevelSnapshot, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class EngineSnapshot:
+    """Canonical value-only state for the complete multi-instrument engine."""
+
+    semantics_version: int
+    engine_config: MultiInstrumentEngineConfig
+    catalog: tuple[InstrumentConfig, ...]
+    last_sequence: int
+    sequence_exhausted: bool
+    active_order_count: int
+    instruments: tuple[InstrumentSnapshot, ...]
 
 
 def _require_u64(name: str, value: int, *, nonzero: bool = False) -> None:

@@ -3,6 +3,7 @@
 #include <cstdint>
 #include <optional>
 #include <string_view>
+#include <vector>
 
 #include "atlaslob/domain/commands.hpp"
 #include "atlaslob/domain/event_batch.hpp"
@@ -26,6 +27,7 @@ enum class CommandExecutionError : std::uint8_t {
   event_count_overflow = 7,
   event_batch_failure = 8,
   book_mutation_failure = 9,
+  preparation_in_progress = 10,
 };
 
 [[nodiscard]] constexpr std::string_view to_string(CommandExecutionError error) noexcept {
@@ -50,6 +52,8 @@ enum class CommandExecutionError : std::uint8_t {
       return "event_batch_failure";
     case CommandExecutionError::book_mutation_failure:
       return "book_mutation_failure";
+    case CommandExecutionError::preparation_in_progress:
+      return "preparation_in_progress";
   }
   return "unknown";
 }
@@ -101,6 +105,66 @@ struct CommandExecutionResult final {
   [[nodiscard]] explicit operator bool() const noexcept { return has_value(); }
 };
 
+class CommandExecutor;
+
+// Owns the complete result and all book-side preparation required for a
+// command admitted at an externally reserved sequence. Inspectors may read the
+// immutable batch before the one-shot, allocation-free commit. Destruction
+// without commit abandons the command and rolls back any staged residual.
+class PreparedCommandExecution final {
+ public:
+  PreparedCommandExecution(const PreparedCommandExecution&) = delete;
+  PreparedCommandExecution& operator=(const PreparedCommandExecution&) = delete;
+  PreparedCommandExecution(PreparedCommandExecution&& other) noexcept;
+  PreparedCommandExecution& operator=(PreparedCommandExecution&& other) noexcept;
+  ~PreparedCommandExecution() noexcept;
+
+  [[nodiscard]] bool has_value() const noexcept;
+  [[nodiscard]] explicit operator bool() const noexcept { return has_value(); }
+  [[nodiscard]] const CommandExecutionResult& result() const noexcept { return result_; }
+  [[nodiscard]] const domain::EventBatch* batch() const noexcept;
+
+  // Outcome classification for persistence before commit. "committed" means
+  // the prepared command has an accepted event batch and will mutate the book
+  // when commit() succeeds; it does not mean commit() was already called.
+  [[nodiscard]] bool rejected() const noexcept;
+  [[nodiscard]] bool committed() const noexcept;
+
+  // One-shot. Applies only prevalidated, allocation-free book mutations and
+  // moves the owned batch/diagnostics into the returned result.
+  [[nodiscard]] CommandExecutionResult commit() noexcept;
+
+ private:
+  friend class CommandExecutor;
+
+  enum class MutationKind : std::uint8_t {
+    none = 0,
+    batch = 1,
+    replace = 2,
+  };
+
+  explicit PreparedCommandExecution(CommandExecutionResult result) noexcept;
+  PreparedCommandExecution(InstrumentBook& book, CommandExecutionResult result,
+                           MutationKind mutation,
+                           std::vector<PrevalidatedBookReduction> passive_reductions,
+                           std::optional<PrevalidatedBookReduction> primary_reduction,
+                           std::optional<InstrumentBook::PreparedRest> prepared_rest,
+                           TopOfBookSnapshot projected_top) noexcept;
+
+  void abandon() noexcept;
+  void release_lease() noexcept;
+
+  CommandExecutor* lease_owner_{};
+  InstrumentBook* book_{};
+  CommandExecutionResult result_{};
+  std::vector<PrevalidatedBookReduction> passive_reductions_;
+  std::optional<PrevalidatedBookReduction> primary_reduction_;
+  std::optional<InstrumentBook::PreparedRest> prepared_rest_;
+  TopOfBookSnapshot projected_top_{};
+  MutationKind mutation_{MutationKind::none};
+  bool consumed_{};
+};
+
 class CommandExecutor final {
  public:
   explicit CommandExecutor(InstrumentBook& book, ExecutionPolicy policy = {});
@@ -110,11 +174,25 @@ class CommandExecutor final {
   CommandExecutor& operator=(const CommandExecutor&) = delete;
   CommandExecutor(CommandExecutor&&) = delete;
   CommandExecutor& operator=(CommandExecutor&&) = delete;
-  ~CommandExecutor() = default;
+  ~CommandExecutor() noexcept;
 
   [[nodiscard]] CommandExecutionResult execute(const domain::NewOrder& order);
   [[nodiscard]] CommandExecutionResult execute(const domain::CancelOrder& order);
   [[nodiscard]] CommandExecutionResult execute(const domain::ReplaceOrder& order);
+
+  [[nodiscard]] CommandExecutionResult execute_at(const domain::NewOrder& order,
+                                                  domain::Sequence sequence);
+  [[nodiscard]] CommandExecutionResult execute_at(const domain::CancelOrder& order,
+                                                  domain::Sequence sequence);
+  [[nodiscard]] CommandExecutionResult execute_at(const domain::ReplaceOrder& order,
+                                                  domain::Sequence sequence);
+
+  [[nodiscard]] PreparedCommandExecution prepare_at(const domain::NewOrder& order,
+                                                    domain::Sequence sequence);
+  [[nodiscard]] PreparedCommandExecution prepare_at(const domain::CancelOrder& order,
+                                                    domain::Sequence sequence);
+  [[nodiscard]] PreparedCommandExecution prepare_at(const domain::ReplaceOrder& order,
+                                                    domain::Sequence sequence);
 
   [[nodiscard]] const ExecutionPolicy& policy() const noexcept { return admission_.policy(); }
   [[nodiscard]] domain::Sequence next_sequence() const noexcept {
@@ -130,8 +208,18 @@ class CommandExecutor final {
 #endif
 
  private:
+  friend class PreparedCommandExecution;
+
+  [[nodiscard]] PreparedCommandExecution prepare_admitted(const domain::NewOrder& order,
+                                                          const CommandAdmissionResult& admission);
+  [[nodiscard]] PreparedCommandExecution prepare_admitted(const domain::CancelOrder& order,
+                                                          const CommandAdmissionResult& admission);
+  [[nodiscard]] PreparedCommandExecution prepare_admitted(const domain::ReplaceOrder& order,
+                                                          const CommandAdmissionResult& admission);
+
   InstrumentBook& book_;
   CommandAdmission admission_;
+  bool preparation_active_{};
 #if defined(ATLAS_ENABLE_TEST_ACCESS) && ATLAS_ENABLE_TEST_ACCESS
   BeforeEventAllocationHook before_event_allocation_hook_{};
 #endif

@@ -18,6 +18,7 @@ from atlaslob.domain import (
     BookSnapshot,
     CanceledEvent,
     DoneEvent,
+    EngineSnapshot,
     Event,
     EventBatch,
     OrderSnapshot,
@@ -31,6 +32,7 @@ from atlaslob.domain import (
 )
 
 _STATE_PREFIX = b"ATLSST01"
+_ENGINE_STATE_PREFIX = b"ATLSME01"
 _EVENT_PREFIX = b"ATLSEV01"
 
 
@@ -104,6 +106,55 @@ def state_digest(snapshot: BookSnapshot) -> str:
     """Return a lowercase SHA-256 digest for one canonical book snapshot."""
 
     return hashlib.sha256(state_bytes(snapshot)).hexdigest()
+
+
+def engine_state_bytes(snapshot: EngineSnapshot) -> bytes:
+    """Return the canonical ``ATLSME01`` multi-engine state stream.
+
+    Catalog configuration precedes global dynamic state, followed by one
+    explicit body for every configured instrument, including empty books.
+    Per-book sequence state is intentionally omitted: the coordinator's global
+    sequence is authoritative.
+    """
+
+    catalog_ids = tuple(config.instrument_id for config in snapshot.catalog)
+    instrument_ids = tuple(book.instrument_id for book in snapshot.instruments)
+    if catalog_ids != tuple(sorted(catalog_ids)) or len(catalog_ids) != len(set(catalog_ids)):
+        raise ValueError("engine snapshot catalog must be unique and sorted")
+    if instrument_ids != catalog_ids:
+        raise ValueError("engine snapshot instruments must exactly match the catalog")
+    if snapshot.active_order_count != sum(book.active_order_count for book in snapshot.instruments):
+        raise ValueError("engine snapshot active count does not match its books")
+
+    output = bytearray(_ENGINE_STATE_PREFIX)
+    output += _u16(snapshot.semantics_version)
+    output += _u64(snapshot.engine_config.max_total_active_orders)
+    output += _u64(len(snapshot.catalog))
+    for config in snapshot.catalog:
+        output += _u32(config.instrument_id)
+        output += _u64(config.matching.max_order_quantity)
+        output += _i64(config.matching.tick_increment)
+        output += _u64(config.matching.max_active_orders)
+    output += _u64(snapshot.last_sequence)
+    output += _u8(int(snapshot.sequence_exhausted))
+    output += _u64(snapshot.active_order_count)
+    output += _u64(len(snapshot.instruments))
+    for book in snapshot.instruments:
+        output += _u32(book.instrument_id)
+        output += _u64(book.active_order_count)
+        output += _u64(len(book.bids))
+        for level in book.bids:
+            _encode_level(output, level)
+        output += _u64(len(book.asks))
+        for level in book.asks:
+            _encode_level(output, level)
+    return bytes(output)
+
+
+def engine_state_digest(snapshot: EngineSnapshot) -> str:
+    """Return a lowercase SHA-256 digest for canonical multi-engine state."""
+
+    return hashlib.sha256(engine_state_bytes(snapshot)).hexdigest()
 
 
 def _optional_order_id(output: bytearray, order_id: int | None) -> None:
