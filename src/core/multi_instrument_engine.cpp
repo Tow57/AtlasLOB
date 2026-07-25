@@ -1141,6 +1141,19 @@ core::PreparedMultiInstrumentCommand core::MultiInstrumentEngineAccess::prepare(
       [&engine](const auto& value) { return engine.impl_->prepare_state(value); }, command)};
 }
 
+bool core::MultiInstrumentEngineAccess::validate_invariants(
+    const MultiInstrumentEngine& engine) noexcept {
+  return engine.impl_->validate_invariants();
+}
+
+void core::MultiInstrumentEngineAccess::set_next_sequence_for_testing(
+    MultiInstrumentEngine& engine, domain::Sequence next_sequence) {
+  if (!engine.impl_->active_orders_.empty()) {
+    throw std::logic_error{"test sequence injection requires an empty engine"};
+  }
+  engine.impl_->sequencer_.set_next_sequence_for_testing(next_sequence);
+}
+
 MultiInstrumentEngine::MultiInstrumentEngine(std::span<const InstrumentConfig> catalog,
                                              MultiInstrumentEngineConfig config)
     : impl_{std::make_unique<Impl>(catalog, config)} {}

@@ -118,7 +118,6 @@ _PROCESS_FAILURE_CODES = frozenset(
 )
 _REQUEST_BOUND_ERROR_CODES = frozenset(
     {
-        "adapter_exception",
         "engine_exception",
         "resource_failure",
     }
@@ -481,6 +480,9 @@ def decode_multi_jsonl(
     transcript = MultiNativeTranscript(config, tuple(results), final, error)
     _validate_transcript(
         transcript,
+        expected_request=(
+            expected_mode is not None or expected_input is not None or expected_commands is not None
+        ),
         expected_commands=expected_commands,
         returncode=returncode,
     )
@@ -1682,6 +1684,7 @@ def _validate_result_position(
 def _validate_transcript(
     transcript: MultiNativeTranscript,
     *,
+    expected_request: bool,
     expected_commands: Sequence[Command] | None,
     returncode: int | None,
 ) -> None:
@@ -1692,6 +1695,7 @@ def _validate_transcript(
             raise MultiNativeProtocolError("error and final records both appear")
         _validate_error_terminal(
             transcript,
+            expected_request=expected_request,
             expected_commands=expected_commands,
             returncode=returncode,
         )
@@ -1742,6 +1746,7 @@ def _validate_transcript(
 def _validate_error_terminal(
     transcript: MultiNativeTranscript,
     *,
+    expected_request: bool,
     expected_commands: Sequence[Command] | None,
     returncode: int | None,
 ) -> None:
@@ -1755,7 +1760,7 @@ def _validate_error_terminal(
     if config is None:
         if transcript.results:
             raise MultiNativeProtocolError("result prefix appears without a config")
-        if expected_commands is not None:
+        if expected_request:
             if error.code == "invalid_engine_config":
                 if error.line != 1:
                     raise MultiNativeProtocolError(
@@ -1786,7 +1791,7 @@ def _validate_error_terminal(
             raise MultiNativeProtocolError(
                 "terminal adapter error is not at the next submitted line"
             )
-        if expected_commands is not None and len(transcript.results) >= len(expected_commands):
+        if len(transcript.results) >= config.command_count:
             raise MultiNativeProtocolError(
                 "terminal adapter error appears after every submitted command"
             )

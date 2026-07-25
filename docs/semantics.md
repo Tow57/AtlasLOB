@@ -183,8 +183,63 @@ Destruction abandons both coordinator and book staging and releases the lease.
 Its one-shot no-throw commit publishes the preallocated identity addition and removals, commits the
 prevalidated book mutation, publishes the reserved sequence, and checks allocation-free
 whole-engine invariants. Ordinary `execute()` uses this same prepare-then-commit path. The private
-access seam lets the later persistence target append between those operations; neither the token
+access seam lets the Phase 4 persistence target append between those operations; neither the token
 nor caller-selected sequences are installed public API.
+
+## Command-log and replay contract
+
+ADR 0013 freezes `ATLSLG01` command-log format V1. Its PR2 implementation is complete locally;
+hosted Clang, sanitizer, libFuzzer, pull-request, and merge gates remain pending.
+
+The header contains semantic/configuration identity, one opaque 16-byte log ID, first sequence 1,
+the sorted instrument catalog, an `ATLSCF01` configuration digest, and CRC32C. Every multibyte
+value is fixed-width big-endian. Each record contains exactly one normalized command, its
+authoritative global sequence, committed/rejected classification, rejection reason, event count,
+the existing canonical event digest, and CRC32C. Raw enum bytes and explicit optional-price
+presence preserve domain-invalid New commands. The exact offsets and sizes are frozen in
+`docs/command-log-format.md`.
+
+The log contains committed commands and domain rejections because both publish a sequence. It
+excludes representation/parse failures, sequence-exhaustion attempts, and internal preparation
+failures because none publishes a new sequence and event batch.
+
+A persistence session submits through:
+
+```text
+prepare -> encode -> append -> configured flush/sync -> no-throw commit
+```
+
+Durability modes are buffered, flush each record, and sync each record; sync is the API default.
+Buffered mode makes no crash-durability promise. A partial append, append error, flush error, or
+sync error abandons the prepared command and permanently poisons the session. Recovery from the
+validated log is required before another submission because a complete record may be visible even
+when durability confirmation failed.
+
+Once the write-ahead action succeeds, the production core commit has no expected failure channel.
+If the persistence adapter nevertheless detects a post-commit sequence, event, outcome, or
+identity mismatch, it returns `state_not_recoverable`, permanently poisons the session, and
+requires recovery from the authoritative log. It is not a domain rejection or a continuation
+path.
+
+The bounded scanner distinguishes only EOF-interrupted final records as torn tails. A complete bad
+checksum, invalid schema, length, version, type, configuration, or sequence is corruption even at
+the end of the file. Repair accepts only a torn final record, copies the complete validated prefix
+to a distinct new output, and never truncates or overwrites the original. A clean log needs no
+repair and is refused.
+
+Fast replay validates the file before reconstructing engine state. Verify replay additionally
+checks classification, rejection reason, event count, and event digest for every record.
+Diagnostic replay checks invariants after every command and stops at the first difference.
+Strict tail policy rejects a torn tail; valid-prefix policy replays the complete prefix with an
+explicit warning and never ignores corruption.
+
+`ATLSLG01` stores an expected event count and digest, not complete expected event bodies.
+Diagnostic replay can compare that metadata with actual recomputed events, but cannot reconstruct
+a field-level expected event body without a separate exact transcript.
+
+Machine-readable inspection and replay reports use `ATLAS_LOG_REPORT_V1` and
+`ATLAS_REPLAY_REPORT_V1`. Counts, sequences, sizes, and offsets are canonical decimal strings;
+reports contain no elapsed times or host paths.
 
 ## Error boundaries
 
@@ -198,6 +253,10 @@ nor caller-selected sequences are installed public API.
 - Allocation failure is a propagated resource failure, not ordinary command rejection. From a
   public engine it does not publish the reserved sequence.
 - Invariant failures indicate implementation bugs and are not converted into client rejections.
+- Command-log append/flush/sync failures happen before engine publication, poison the persistence
+  session, and require recovery; they are not domain rejections.
+- An impossible mismatch after a successfully persisted record begins core commit permanently
+  poisons the persistence session and returns `state_not_recoverable`; recovery is mandatory.
 
 ## Matching planning and execution boundary
 
@@ -295,8 +354,8 @@ current best bid/ask price and aggregate, next sequence, and sticky sequence exh
 multi-engine observers additionally expose catalog membership, total active count, per-instrument
 top/snapshot values, one complete engine snapshot, and the engine-wide state digest. Node
 addresses, levels, indexes, planners, prepared transactions, and detailed internal component
-errors are not public API. Allocation failure propagates. Durable logging, replay, and persisted
-restoration remain later Phase 4 work.
+errors are not public API. Allocation failure propagates. The command-log/replay contract and local
+PR2 implementation are complete; persisted restoration remains later Phase 4 work.
 
 ## Canonical snapshots and digests
 

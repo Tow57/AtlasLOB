@@ -18,14 +18,20 @@ latency claims.
 **Phase 2 matching MVP remains on remote `main`. Phase 3 is complete on published PR #5 head
 `29049756`: its required hosted GCC/Clang Release, ASan/UBSan, Python 3.11-3.14, formatting, fixed
 PR corpus, wheel, and Linux link-safety checks passed. PR #5 remains open and remotely unmerged
-because this session has no GitHub authentication. Phase 4 PR1 is implemented
+because the available GitHub integration cannot create or merge pull requests in this repository.
+Phase 4 PR1 is implemented
 and locally validated on `codex/phase4-router`. It adds deterministic multi-instrument
 routing, one global sequence, an engine-wide active-ID directory and capacity, canonical
 `ATLSME01` evidence, a strict test-only `ATLAS_DIFF_V2` adapter, and independent Python
-`ReferenceRouter`/Generator V2 surfaces. Command-log, replay, persisted snapshots, and native
-Python distribution remain later Phase 4 work.**
+`ReferenceRouter`/Generator V2 surfaces. Phase 4 PR2 is implemented and locally validated on
+`codex/phase4-command-log`: it adds the canonical `ATLSLG01` log, write-ahead sessions, bounded
+inspection and safe tail repair, verified replay, deterministic reports, command-line tools, and
+decoder fuzz targets. Debug and Release each pass all 418 CTest cases; the non-campaign Python gate
+passes 288 tests with two expected Windows symlink skips. Hosted Clang, sanitizer, and libFuzzer
+validation remain pending, so PR2 is not yet recorded as merged or fully green. Persisted snapshots
+and native Python distribution remain later Phase 4 work.**
 
-See the [Phase 4 router evidence index](docs/evidence/phase4/README.md) for the current validation
+See the [Phase 4 evidence index](docs/evidence/phase4/README.md) for the current validation
 boundary.
 
 | Capability | Status | Evidence |
@@ -69,9 +75,10 @@ boundary.
 | Multi-engine snapshots and `ATLSME01` digest | Complete locally; hosted gate pending | Independent C++/Python golden evidence |
 | Native multi-instrument adapter and strict decoder | Complete locally; hosted gate pending | `atlas_diff_multi_native`, `ATLAS_DIFF_V2` |
 | Python `ReferenceRouter` and Generator V2 | Complete locally; hosted gate pending | V2 workload, manifest, and interleaving tests |
+| Append-only command log, scanner, repair, and replay | Complete locally; hosted gate pending | [ADR 0013](docs/decisions/0013-command-log-and-replay.md), [format](docs/command-log-format.md), 85 persistence tests |
 | Resting book structure | Complete | `stress.InstrumentBookStress*` |
 | Matching and normalized command execution | Complete | Phase 2 |
-| Command log, replay, persisted recovery, and Python bindings | Planned | Remaining Phase 4 PRs |
+| Persisted snapshot recovery and Python bindings | Planned | Phase 4 PR3 and PR4 |
 | Benchmarks and gateway | Planned | Later gated phases |
 
 ## Quick start
@@ -124,8 +131,8 @@ python3 -m venv .venv
 .venv/bin/python -m pip install -e ".[dev]"
 cmake --preset dev-gcc
 cmake --build --preset dev-gcc --target atlas_diff_native
-.venv/bin/python -m ruff format --check python
-.venv/bin/python -m ruff check python
+.venv/bin/python -m ruff format --check python tests/fuzz/run_command_log_fuzz_smoke.py
+.venv/bin/python -m ruff check python tests/fuzz/run_command_log_fuzz_smoke.py
 .venv/bin/python -m mypy
 .venv/bin/python -m pytest
 ```
@@ -137,8 +144,8 @@ py -3.11 -m venv .venv
 .\.venv\Scripts\python.exe -m pip install -e ".[dev]"
 cmake --preset dev-gcc
 cmake --build --preset dev-gcc --target atlas_diff_native
-.\.venv\Scripts\python.exe -m ruff format --check python
-.\.venv\Scripts\python.exe -m ruff check python
+.\.venv\Scripts\python.exe -m ruff format --check python tests/fuzz/run_command_log_fuzz_smoke.py
+.\.venv\Scripts\python.exe -m ruff check python tests/fuzz/run_command_log_fuzz_smoke.py
 .\.venv\Scripts\python.exe -m mypy
 .\.venv\Scripts\python.exe -m pytest
 ```
@@ -220,6 +227,9 @@ developed with MinGW GCC on Windows, but Linux CI is the support authority.
   sequence and active-order identity engine-wide, defines projected local/global capacity and the
   internal prepare/commit boundary, and freezes the separate `ATLSME01`/V2 evidence family without
   changing semantic version 6 or the Phase 2/3 encodings.
+- ADR 0013 freezes the byte-exact `ATLSLG01` V1 header and records, CRC32C coverage, write-ahead
+  durability and poisoning boundary, bounded scanning, safe tail repair, replay verification,
+  deterministic report schemas, and sticky poisoning after an impossible post-WAL commit mismatch.
 
 See [the semantic contract](docs/semantics.md) and
 [ADR 0001](docs/decisions/0001-core-semantics.md) plus

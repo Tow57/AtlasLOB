@@ -48,6 +48,12 @@ class MultiInstrumentEngineAccess final {
 
   [[nodiscard]] static PreparedMultiInstrumentCommand prepare(MultiInstrumentEngine& engine,
                                                               const domain::Command& command);
+  [[nodiscard]] static bool validate_invariants(const MultiInstrumentEngine& engine) noexcept;
+
+  // Private deterministic seam used only by persistence boundary tests. It is
+  // intentionally absent from the installed public API.
+  static void set_next_sequence_for_testing(MultiInstrumentEngine& engine,
+                                            domain::Sequence next_sequence);
 };
 
 }  // namespace atlaslob::core

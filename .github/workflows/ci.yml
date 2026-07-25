@@ -111,6 +111,55 @@ jobs:
       - name: Test
         run: ctest --preset asan-ubsan
 
+  command-log-fuzz-smoke:
+    name: Command-log decoder fuzz smoke
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install Clang and Ninja
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes clang ninja-build
+
+      - name: Configure fuzz targets
+        run: >-
+          cmake -S . -B build/command-log-fuzz -G Ninja
+          -DBUILD_TESTING=ON
+          -DCMAKE_BUILD_TYPE=Debug
+          -DCMAKE_CXX_COMPILER=clang++
+          -DATLAS_BUILD_FUZZERS=ON
+          -DATLAS_ENABLE_ASAN=ON
+          -DATLAS_ENABLE_UBSAN=ON
+          -DATLAS_WARNINGS_AS_ERRORS=ON
+
+      - name: Build fuzz targets
+        run: >-
+          cmake --build build/command-log-fuzz --parallel 2
+          --target atlas_fuzz_log_header_decoder
+          atlas_fuzz_log_record_decoder
+
+      - name: Run retained-seed smoke campaigns
+        run: >-
+          python3 tests/fuzz/run_command_log_fuzz_smoke.py
+          --header-fuzzer build/command-log-fuzz/atlas_fuzz_log_header_decoder
+          --record-fuzzer build/command-log-fuzz/atlas_fuzz_log_record_decoder
+          --corpus-dir "$RUNNER_TEMP/atlas-command-log-corpus"
+          --runs 1000
+
+      - name: Retain decoder corpus
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: command-log-decoder-corpus
+          path: ${{ runner.temp }}/atlas-command-log-corpus
+          if-no-files-found: error
+          retention-days: 14
+
   python-evidence:
     name: Python ${{ matrix.python-version }}
     runs-on: ubuntu-24.04
@@ -150,10 +199,14 @@ jobs:
         run: python -m pip install --disable-pip-version-check -e ".[dev]"
 
       - name: Check Python formatting
-        run: python -m ruff format --check python
+        run: >-
+          python -m ruff format --check
+          python tests/fuzz/run_command_log_fuzz_smoke.py
 
       - name: Lint Python
-        run: python -m ruff check python
+        run: >-
+          python -m ruff check
+          python tests/fuzz/run_command_log_fuzz_smoke.py
 
       - name: Type-check Python
         run: python -m mypy

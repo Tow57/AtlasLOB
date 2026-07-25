@@ -68,6 +68,21 @@ The format is based on Keep a Changelog, and public releases will follow semanti
   parity checker.
 - ADR 0012 documenting multi-instrument routing, global sequencing and identity, preparation
   compatibility, invariants, and deterministic V2 evidence.
+- ADR 0013 and a byte-level command-log reference freezing `ATLSLG01` V1, `ATLSCF01`,
+  fixed command records, CRC32C coverage, bounded scanner classifications, write-ahead durability
+  and poisoning, copy-only tail repair, replay modes, deterministic report schemas, and the fatal
+  impossible-commit boundary.
+- A separate `AtlasLOB::persistence` target with canonical command-log codecs, checked big-endian
+  arithmetic, Castagnoli CRC32C, deterministic configuration hashing, a bounded scanner, structured
+  diagnostics, and exact valid-prefix identity checks across replay passes.
+- A file-backed write-ahead `LoggedEngine` with buffered, flush-per-record, and sync-per-record
+  durability modes; sequenced rejection logging; allocation-free core publication; and sticky
+  poisoning after partial write, flush, or sync failure.
+- `atlas_inspect` and `atlas_replay` tools with stable exit codes, deterministic text/JSON reports,
+  clean-log refusal, safe torn-tail repair, strict/valid-prefix policies, and
+  fast/verify/diagnostic replay.
+- Header and record libFuzzer targets, retained canonical seed generation, and a hosted bounded
+  ASan/UBSan fuzz-smoke job.
 - C++20 domain library, CLI, and unit-test foundation.
 - Strong identifier, price, quantity, and sequence values.
 - Deterministic new-order validation and demonstration command.
@@ -168,6 +183,9 @@ The format is based on Keep a Changelog, and public releases will follow semanti
   formatting, wheel, PR-corpus, and Linux link-safety checks. Phase 3 is complete on that published
   head, but it remains remotely unmerged because GitHub authentication is unavailable in this
   session. Phase 4 PR1 router work is implemented and passes its available local Debug/Release,
-  formatting, Python, stress, and cross-language gates; hosted validation remains pending.
+  formatting, Python, stress, and cross-language gates; hosted validation remains pending. Phase 4
+  PR2 command-log/replay implementation now passes the local Debug, Release, production-only,
+  persistence, Python, typing, linting, and formatting gates; hosted Clang, sanitizer, libFuzzer,
+  pull-request, and merge gates remain pending.
 - ADR 0011, the Phase 3 evidence index, and documented dependency deferrals for Phase 4,
   Phase 6, and future persistence-format fuzzing.
