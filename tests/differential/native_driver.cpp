@@ -450,13 +450,11 @@ void write_quoted_decimal(std::ostream& output, const DecimalAccumulator& value)
   const auto next_sequence = engine.next_sequence();
   const auto sequence_exhausted = engine.sequence_exhausted();
 
-  if constexpr (std::numeric_limits<std::size_t>::digits >
-                std::numeric_limits<std::uint64_t>::digits) {
-    if (active_order_count > std::numeric_limits<std::uint64_t>::max()) {
-      throw std::logic_error{"native evidence active count exceeds its snapshot representation"};
-    }
+  const auto serialized_active_order_count = static_cast<std::uint64_t>(active_order_count);
+  if (static_cast<std::size_t>(serialized_active_order_count) != active_order_count) {
+    throw std::logic_error{"native evidence active count exceeds its snapshot representation"};
   }
-  if (static_cast<std::uint64_t>(active_order_count) != snapshot.active_order_count ||
+  if (serialized_active_order_count != snapshot.active_order_count ||
       empty != (snapshot.active_order_count == 0U) || top != snapshot_top(snapshot) ||
       sequence_exhausted != snapshot.sequence_exhausted) {
     throw std::logic_error{"native evidence observers differ from the public snapshot"};
@@ -476,7 +474,7 @@ void write_quoted_decimal(std::ostream& output, const DecimalAccumulator& value)
   return StateEvidence{
       .snapshot = std::move(snapshot),
       .top = top,
-      .active_order_count = static_cast<std::uint64_t>(active_order_count),
+      .active_order_count = serialized_active_order_count,
       .empty = empty,
       .next_sequence = next_sequence,
       .sequence_exhausted = sequence_exhausted,
