@@ -120,6 +120,7 @@ jobs:
         python-version: ["3.11", "3.12", "3.13", "3.14"]
     env:
       ATLAS_DIFF_NATIVE: ${{ github.workspace }}/build/dev-gcc/atlas_diff_native
+      ATLAS_DIFF_MULTI_NATIVE: ${{ github.workspace }}/build/dev-gcc/atlas_diff_multi_native
     steps:
       - name: Check out repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -140,7 +141,10 @@ jobs:
         run: cmake --preset dev-gcc
 
       - name: Build native evidence adapter
-        run: cmake --build --preset dev-gcc --target atlas_diff_native --parallel 2
+        run: >-
+          cmake --build --preset dev-gcc
+          --target atlas_diff_native atlas_diff_multi_native
+          --parallel 2
 
       - name: Install Python evidence dependencies
         run: python -m pip install --disable-pip-version-check -e ".[dev]"
