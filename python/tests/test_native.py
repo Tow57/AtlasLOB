@@ -15,6 +15,7 @@ from atlaslob.domain import (
     OrderSnapshot,
     OrderType,
     PriceLevelSnapshot,
+    RejectReason,
     ReplaceOrder,
     Side,
     TimeInForce,
@@ -30,7 +31,7 @@ from atlaslob.native import (
 
 _EMPTY_TRANSCRIPT = """\
 {"schema":"atlas_diff_v1","kind":"config","mode":"exact","semantics_version":6,"instrument_id":"7","max_order_quantity":"1000","tick_increment":"1","max_active_orders":"16","snapshot_interval":"0"}
-{"schema":"atlas_diff_v1","kind":"final","commands_processed":"0","state":{"active_order_count":"0","empty":true,"next_sequence":"1","sequence_exhausted":false,"best_bid":null,"best_ask":null,"state_digest":"19a8ffaeb1bee1b8aa87123c3508af1bfa87e3d634a09ba491e1b85fe597b219"},"snapshot":{"semantics_version":6,"instrument_id":"7","last_sequence":"0","sequence_exhausted":false,"active_order_count":"0","bids":[],"asks":[]}}
+{"schema":"atlas_diff_v1","kind":"final","commands_processed":"0","state":{"active_order_count":"0","bid_level_count":"0","bid_order_count":"0","bid_aggregate_quantity":"0","ask_level_count":"0","ask_order_count":"0","ask_aggregate_quantity":"0","empty":true,"next_sequence":"1","sequence_exhausted":false,"best_bid":null,"best_ask":null,"state_digest":"19a8ffaeb1bee1b8aa87123c3508af1bfa87e3d634a09ba491e1b85fe597b219"},"snapshot":{"semantics_version":6,"instrument_id":"7","last_sequence":"0","sequence_exhausted":false,"active_order_count":"0","bids":[],"asks":[]}}
 """
 
 
@@ -45,7 +46,6 @@ def _executable() -> Path:
         return candidate.resolve()
 
     candidates = (
-        Path("build/fix-debug/atlas_diff_native.exe"),
         Path("build/dev-gcc/atlas_diff_native.exe"),
         Path("build/dev-gcc/atlas_diff_native"),
     )
@@ -63,7 +63,7 @@ def test_native_executable_is_required_and_explicit_path_is_authoritative(
     tmp_path: Path,
 ) -> None:
     missing = tmp_path / "missing-atlas-diff-native"
-    fallback = tmp_path / "build" / "fix-debug" / "atlas_diff_native.exe"
+    fallback = tmp_path / "build" / "dev-gcc" / "atlas_diff_native.exe"
     monkeypatch.chdir(tmp_path)
     monkeypatch.delenv("ATLAS_DIFF_NATIVE", raising=False)
 
@@ -157,6 +157,12 @@ def _snapshot_transcript(snapshot: BookSnapshot) -> str:
     }
     state = {
         "active_order_count": str(snapshot.active_order_count),
+        "bid_level_count": str(len(snapshot.bids)),
+        "bid_order_count": str(sum(len(level.orders) for level in snapshot.bids)),
+        "bid_aggregate_quantity": str(sum(level.aggregate_quantity for level in snapshot.bids)),
+        "ask_level_count": str(len(snapshot.asks)),
+        "ask_order_count": str(sum(len(level.orders) for level in snapshot.asks)),
+        "ask_aggregate_quantity": str(sum(level.aggregate_quantity for level in snapshot.asks)),
         "empty": snapshot.active_order_count == 0,
         "next_sequence": str(0 if snapshot.sequence_exhausted else snapshot.last_sequence + 1),
         "sequence_exhausted": snapshot.sequence_exhausted,
@@ -245,6 +251,28 @@ def test_empty_transcript_decodes_and_cross_checks_the_canonical_state() -> None
     assert transcript.final is not None
     assert transcript.final.snapshot.active_order_count == 0
     assert transcript.final.state.next_sequence == 1
+
+
+def test_side_aggregate_summary_is_exact_beyond_unsigned_64_bit() -> None:
+    maximum = (1 << 64) - 1
+    run = run_native(
+        _executable(),
+        NativeInputConfig(
+            7,
+            MatchingConfig(max_order_quantity=maximum, max_active_orders=2),
+            snapshot_interval=2,
+        ),
+        (
+            _limit(1, Side.BUY, 100, maximum),
+            _limit(2, Side.BUY, 99, maximum),
+        ),
+    )
+
+    assert run.transcript.final is not None
+    assert run.transcript.final.state.bid_level_count == 2
+    assert run.transcript.final.state.bid_order_count == 2
+    assert run.transcript.final.state.bid_aggregate_quantity == maximum * 2
+    assert run.transcript.final.state.ask_aggregate_quantity == 0
 
 
 @pytest.mark.parametrize(
@@ -414,7 +442,11 @@ def test_real_compact_driver_retains_digests_and_omits_events() -> None:
     run = run_native(
         _executable(),
         NativeInputConfig(7, snapshot_interval=1),
-        (_limit(1, Side.BUY, 100, 5), CancelOrder(11, 1, 7)),
+        (
+            _limit(1, Side.BUY, 100, 5),
+            CancelOrder(11, 1, 7),
+            CancelOrder(11, 999, 7),
+        ),
         mode="compact",
     )
 
@@ -424,3 +456,8 @@ def test_real_compact_driver_retains_digests_and_omits_events() -> None:
     assert all(result.events is None for result in run.transcript.results)
     assert all(result.event_digest is not None for result in run.transcript.results)
     assert all(result.snapshot is not None for result in run.transcript.results)
+    assert [result.reject_reason for result in run.transcript.results] == [
+        None,
+        None,
+        RejectReason.UNKNOWN_ORDER_ID,
+    ]

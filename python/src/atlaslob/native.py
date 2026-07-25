@@ -5,16 +5,17 @@ from __future__ import annotations
 import json
 import re
 import subprocess
-from collections.abc import Sequence
+from collections.abc import Iterable, Iterator, Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Literal, NoReturn, TypeVar, cast
+from typing import Literal, NoReturn, TypeAlias, TypeVar, cast
 
 from atlaslob.canonical import event_digest, state_digest
 from atlaslob.domain import (
     ATLASLOB_SEMANTICS_VERSION,
     I64_MAX,
     I64_MIN,
+    U8_MAX,
     U32_MAX,
     U64_MAX,
     AcceptedEvent,
@@ -55,9 +56,11 @@ _DIGEST = re.compile(r"[0-9a-f]{64}\Z")
 _SUCCESS_EXIT_CODE = 0
 _INPUT_ERROR_EXIT_CODE = 2
 _ENGINE_ERROR_EXIT_CODE = 3
+_MAX_TOTAL_AGGREGATE_QUANTITY = U64_MAX * U64_MAX
 _REQUEST_BOUND_ERROR_CODES = frozenset(
     {
         "adapter_exception",
+        "engine_construction_failure",
         "engine_exception",
         "input_read_failure",
         "resource_failure",
@@ -145,6 +148,12 @@ class NativeConfigRecord:
 @dataclass(frozen=True, slots=True)
 class NativeState:
     active_order_count: int
+    bid_level_count: int
+    bid_order_count: int
+    bid_aggregate_quantity: int
+    ask_level_count: int
+    ask_order_count: int
+    ask_aggregate_quantity: int
     empty: bool
     next_sequence: int
     sequence_exhausted: bool
@@ -161,6 +170,7 @@ class NativeResultRecord:
     outcome: Literal["committed", "rejected", "engine_error"]
     command_sequence: int | None
     engine_error: EngineError | None
+    reject_reason: RejectReason | None
     event_digest: str | None
     events: tuple[Event, ...] | None
     state: NativeState
@@ -194,6 +204,226 @@ class NativeRun:
     transcript: NativeTranscript
     stdout: str
     stderr: str
+
+
+NativeRecord: TypeAlias = (
+    NativeConfigRecord | NativeResultRecord | NativeFinalRecord | NativeErrorRecord
+)
+_NO_EXPECTED_COMMAND = object()
+
+
+@dataclass(frozen=True, slots=True)
+class NativeStreamSummary:
+    """Bounded terminal summary produced by :class:`NativeStreamDecoder`."""
+
+    config: NativeConfigRecord | None
+    result_count: int
+    last_result: NativeResultRecord | None
+    final: NativeFinalRecord | None
+    error: NativeErrorRecord | None
+
+
+class NativeStreamDecoder:
+    """Incrementally decode and cross-check a native JSONL transcript.
+
+    The decoder retains only the config, latest result, and terminal record.
+    Callers may therefore compare or persist each yielded result without
+    accumulating a command-sized transcript in memory.
+    """
+
+    __slots__ = (
+        "_config",
+        "_engine_error_seen",
+        "_error",
+        "_expected_command_iterator",
+        "_expected_input",
+        "_expected_lookahead",
+        "_expected_mode",
+        "_final",
+        "_finished",
+        "_last_result",
+        "_output_line",
+        "_result_count",
+    )
+
+    def __init__(
+        self,
+        *,
+        expected_mode: OutputMode | None = None,
+        expected_input: NativeInputConfig | None = None,
+        expected_commands: Iterable[Command] | None = None,
+    ) -> None:
+        self._expected_mode = expected_mode
+        self._expected_input = expected_input
+        self._expected_command_iterator: Iterator[Command] | None = (
+            iter(expected_commands) if expected_commands is not None else None
+        )
+        self._expected_lookahead: Command | object = _NO_EXPECTED_COMMAND
+        self._config: NativeConfigRecord | None = None
+        self._last_result: NativeResultRecord | None = None
+        self._final: NativeFinalRecord | None = None
+        self._error: NativeErrorRecord | None = None
+        self._result_count = 0
+        self._output_line = 0
+        self._engine_error_seen = False
+        self._finished = False
+
+    def feed_line(self, line: str) -> NativeRecord:
+        """Decode, validate, and return one logical JSONL record."""
+
+        if self._finished:
+            raise NativeProtocolError("native stream decoder is already finished")
+        self._output_line += 1
+        record = _parse_json_line(line, self._output_line)
+        kind = _string(_field(record, "kind"), "kind")
+
+        if self._final is not None or self._error is not None:
+            raise NativeProtocolError("records appear after a terminal record")
+        if kind == "config":
+            return self._accept_config(record)
+        if kind == "result":
+            return self._accept_result(record)
+        if kind == "final":
+            return self._accept_final(record)
+        if kind == "error":
+            return self._accept_error(record)
+        raise NativeProtocolError(f"unknown record kind: {kind}")
+
+    def finish(self, returncode: int | None = None) -> NativeStreamSummary:
+        """Validate terminal state and return a command-count-bounded summary."""
+
+        if self._finished:
+            raise NativeProtocolError("native stream decoder is already finished")
+        self._finished = True
+        if self._output_line == 0:
+            raise NativeProtocolError("native output is empty")
+        if self._final is None and self._error is None:
+            raise NativeProtocolError("transcript has no terminal record")
+        if (
+            self._config is None
+            and self._error is None
+            and (
+                self._expected_mode is not None
+                or self._expected_input is not None
+                or self._expected_command_iterator is not None
+            )
+        ):
+            raise NativeProtocolError("native output did not echo the requested config")
+        if returncode is not None:
+            _validate_stream_process_terminal_state(
+                returncode=returncode,
+                result_count=self._result_count,
+                last_result=self._last_result,
+                final=self._final,
+                error=self._error,
+                expected_commands_exhausted=(
+                    not self._expected_has_remaining()
+                    if self._expected_command_iterator is not None
+                    else None
+                ),
+            )
+        return NativeStreamSummary(
+            config=self._config,
+            result_count=self._result_count,
+            last_result=self._last_result,
+            final=self._final,
+            error=self._error,
+        )
+
+    def _accept_config(self, record: dict[str, object]) -> NativeConfigRecord:
+        if self._config is not None or self._result_count != 0:
+            raise NativeProtocolError("config record is not first")
+        config = _parse_config(record)
+        if self._expected_mode is not None and config.mode != self._expected_mode:
+            raise NativeProtocolError("native output mode differs from the requested mode")
+        if self._expected_input is not None and config.input != self._expected_input:
+            raise NativeProtocolError("native output config differs from the requested config")
+        self._config = config
+        return config
+
+    def _accept_result(self, record: dict[str, object]) -> NativeResultRecord:
+        if self._config is None:
+            raise NativeProtocolError("result appears before config")
+        result = _parse_result(record)
+        if result.command_index != self._result_count:
+            raise NativeProtocolError("result command indices are not contiguous")
+        if self._last_result is not None and result.line <= self._last_result.line:
+            raise NativeProtocolError("result source lines are not increasing")
+        _validate_result_mode(result, self._config.mode)
+        _validate_stream_configured_result(self._config, result)
+        _validate_stream_result_transition(
+            result,
+            index=self._result_count,
+            previous=self._last_result,
+            engine_error_seen=self._engine_error_seen,
+        )
+        if self._expected_command_iterator is not None:
+            _validate_stream_expected_result(
+                result,
+                self._take_expected_command(),
+                self._result_count,
+            )
+        self._result_count += 1
+        self._last_result = result
+        self._engine_error_seen = result.outcome == "engine_error"
+        return result
+
+    def _accept_final(self, record: dict[str, object]) -> NativeFinalRecord:
+        if self._config is None:
+            raise NativeProtocolError("final record appears before config")
+        final = _parse_final(record)
+        if final.commands_processed != self._result_count:
+            raise NativeProtocolError("final command count does not match result records")
+        _validate_stream_configured_final(self._config, final)
+        _validate_stream_final_continuity(self._last_result, final)
+        self._final = final
+        return final
+
+    def _accept_error(self, record: dict[str, object]) -> NativeErrorRecord:
+        error = _parse_error(record)
+        _validate_stream_error_continuity(self._last_result, error)
+        if (
+            self._expected_mode is not None
+            or self._expected_input is not None
+            or self._expected_command_iterator is not None
+        ):
+            _validate_stream_expected_error(
+                error,
+                result_count=self._result_count,
+                expected_commands_exhausted=(
+                    not self._expected_has_remaining()
+                    if self._expected_command_iterator is not None
+                    else None
+                ),
+                config_seen=self._config is not None,
+            )
+        self._error = error
+        return error
+
+    def _take_expected_command(self) -> Command:
+        if self._expected_lookahead is not _NO_EXPECTED_COMMAND:
+            command = cast(Command, self._expected_lookahead)
+            self._expected_lookahead = _NO_EXPECTED_COMMAND
+            return command
+        if self._expected_command_iterator is None:
+            raise RuntimeError("expected-command iterator is not configured")
+        try:
+            return next(self._expected_command_iterator)
+        except StopIteration as exc:
+            raise NativeProtocolError(
+                "native output contains more results than requested commands"
+            ) from exc
+
+    def _expected_has_remaining(self) -> bool:
+        if self._expected_lookahead is not _NO_EXPECTED_COMMAND:
+            return True
+        if self._expected_command_iterator is None:
+            return False
+        try:
+            self._expected_lookahead = next(self._expected_command_iterator)
+        except StopIteration:
+            return False
+        return True
 
 
 _COMMAND_NAMES = {
@@ -239,63 +469,136 @@ _ENGINE_ERRORS = {
 }
 
 
+def encode_header(config: NativeInputConfig) -> str:
+    """Encode one canonical ``ATLAS_DIFF_V1`` header without a newline."""
+
+    return " ".join(
+        (
+            _HEADER,
+            str(config.instrument_id),
+            str(config.engine.max_order_quantity),
+            str(config.engine.tick_increment),
+            str(config.engine.max_active_orders),
+            str(config.snapshot_interval),
+        )
+    )
+
+
+def encode_command(command: Command) -> str:
+    """Encode one representable command without a newline."""
+
+    _require_representable(command)
+    if isinstance(command, NewOrder):
+        present = int(command.limit_price is not None)
+        price = command.limit_price if command.limit_price is not None else 0
+        return " ".join(
+            str(value)
+            for value in (
+                "N",
+                command.client_id,
+                command.order_id,
+                command.instrument_id,
+                command.side,
+                command.order_type,
+                command.time_in_force,
+                present,
+                price,
+                command.quantity,
+            )
+        )
+    if isinstance(command, CancelOrder):
+        return f"C {command.client_id} {command.order_id} {command.instrument_id}"
+    if isinstance(command, ReplaceOrder):
+        return " ".join(
+            str(value)
+            for value in (
+                "R",
+                command.client_id,
+                command.old_order_id,
+                command.new_order_id,
+                command.instrument_id,
+                command.new_limit_price,
+                command.new_quantity,
+            )
+        )
+    raise TypeError(f"unsupported command type: {type(command)!r}")
+
+
+def decode_header(line: str) -> NativeInputConfig:
+    """Decode one canonical persisted ``ATLAS_DIFF_V1`` header."""
+
+    fields = _input_fields(line, "header")
+    if len(fields) != 6:
+        raise ValueError("native input header must contain exactly 6 fields")
+    if fields[0] != _HEADER:
+        raise ValueError("native input header has unsupported magic")
+    try:
+        return NativeInputConfig(
+            instrument_id=_input_uint(fields[1], "instrument_id", U32_MAX),
+            engine=MatchingConfig(
+                max_order_quantity=_input_uint(fields[2], "max_order_quantity", U64_MAX),
+                tick_increment=_input_int(fields[3], "tick_increment", I64_MIN, I64_MAX),
+                max_active_orders=_input_uint(fields[4], "max_active_orders", U64_MAX),
+            ),
+            snapshot_interval=_input_uint(fields[5], "snapshot_interval", U64_MAX),
+        )
+    except ValueError as exc:
+        raise ValueError(f"invalid native input header: {exc}") from exc
+
+
+def decode_command(line: str) -> Command:
+    """Decode one canonical representable ``ATLAS_DIFF_V1`` command."""
+
+    fields = _input_fields(line, "command")
+    if not fields:
+        raise ValueError("native input command is empty")
+    kind = fields[0]
+    if kind == "N":
+        if len(fields) != 10:
+            raise ValueError("native new command must contain exactly 10 fields")
+        present = _input_uint(fields[7], "price_present", 1)
+        price = _input_int(fields[8], "limit_price", I64_MIN, I64_MAX)
+        if present == 0 and price != 0:
+            raise ValueError("absent native limit price must use a zero placeholder")
+        return NewOrder(
+            client_id=_input_uint(fields[1], "client_id", U32_MAX),
+            order_id=_input_uint(fields[2], "order_id", U64_MAX),
+            instrument_id=_input_uint(fields[3], "instrument_id", U32_MAX),
+            side=_input_uint(fields[4], "side", U8_MAX),
+            order_type=_input_uint(fields[5], "order_type", U8_MAX),
+            time_in_force=_input_uint(fields[6], "time_in_force", U8_MAX),
+            limit_price=price if present == 1 else None,
+            quantity=_input_uint(fields[9], "quantity", U64_MAX),
+        )
+    if kind == "C":
+        if len(fields) != 4:
+            raise ValueError("native cancel command must contain exactly 4 fields")
+        return CancelOrder(
+            client_id=_input_uint(fields[1], "client_id", U32_MAX),
+            order_id=_input_uint(fields[2], "order_id", U64_MAX),
+            instrument_id=_input_uint(fields[3], "instrument_id", U32_MAX),
+        )
+    if kind == "R":
+        if len(fields) != 7:
+            raise ValueError("native replace command must contain exactly 7 fields")
+        return ReplaceOrder(
+            client_id=_input_uint(fields[1], "client_id", U32_MAX),
+            old_order_id=_input_uint(fields[2], "old_order_id", U64_MAX),
+            new_order_id=_input_uint(fields[3], "new_order_id", U64_MAX),
+            instrument_id=_input_uint(fields[4], "instrument_id", U32_MAX),
+            new_limit_price=_input_int(fields[5], "new_limit_price", I64_MIN, I64_MAX),
+            new_quantity=_input_uint(fields[6], "new_quantity", U64_MAX),
+        )
+    raise ValueError(f"unknown native command kind: {kind}")
+
+
 def encode_stream(config: NativeInputConfig, commands: Sequence[Command]) -> str:
     """Encode already-typed commands into the lossless numeric V1 input grammar."""
 
-    lines = [
-        " ".join(
-            (
-                _HEADER,
-                str(config.instrument_id),
-                str(config.engine.max_order_quantity),
-                str(config.engine.tick_increment),
-                str(config.engine.max_active_orders),
-                str(config.snapshot_interval),
-            )
-        )
-    ]
-    for command in commands:
-        _require_representable(command)
-        if isinstance(command, NewOrder):
-            present = int(command.limit_price is not None)
-            price = command.limit_price if command.limit_price is not None else 0
-            lines.append(
-                " ".join(
-                    str(value)
-                    for value in (
-                        "N",
-                        command.client_id,
-                        command.order_id,
-                        command.instrument_id,
-                        command.side,
-                        command.order_type,
-                        command.time_in_force,
-                        present,
-                        price,
-                        command.quantity,
-                    )
-                )
-            )
-        elif isinstance(command, CancelOrder):
-            lines.append(f"C {command.client_id} {command.order_id} {command.instrument_id}")
-        elif isinstance(command, ReplaceOrder):
-            lines.append(
-                " ".join(
-                    str(value)
-                    for value in (
-                        "R",
-                        command.client_id,
-                        command.old_order_id,
-                        command.new_order_id,
-                        command.instrument_id,
-                        command.new_limit_price,
-                        command.new_quantity,
-                    )
-                )
-            )
-        else:
-            raise TypeError(f"unsupported command type: {type(command)!r}")
-    return "\n".join(lines) + "\n"
+    return (
+        "\n".join((encode_header(config), *(encode_command(command) for command in commands)))
+        + "\n"
+    )
 
 
 def run_native(
@@ -348,75 +651,23 @@ def decode_jsonl(
 ) -> NativeTranscript:
     """Strictly decode and cross-check a complete native JSONL transcript."""
 
-    raw_lines = text.splitlines()
-    if not raw_lines:
-        raise NativeProtocolError("native output is empty")
-
-    config: NativeConfigRecord | None = None
-    results: list[NativeResultRecord] = []
-    final: NativeFinalRecord | None = None
-    error: NativeErrorRecord | None = None
-
-    for offset, line in enumerate(raw_lines, start=1):
-        if not line:
-            raise NativeProtocolError(f"output line {offset} is blank")
-        try:
-            value = cast(
-                object,
-                json.loads(
-                    line,
-                    object_pairs_hook=_unique_json_object,
-                    parse_constant=_reject_json_constant,
-                ),
-            )
-        except NativeProtocolError:
-            raise
-        except (ValueError, OverflowError, RecursionError) as exc:
-            raise NativeProtocolError(f"output line {offset} is not valid JSON") from exc
-        record = _object(value, f"output line {offset}")
-        _require_schema(record)
-        kind = _string(_field(record, "kind"), "kind")
-
-        if final is not None or error is not None:
-            raise NativeProtocolError("records appear after a terminal record")
-        if kind == "config":
-            if config is not None or results:
-                raise NativeProtocolError("config record is not first")
-            config = _parse_config(record)
-        elif kind == "result":
-            if config is None:
-                raise NativeProtocolError("result appears before config")
-            result = _parse_result(record)
-            if result.command_index != len(results):
-                raise NativeProtocolError("result command indices are not contiguous")
-            if results and result.line <= results[-1].line:
-                raise NativeProtocolError("result source lines are not increasing")
-            _validate_result_mode(result, config.mode)
-            results.append(result)
-        elif kind == "final":
-            if config is None:
-                raise NativeProtocolError("final record appears before config")
-            final = _parse_final(record)
-            if final.commands_processed != len(results):
-                raise NativeProtocolError("final command count does not match result records")
-        elif kind == "error":
-            error = _parse_error(record)
-        else:
-            raise NativeProtocolError(f"unknown record kind: {kind}")
-
-    if final is None and error is None:
-        raise NativeProtocolError("transcript has no terminal record")
-    if final is not None and error is not None:
-        raise NativeProtocolError("transcript has two terminal records")
-    transcript = NativeTranscript(config, tuple(results), final, error)
-    _validate_transcript(
-        transcript,
+    decoder = NativeStreamDecoder(
         expected_mode=expected_mode,
         expected_input=expected_input,
         expected_commands=expected_commands,
-        returncode=returncode,
     )
-    return transcript
+    results: list[NativeResultRecord] = []
+    for line in text.splitlines():
+        record = decoder.feed_line(line)
+        if isinstance(record, NativeResultRecord):
+            results.append(record)
+    summary = decoder.finish(returncode)
+    return NativeTranscript(
+        config=summary.config,
+        results=tuple(results),
+        final=summary.final,
+        error=summary.error,
+    )
 
 
 def _parse_config(record: dict[str, object]) -> NativeConfigRecord:
@@ -476,6 +727,7 @@ def _parse_result(record: dict[str, object]) -> NativeResultRecord:
             "outcome",
             "command_sequence",
             "engine_error",
+            "reject_reason",
             "event_digest",
             "events",
             "state",
@@ -493,6 +745,9 @@ def _parse_result(record: dict[str, object]) -> NativeResultRecord:
     engine_error = _optional_enum_name(
         _field(record, "engine_error"), "engine_error", _ENGINE_ERRORS
     )
+    reject_reason = _optional_enum_name(
+        _field(record, "reject_reason"), "reject_reason", _REJECT_NAMES
+    )
     digest = _optional_digest(_field(record, "event_digest"), "event_digest")
     raw_events = _field(record, "events")
     events = None if raw_events is None else _parse_events(raw_events)
@@ -501,11 +756,21 @@ def _parse_result(record: dict[str, object]) -> NativeResultRecord:
     snapshot = None if raw_snapshot is None else _parse_snapshot(raw_snapshot)
 
     if outcome == "engine_error":
-        if sequence is not None or engine_error is None or digest is not None or events is not None:
+        if (
+            sequence is not None
+            or engine_error is None
+            or reject_reason is not None
+            or digest is not None
+            or events is not None
+        ):
             raise NativeProtocolError("engine-error result has inconsistent nullable fields")
     else:
         if sequence is None or engine_error is not None or digest is None:
             raise NativeProtocolError("domain result has inconsistent nullable fields")
+        if outcome == "rejected" and reject_reason is None:
+            raise NativeProtocolError("rejected result has no rejection reason")
+        if outcome == "committed" and reject_reason is not None:
+            raise NativeProtocolError("committed result carries a rejection reason")
         if events is not None:
             try:
                 batch = EventBatch(events)
@@ -514,6 +779,12 @@ def _parse_result(record: dict[str, object]) -> NativeResultRecord:
             if batch.command_sequence != sequence:
                 raise NativeProtocolError("event sequence differs from result sequence")
             _validate_event_envelope(events, outcome, command_type)
+            if (
+                outcome == "rejected"
+                and isinstance(events[0], RejectedEvent)
+                and events[0].reason is not reject_reason
+            ):
+                raise NativeProtocolError("rejection reason differs from the rejected event")
             if event_digest(batch) != digest:
                 raise NativeProtocolError("event digest differs from canonical event values")
     if snapshot is not None:
@@ -529,6 +800,7 @@ def _parse_result(record: dict[str, object]) -> NativeResultRecord:
         outcome=outcome,
         command_sequence=sequence,
         engine_error=engine_error,
+        reject_reason=reject_reason,
         event_digest=digest,
         events=events,
         state=state,
@@ -570,6 +842,12 @@ def _parse_state(value: object) -> NativeState:
         record,
         {
             "active_order_count",
+            "bid_level_count",
+            "bid_order_count",
+            "bid_aggregate_quantity",
+            "ask_level_count",
+            "ask_order_count",
+            "ask_aggregate_quantity",
             "empty",
             "next_sequence",
             "sequence_exhausted",
@@ -581,6 +859,28 @@ def _parse_state(value: object) -> NativeState:
     state = NativeState(
         active_order_count=_decimal_uint(
             _field(record, "active_order_count"), "active_order_count", U64_MAX
+        ),
+        bid_level_count=_decimal_uint(
+            _field(record, "bid_level_count"), "bid_level_count", U64_MAX
+        ),
+        bid_order_count=_decimal_uint(
+            _field(record, "bid_order_count"), "bid_order_count", U64_MAX
+        ),
+        bid_aggregate_quantity=_decimal_uint(
+            _field(record, "bid_aggregate_quantity"),
+            "bid_aggregate_quantity",
+            _MAX_TOTAL_AGGREGATE_QUANTITY,
+        ),
+        ask_level_count=_decimal_uint(
+            _field(record, "ask_level_count"), "ask_level_count", U64_MAX
+        ),
+        ask_order_count=_decimal_uint(
+            _field(record, "ask_order_count"), "ask_order_count", U64_MAX
+        ),
+        ask_aggregate_quantity=_decimal_uint(
+            _field(record, "ask_aggregate_quantity"),
+            "ask_aggregate_quantity",
+            _MAX_TOTAL_AGGREGATE_QUANTITY,
         ),
         empty=_boolean(_field(record, "empty"), "empty"),
         next_sequence=_decimal_uint(_field(record, "next_sequence"), "next_sequence", U64_MAX),
@@ -1098,6 +1398,20 @@ def _validate_result_mode(result: NativeResultRecord, mode: OutputMode) -> None:
 def _validate_state_snapshot(state: NativeState, snapshot: BookSnapshot) -> None:
     if state.active_order_count != snapshot.active_order_count:
         raise NativeProtocolError("observer count differs from snapshot")
+    expected_bid_summary = _snapshot_side_summary(snapshot.bids)
+    expected_ask_summary = _snapshot_side_summary(snapshot.asks)
+    if (
+        state.bid_level_count,
+        state.bid_order_count,
+        state.bid_aggregate_quantity,
+    ) != expected_bid_summary:
+        raise NativeProtocolError("bid summary differs from snapshot")
+    if (
+        state.ask_level_count,
+        state.ask_order_count,
+        state.ask_aggregate_quantity,
+    ) != expected_ask_summary:
+        raise NativeProtocolError("ask summary differs from snapshot")
     if state.empty != (snapshot.active_order_count == 0):
         raise NativeProtocolError("empty observer differs from snapshot")
     if state.sequence_exhausted != snapshot.sequence_exhausted:
@@ -1121,9 +1435,35 @@ def _validate_state_snapshot(state: NativeState, snapshot: BookSnapshot) -> None
         raise NativeProtocolError("state digest differs from canonical snapshot")
 
 
+def _snapshot_side_summary(
+    levels: tuple[PriceLevelSnapshot, ...],
+) -> tuple[int, int, int]:
+    return (
+        len(levels),
+        sum(len(level.orders) for level in levels),
+        sum(level.aggregate_quantity for level in levels),
+    )
+
+
 def _validate_state_structure(state: NativeState) -> None:
     if state.empty != (state.active_order_count == 0):
         raise NativeProtocolError("empty observer differs from active count")
+    if state.bid_order_count + state.ask_order_count != state.active_order_count:
+        raise NativeProtocolError("side order counts differ from active count")
+    _validate_side_summary(
+        name="bid",
+        level_count=state.bid_level_count,
+        order_count=state.bid_order_count,
+        aggregate_quantity=state.bid_aggregate_quantity,
+        top=state.best_bid,
+    )
+    _validate_side_summary(
+        name="ask",
+        level_count=state.ask_level_count,
+        order_count=state.ask_order_count,
+        aggregate_quantity=state.ask_aggregate_quantity,
+        top=state.best_ask,
+    )
     if state.sequence_exhausted:
         if state.next_sequence != 0:
             raise NativeProtocolError("exhausted observer has a nonzero next sequence")
@@ -1132,169 +1472,227 @@ def _validate_state_structure(state: NativeState) -> None:
     _validate_top_pair(state.best_bid, state.best_ask, "state observer")
 
 
-def _validate_transcript(
-    transcript: NativeTranscript,
+def _validate_side_summary(
     *,
-    expected_mode: OutputMode | None,
-    expected_input: NativeInputConfig | None,
-    expected_commands: Sequence[Command] | None,
-    returncode: int | None,
+    name: str,
+    level_count: int,
+    order_count: int,
+    aggregate_quantity: int,
+    top: TopOfBookLevel | None,
 ) -> None:
-    config = transcript.config
-    commands = tuple(expected_commands) if expected_commands is not None else None
-
-    if config is None:
-        if transcript.results or transcript.final is not None:
-            raise NativeProtocolError("transcript has engine records without a config")
-        if expected_mode is not None or expected_input is not None or commands is not None:
-            raise NativeProtocolError("native output did not echo the requested config")
-    else:
-        if expected_mode is not None and config.mode != expected_mode:
-            raise NativeProtocolError("native output mode differs from the requested mode")
-        if expected_input is not None and config.input != expected_input:
-            raise NativeProtocolError("native output config differs from the requested config")
-        _validate_configured_records(config, transcript.results, transcript.final)
-
-    _validate_result_timeline(transcript.results)
-    _validate_terminal_continuity(transcript)
-
-    if commands is not None:
-        _validate_expected_commands(transcript, commands)
-    if returncode is not None:
-        _validate_process_terminal_state(
-            transcript,
-            returncode,
-            len(commands) if commands is not None else None,
-        )
+    if level_count > order_count:
+        raise NativeProtocolError(f"{name} level count exceeds its order count")
+    if level_count == 0:
+        if order_count != 0 or aggregate_quantity != 0 or top is not None:
+            raise NativeProtocolError(f"empty {name} summary has nonempty values")
+        return
+    if order_count == 0 or aggregate_quantity == 0 or top is None:
+        raise NativeProtocolError(f"nonempty {name} summary has empty values")
+    if top.aggregate_quantity > aggregate_quantity:
+        raise NativeProtocolError(f"{name} top aggregate exceeds its side total")
 
 
-def _validate_configured_records(
+def _validate_stream_configured_result(
     config: NativeConfigRecord,
-    results: tuple[NativeResultRecord, ...],
-    final: NativeFinalRecord | None,
+    result: NativeResultRecord,
 ) -> None:
-    for result in results:
-        expected_checkpoint = config.input.snapshot_interval != 0 and (
-            (result.command_index + 1) % config.input.snapshot_interval == 0
-        )
-        if (result.snapshot is not None) != expected_checkpoint:
-            raise NativeProtocolError("result snapshot does not follow the configured cadence")
-        _validate_state_against_config(result.state, config.input)
-        if result.snapshot is not None:
-            _validate_snapshot_against_config(result.snapshot, config.input)
-        if result.events is not None:
-            _validate_events_against_config(result.events, config.input)
-            if isinstance(result.events[0], AcceptedEvent):
-                if result.events[0].header.instrument_id != config.input.instrument_id:
-                    raise NativeProtocolError("accepted event uses a different routed instrument")
-    if final is not None:
-        _validate_state_against_config(final.state, config.input)
-        _validate_snapshot_against_config(final.snapshot, config.input)
-
-
-def _validate_result_timeline(results: tuple[NativeResultRecord, ...]) -> None:
-    previous: NativeState | None = None
-    engine_error_seen = False
-    for index, result in enumerate(results):
-        if engine_error_seen:
-            raise NativeProtocolError("result appears after an engine error")
-        if result.outcome == "engine_error":
-            engine_error_seen = True
-        else:
-            expected_sequence = index + 1
-            if result.command_sequence != expected_sequence:
-                raise NativeProtocolError("domain result sequences are not contiguous from one")
-            expected_exhausted = expected_sequence == U64_MAX
-            expected_next = 0 if expected_exhausted else expected_sequence + 1
-            if (
-                result.state.sequence_exhausted != expected_exhausted
-                or result.state.next_sequence != expected_next
-            ):
-                raise NativeProtocolError("post-command sequence observers are inconsistent")
-
-        if result.outcome == "rejected":
-            if previous is None:
-                if (
-                    result.state.active_order_count != 0
-                    or not result.state.empty
-                    or result.state.best_bid is not None
-                    or result.state.best_ask is not None
-                ):
-                    raise NativeProtocolError("first rejected command mutated the fresh book")
-            elif (
-                result.state.active_order_count != previous.active_order_count
-                or result.state.empty != previous.empty
-                or result.state.best_bid != previous.best_bid
-                or result.state.best_ask != previous.best_ask
-            ):
-                raise NativeProtocolError("rejected command changed visible book observers")
-        if result.events is not None and result.outcome == "committed":
-            before_bid = previous.best_bid if previous is not None else None
-            before_ask = previous.best_ask if previous is not None else None
-            top_changed = before_bid != result.state.best_bid or before_ask != result.state.best_ask
-            emitted_book_change = isinstance(result.events[-1], BookChangedEvent)
-            if emitted_book_change != top_changed:
-                raise NativeProtocolError(
-                    "book-changed event presence differs from the visible top transition"
-                )
-        previous = result.state
-
-
-def _validate_terminal_continuity(transcript: NativeTranscript) -> None:
-    results = transcript.results
-    final = transcript.final
-    error = transcript.error
-    if error is not None:
-        if results and results[-1].outcome == "engine_error":
-            raise NativeProtocolError("adapter error follows a terminal engine-error result")
-        if results and error.line <= results[-1].line:
-            raise NativeProtocolError("terminal adapter error does not follow the result prefix")
-        return
-    if final is None:
-        return
-    if results:
-        if final.state != results[-1].state:
-            raise NativeProtocolError("final state differs from the last result state")
-        if results[-1].snapshot is not None and final.snapshot != results[-1].snapshot:
-            raise NativeProtocolError("final snapshot differs from the last checkpoint")
-    else:
+    expected_checkpoint = config.input.snapshot_interval != 0 and (
+        (result.command_index + 1) % config.input.snapshot_interval == 0
+    )
+    if (result.snapshot is not None) != expected_checkpoint:
+        raise NativeProtocolError("result snapshot does not follow the configured cadence")
+    _validate_state_against_config(result.state, config.input)
+    if result.snapshot is not None:
+        _validate_snapshot_against_config(result.snapshot, config.input)
+    if result.events is not None:
+        _validate_events_against_config(result.events, config.input)
         if (
-            final.snapshot.last_sequence != 0
-            or final.snapshot.sequence_exhausted
-            or final.snapshot.active_order_count != 0
-            or final.snapshot.bids
-            or final.snapshot.asks
-            or final.state.next_sequence != 1
+            isinstance(result.events[0], AcceptedEvent)
+            and result.events[0].header.instrument_id != config.input.instrument_id
         ):
-            raise NativeProtocolError("zero-command final record is not a fresh engine")
+            raise NativeProtocolError("accepted event uses a different routed instrument")
 
 
-def _validate_expected_commands(
-    transcript: NativeTranscript,
-    commands: tuple[Command, ...],
+def _validate_stream_configured_final(
+    config: NativeConfigRecord,
+    final: NativeFinalRecord,
 ) -> None:
-    if len(transcript.results) > len(commands):
-        raise NativeProtocolError("native output contains more results than requested commands")
-    for index, result in enumerate(transcript.results):
-        command = commands[index]
-        if result.command_type != command_type(command):
-            raise NativeProtocolError("result command type differs from the submitted command")
-        if result.line != index + 2:
-            raise NativeProtocolError("result source line differs from the encoded command line")
-        if result.events is not None:
-            if result.events[0].header.instrument_id != command.instrument_id:
-                raise NativeProtocolError("event instrument differs from the submitted command")
-            _validate_events_against_command(result.events, command, result.outcome)
+    _validate_state_against_config(final.state, config.input)
+    _validate_snapshot_against_config(final.snapshot, config.input)
 
-    error = transcript.error
-    if error is None:
+
+def _validate_stream_result_transition(
+    result: NativeResultRecord,
+    *,
+    index: int,
+    previous: NativeResultRecord | None,
+    engine_error_seen: bool,
+) -> None:
+    if engine_error_seen:
+        raise NativeProtocolError("result appears after an engine error")
+    if result.outcome != "engine_error":
+        expected_sequence = index + 1
+        if result.command_sequence != expected_sequence:
+            raise NativeProtocolError("domain result sequences are not contiguous from one")
+        expected_exhausted = expected_sequence == U64_MAX
+        expected_next = 0 if expected_exhausted else expected_sequence + 1
+        if (
+            result.state.sequence_exhausted != expected_exhausted
+            or result.state.next_sequence != expected_next
+        ):
+            raise NativeProtocolError("post-command sequence observers are inconsistent")
+
+    previous_state = previous.state if previous is not None else None
+    if result.outcome == "rejected":
+        if previous_state is None:
+            if (
+                result.state.active_order_count != 0
+                or not result.state.empty
+                or result.state.best_bid is not None
+                or result.state.best_ask is not None
+            ):
+                raise NativeProtocolError("first rejected command mutated the fresh book")
+        elif (
+            result.state.active_order_count != previous_state.active_order_count
+            or result.state.bid_level_count != previous_state.bid_level_count
+            or result.state.bid_order_count != previous_state.bid_order_count
+            or result.state.bid_aggregate_quantity != previous_state.bid_aggregate_quantity
+            or result.state.ask_level_count != previous_state.ask_level_count
+            or result.state.ask_order_count != previous_state.ask_order_count
+            or result.state.ask_aggregate_quantity != previous_state.ask_aggregate_quantity
+            or result.state.empty != previous_state.empty
+            or result.state.best_bid != previous_state.best_bid
+            or result.state.best_ask != previous_state.best_ask
+        ):
+            raise NativeProtocolError("rejected command changed visible book observers")
+    if result.events is not None and result.outcome == "committed":
+        before_bid = previous_state.best_bid if previous_state is not None else None
+        before_ask = previous_state.best_ask if previous_state is not None else None
+        top_changed = before_bid != result.state.best_bid or before_ask != result.state.best_ask
+        emitted_book_change = isinstance(result.events[-1], BookChangedEvent)
+        if emitted_book_change != top_changed:
+            raise NativeProtocolError(
+                "book-changed event presence differs from the visible top transition"
+            )
+
+
+def _validate_stream_final_continuity(
+    last_result: NativeResultRecord | None,
+    final: NativeFinalRecord,
+) -> None:
+    if last_result is not None:
+        if final.state != last_result.state:
+            raise NativeProtocolError("final state differs from the last result state")
+        if last_result.snapshot is not None and final.snapshot != last_result.snapshot:
+            raise NativeProtocolError("final snapshot differs from the last checkpoint")
         return
-    if error.line != len(transcript.results) + 2:
+    if (
+        final.snapshot.last_sequence != 0
+        or final.snapshot.sequence_exhausted
+        or final.snapshot.active_order_count != 0
+        or final.snapshot.bids
+        or final.snapshot.asks
+        or final.state.next_sequence != 1
+    ):
+        raise NativeProtocolError("zero-command final record is not a fresh engine")
+
+
+def _validate_stream_error_continuity(
+    last_result: NativeResultRecord | None,
+    error: NativeErrorRecord,
+) -> None:
+    if last_result is None:
+        return
+    if last_result.outcome == "engine_error":
+        raise NativeProtocolError("adapter error follows a terminal engine-error result")
+    if error.line <= last_result.line:
+        raise NativeProtocolError("terminal adapter error does not follow the result prefix")
+
+
+def _validate_stream_expected_result(
+    result: NativeResultRecord,
+    command: Command,
+    index: int,
+) -> None:
+    if result.command_type != command_type(command):
+        raise NativeProtocolError("result command type differs from the submitted command")
+    if result.line != index + 2:
+        raise NativeProtocolError("result source line differs from the encoded command line")
+    if result.events is not None:
+        if result.events[0].header.instrument_id != command.instrument_id:
+            raise NativeProtocolError("event instrument differs from the submitted command")
+        _validate_events_against_command(result.events, command, result.outcome)
+
+
+def _validate_stream_expected_error(
+    error: NativeErrorRecord,
+    *,
+    result_count: int,
+    expected_commands_exhausted: bool | None,
+    config_seen: bool,
+) -> None:
+    if not config_seen:
+        if result_count != 0 or error.line != 1:
+            raise NativeProtocolError("pre-config adapter error is not bound to the header line")
+        if error.code not in {
+            "adapter_exception",
+            "engine_construction_failure",
+            "input_read_failure",
+            "resource_failure",
+        }:
+            raise NativeProtocolError("canonical typed header cannot produce this adapter error")
+        return
+    if error.line != result_count + 2:
         raise NativeProtocolError("terminal adapter error is not at the next submitted line")
     if error.code not in _REQUEST_BOUND_ERROR_CODES:
         raise NativeProtocolError("canonical typed input cannot produce this adapter error")
-    if len(transcript.results) == len(commands) and error.code != "input_read_failure":
+    if error.code == "engine_construction_failure":
+        raise NativeProtocolError("engine construction failure appears after config acceptance")
+    if expected_commands_exhausted is True and error.code != "input_read_failure":
         raise NativeProtocolError("terminal adapter error appears after every submitted command")
+
+
+def _validate_stream_process_terminal_state(
+    *,
+    returncode: int,
+    result_count: int,
+    last_result: NativeResultRecord | None,
+    final: NativeFinalRecord | None,
+    error: NativeErrorRecord | None,
+    expected_commands_exhausted: bool | None,
+) -> None:
+    if isinstance(returncode, bool) or not isinstance(returncode, int):
+        raise NativeProtocolError("native process return code is not an integer")
+    has_engine_error = last_result is not None and last_result.outcome == "engine_error"
+    if returncode == _SUCCESS_EXIT_CODE:
+        if error is not None or final is None or has_engine_error:
+            raise NativeProtocolError("successful process has a failure terminal record")
+        if expected_commands_exhausted is False:
+            raise NativeProtocolError("successful process did not execute every requested command")
+        return
+    if returncode == _INPUT_ERROR_EXIT_CODE:
+        if error is None or final is not None:
+            raise NativeProtocolError("input-error process lacks its adapter error terminal")
+        if error.code in {
+            "adapter_exception",
+            "engine_construction_failure",
+            "engine_exception",
+            "resource_failure",
+        }:
+            raise NativeProtocolError("input-error exit carries an engine-failure code")
+        return
+    if returncode == _ENGINE_ERROR_EXIT_CODE:
+        if error is None and not (final is not None and has_engine_error):
+            raise NativeProtocolError("engine-error process lacks a failure terminal")
+        if error is not None and error.code not in {
+            "adapter_exception",
+            "engine_construction_failure",
+            "engine_exception",
+            "resource_failure",
+        }:
+            raise NativeProtocolError("engine-error exit carries an input-failure code")
+        return
+    raise NativeProtocolError(f"native process returned an unsupported exit code: {returncode}")
 
 
 def _validate_events_against_command(
@@ -1404,6 +1802,9 @@ def _validate_expected_aggressor(
 def _validate_state_against_config(state: NativeState, config: NativeInputConfig) -> None:
     if state.active_order_count > config.engine.max_active_orders:
         raise NativeProtocolError("state observer exceeds configured active capacity")
+    maximum_total = state.active_order_count * config.engine.max_order_quantity
+    if state.bid_aggregate_quantity + state.ask_aggregate_quantity > maximum_total:
+        raise NativeProtocolError("state aggregate exceeds configured quantity capacity")
     for level in (state.best_bid, state.best_ask):
         if level is not None and level.price % config.engine.tick_increment != 0:
             raise NativeProtocolError("state top is not aligned to the configured tick")
@@ -1462,43 +1863,61 @@ def _validate_events_against_config(
             raise NativeProtocolError("event order quantity exceeds the configured maximum")
 
 
-def _validate_process_terminal_state(
-    transcript: NativeTranscript,
-    returncode: int,
-    expected_command_count: int | None,
-) -> None:
-    if isinstance(returncode, bool) or not isinstance(returncode, int):
-        raise NativeProtocolError("native process return code is not an integer")
-    has_engine_error = bool(transcript.results and transcript.results[-1].outcome == "engine_error")
-    if returncode == _SUCCESS_EXIT_CODE:
-        if transcript.error is not None or transcript.final is None or has_engine_error:
-            raise NativeProtocolError("successful process has a failure terminal record")
-        if expected_command_count is not None and len(transcript.results) != expected_command_count:
-            raise NativeProtocolError("successful process did not execute every requested command")
-        return
-    if returncode == _INPUT_ERROR_EXIT_CODE:
-        if transcript.error is None or transcript.final is not None:
-            raise NativeProtocolError("input-error process lacks its adapter error terminal")
-        if transcript.error.code in {
-            "adapter_exception",
-            "engine_construction_failure",
-            "engine_exception",
-            "resource_failure",
-        }:
-            raise NativeProtocolError("input-error exit carries an engine-failure code")
-        return
-    if returncode == _ENGINE_ERROR_EXIT_CODE:
-        if transcript.error is None and not (transcript.final is not None and has_engine_error):
-            raise NativeProtocolError("engine-error process lacks a failure terminal")
-        if transcript.error is not None and transcript.error.code not in {
-            "adapter_exception",
-            "engine_construction_failure",
-            "engine_exception",
-            "resource_failure",
-        }:
-            raise NativeProtocolError("engine-error exit carries an input-failure code")
-        return
-    raise NativeProtocolError(f"native process returned an unsupported exit code: {returncode}")
+def _parse_json_line(line: str, output_line: int) -> dict[str, object]:
+    if line.endswith("\n"):
+        line = line[:-1]
+        if line.endswith("\r"):
+            line = line[:-1]
+    if "\n" in line or "\r" in line:
+        raise NativeProtocolError(f"output line {output_line} contains multiple logical lines")
+    if not line:
+        raise NativeProtocolError(f"output line {output_line} is blank")
+    try:
+        value = cast(
+            object,
+            json.loads(
+                line,
+                object_pairs_hook=_unique_json_object,
+                parse_constant=_reject_json_constant,
+            ),
+        )
+    except NativeProtocolError:
+        raise
+    except (ValueError, OverflowError, RecursionError) as exc:
+        raise NativeProtocolError(f"output line {output_line} is not valid JSON") from exc
+    record = _object(value, f"output line {output_line}")
+    _require_schema(record)
+    return record
+
+
+def _input_fields(line: str, kind: str) -> list[str]:
+    if line.endswith("\n"):
+        line = line[:-1]
+        if line.endswith("\r"):
+            line = line[:-1]
+    if "\n" in line or "\r" in line:
+        raise ValueError(f"native input {kind} contains multiple logical lines")
+    if any(character.isspace() and character not in " \t\f\v" for character in line):
+        raise ValueError(f"native input {kind} contains non-ASCII whitespace")
+    return line.split()
+
+
+def _input_uint(token: str, name: str, maximum: int) -> int:
+    if _UNSIGNED_DECIMAL.fullmatch(token) is None:
+        raise ValueError(f"{name} is not a canonical unsigned decimal")
+    value = int(token)
+    if value > maximum:
+        raise ValueError(f"{name} exceeds its fixed-width representation")
+    return value
+
+
+def _input_int(token: str, name: str, minimum: int, maximum: int) -> int:
+    if _SIGNED_DECIMAL.fullmatch(token) is None:
+        raise ValueError(f"{name} is not a canonical signed decimal")
+    value = int(token)
+    if not minimum <= value <= maximum:
+        raise ValueError(f"{name} exceeds its fixed-width representation")
+    return value
 
 
 def _unique_json_object(pairs: list[tuple[str, object]]) -> dict[str, object]:

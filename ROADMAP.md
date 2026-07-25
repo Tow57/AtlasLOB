@@ -82,9 +82,9 @@ to 264 tests; that follow-up must rerun the same hosted gates before merge.
 - [x] Independent canonical state/event encoders with frozen cross-language hash vectors.
 - [x] Straightforward Python reference model.
 - [x] Named per-command differential comparison with exact events and snapshots.
-- [ ] Seeded valid and invalid command generation.
-- [ ] Failure persistence and shrinking.
-- [ ] Fixed CI corpus, long campaigns, and fuzzing.
+- [x] Seeded valid and invalid command generation.
+- [x] Failure persistence and shrinking.
+- [ ] Fixed CI corpus, long campaigns, fuzzing, and hosted release evidence.
 
 ADR 0010 fixes the independence boundary: the Python model uses ordinary dictionaries, deques,
 and sorted prices; it has no binding or access to C++ transition helpers; and native execution is
@@ -93,9 +93,35 @@ headers, canonical snapshots, top/count/sequence observers, and both digests aft
 in 13 named scenarios. Independent golden encoders reproduce the ADR 0009 empty, representative,
 signed-price, all-event, and rejection hashes.
 
-The next slice adds deterministic valid/invalid command generation, a fixed seed corpus, and
-failure artifacts. Shrinking and long/fuzz campaigns remain separate reviewable slices rather
-than being hidden inside the initial oracle change.
+ADR 0011 freezes generator V1, ten required profiles, fully resolved workload manifests, and
+fixed, rotating-epoch, and published seed policy. The disk-spooled runner closes the complete
+reference pass before native execution, compares native JSONL incrementally, and reruns every
+semantic divergence from fresh engines with one exact checkpoint at the divergent command.
+Standard diagnostic bundles record the first structured difference, both evidence streams, recent
+commands, build identity, and exact reproduction. Summary-only large-tier bundles may omit the
+transcripts while retaining the workload, manifest, first difference, and digests.
+Deterministic semantic reduction preserves one stable signature while deleting commands and
+simplifying identities, prices, quantities, command types, side, and time in force.
+
+Release execution is sharded by compiler and case behind a full GCC/Clang Release build-and-CTest
+prerequisite; the sanitizer subset is sharded per case. Those capacity-bound shards cap automatic
+exact replay at 1,000,000 commands. A larger required prefix remains a semantic failure with
+`diagnosis.status=deferred_command_limit` and requires manual exact reproduction on a suitable
+host; it is never counted as passing release evidence.
+
+Three development-only evidence-boundary faults prove detection and shrinking for newest-at-price,
+incoming-price execution, and stale partial-fill aggregates. Five applicable metamorphic
+properties, bounded byte-stream and single-field-mutation fuzzing, and checked minimal/golden/
+boundary/regression corpora are implemented.
+
+The local default Python selection passes 244 tests with 2 Windows-symlink skips and 11 deselected;
+the marked campaign/fuzz selection passes 11 with 246 deselected; and the fixed pull-request policy
+passes 10 exact 5,000-command cases. Checked evidence records a passing epoch-0 nightly case with
+1,000,000 compact commands. GCC Debug and Release CTest each pass 288/288; the production-only
+build, pinned clang-format, Ruff, strict mypy, and wheel build/install smoke gates also pass
+locally. Publication and the hosted GCC, Clang, ASan/UBSan, formatting, PR-corpus, and Linux
+link-safety checks remain the final Phase 3 release gate. The final checkbox stays open, and Phase
+4 remains not started.
 
 ## Phase 4 - Deterministic infrastructure and Python
 

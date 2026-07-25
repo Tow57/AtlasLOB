@@ -15,6 +15,7 @@ from atlaslob.domain import (
     NewOrder,
     OrderType,
     ReferenceResult,
+    RejectedEvent,
     ReplaceOrder,
     Side,
     TimeInForce,
@@ -46,7 +47,6 @@ def _executable() -> Path:
         return candidate.resolve()
 
     candidates = (
-        Path("build/fix-debug/atlas_diff_native.exe"),
         Path("build/dev-gcc/atlas_diff_native.exe"),
         Path("build/dev-gcc/atlas_diff_native"),
     )
@@ -64,7 +64,7 @@ def test_native_executable_is_required_and_explicit_path_is_authoritative(
     tmp_path: Path,
 ) -> None:
     missing = tmp_path / "missing-atlas-diff-native"
-    fallback = tmp_path / "build" / "fix-debug" / "atlas_diff_native.exe"
+    fallback = tmp_path / "build" / "dev-gcc" / "atlas_diff_native.exe"
     monkeypatch.chdir(tmp_path)
     monkeypatch.delenv("ATLAS_DIFF_NATIVE", raising=False)
 
@@ -160,6 +160,7 @@ def _compare_result(native: NativeResultRecord, expected: _ExpectedStep, command
         assert native.outcome == "engine_error"
         assert native.command_sequence is None
         assert native.engine_error == expected.result.error
+        assert native.reject_reason is None
         assert native.event_digest is None
         assert native.events is None
         return
@@ -168,6 +169,10 @@ def _compare_result(native: NativeResultRecord, expected: _ExpectedStep, command
     assert native.outcome == ("rejected" if batch.rejected else "committed")
     assert native.command_sequence == batch.command_sequence
     assert native.engine_error is None
+    rejection = batch.events[0] if batch.rejected else None
+    assert native.reject_reason == (
+        rejection.reason if isinstance(rejection, RejectedEvent) else None
+    )
     assert native.events == batch.events
     assert native.event_digest == event_digest(batch)
 

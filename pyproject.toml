@@ -12,6 +12,9 @@ license = "MIT"
 authors = [{ name = "Lucas" }]
 dependencies = []
 
+[project.scripts]
+atlaslob-diff = "atlaslob.cli:main"
+
 [project.optional-dependencies]
 dev = [
   "hypothesis==6.160.0",
@@ -32,6 +35,10 @@ atlaslob = ["py.typed"]
 [tool.pytest.ini_options]
 addopts = "-ra --strict-config --strict-markers"
 testpaths = ["python/tests"]
+markers = [
+  "campaign: deterministic multi-seed differential campaign",
+  "differential_fuzz: bounded cross-language fuzz smoke",
+]
 
 [tool.ruff]
 line-length = 100

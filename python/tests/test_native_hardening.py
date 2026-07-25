@@ -7,6 +7,7 @@ from collections.abc import Callable
 import pytest
 from atlaslob.canonical import event_digest, state_digest
 from atlaslob.domain import (
+    U64_MAX,
     AcceptedEvent,
     BookChangedEvent,
     BookSnapshot,
@@ -89,6 +90,12 @@ def _top_value(levels: tuple[PriceLevelSnapshot, ...]) -> dict[str, str] | None:
 def _state_value(snapshot: BookSnapshot) -> dict[str, object]:
     return {
         "active_order_count": str(snapshot.active_order_count),
+        "bid_level_count": str(len(snapshot.bids)),
+        "bid_order_count": str(sum(len(level.orders) for level in snapshot.bids)),
+        "bid_aggregate_quantity": str(sum(level.aggregate_quantity for level in snapshot.bids)),
+        "ask_level_count": str(len(snapshot.asks)),
+        "ask_order_count": str(sum(len(level.orders) for level in snapshot.asks)),
+        "ask_aggregate_quantity": str(sum(level.aggregate_quantity for level in snapshot.asks)),
         "empty": snapshot.active_order_count == 0,
         "next_sequence": str(0 if snapshot.sequence_exhausted else snapshot.last_sequence + 1),
         "sequence_exhausted": snapshot.sequence_exhausted,
@@ -144,6 +151,7 @@ def _records() -> list[dict[str, object]]:
             "outcome": "committed",
             "command_sequence": "1",
             "engine_error": None,
+            "reject_reason": None,
             "event_digest": event_digest(batch),
             "events": [
                 {
@@ -196,6 +204,10 @@ def _splice_empty_final(records: list[dict[str, object]]) -> None:
     records[2]["snapshot"] = _snapshot_value(empty)
 
 
+def _remove_ask_level_count(records: list[dict[str, object]]) -> None:
+    del cast_dict(records[1]["state"])["ask_level_count"]
+
+
 def test_decoder_binds_a_valid_transcript_to_the_request() -> None:
     transcript = decode_jsonl(
         _text(_records()),
@@ -231,6 +243,26 @@ def test_return_code_validation_without_an_expected_command_list_accepts_results
             id="observer-count",
         ),
         pytest.param(
+            lambda records: cast_dict(records[1]["state"]).__setitem__(
+                "bid_aggregate_quantity", "6"
+            ),
+            id="bid-aggregate-summary",
+        ),
+        pytest.param(
+            lambda records: cast_dict(records[1]["state"]).__setitem__("bid_level_count", "2"),
+            id="bid-level-summary",
+        ),
+        pytest.param(
+            lambda records: cast_dict(records[1]["state"]).__setitem__(
+                "bid_aggregate_quantity", str(U64_MAX * U64_MAX + 1)
+            ),
+            id="aggregate-outside-theoretical-domain",
+        ),
+        pytest.param(
+            _remove_ask_level_count,
+            id="missing-side-summary-field",
+        ),
+        pytest.param(
             _splice_empty_final,
             id="spliced-final",
         ),
@@ -263,6 +295,14 @@ def test_committed_envelope_must_begin_with_acceptance() -> None:
     records[1]["event_digest"] = event_digest(EventBatch((done,)))
 
     with pytest.raises(NativeProtocolError, match="accepted"):
+        decode_jsonl(_text(records))
+
+
+def test_committed_result_cannot_carry_a_rejection_reason() -> None:
+    records = _records()
+    records[1]["reject_reason"] = "invalid_quantity"
+
+    with pytest.raises(NativeProtocolError, match="rejection reason"):
         decode_jsonl(_text(records))
 
 
@@ -388,6 +428,57 @@ def test_request_bound_input_read_failure_at_the_next_line_is_representable() ->
 
     assert transcript.error is not None
     assert transcript.error.code == "input_read_failure"
+
+
+@pytest.mark.parametrize(
+    "code",
+    [
+        pytest.param("resource_failure", id="allocation"),
+        pytest.param("engine_construction_failure", id="non-allocation-exception"),
+    ],
+)
+def test_request_bound_construction_failure_before_config_is_representable(code: str) -> None:
+    records: list[dict[str, object]] = [
+        {
+            "schema": "atlas_diff_v1",
+            "kind": "error",
+            "line": "1",
+            "code": code,
+        }
+    ]
+
+    transcript = decode_jsonl(
+        _text(records),
+        expected_mode="exact",
+        expected_input=_INPUT,
+        expected_commands=(_COMMAND,),
+        returncode=3,
+    )
+
+    assert transcript.config is None
+    assert transcript.error is not None
+    assert transcript.error.code == code
+
+
+def test_engine_construction_failure_cannot_follow_config_acceptance() -> None:
+    records: list[dict[str, object]] = [
+        _records()[0],
+        {
+            "schema": "atlas_diff_v1",
+            "kind": "error",
+            "line": "2",
+            "code": "engine_construction_failure",
+        },
+    ]
+
+    with pytest.raises(NativeProtocolError, match="after config"):
+        decode_jsonl(
+            _text(records),
+            expected_mode="exact",
+            expected_input=_INPUT,
+            expected_commands=(_COMMAND,),
+            returncode=3,
+        )
 
 
 def test_adapter_error_cannot_follow_a_terminal_engine_error_result() -> None:

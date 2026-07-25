@@ -19,4 +19,15 @@ inline constexpr int native_driver_engine_error_exit_code = 3;
 [[nodiscard]] int run_native_driver(std::istream& input, std::ostream& output,
                                     OutputMode mode = OutputMode::exact);
 
+#if defined(ATLAS_DIFF_NATIVE_NO_MAIN)
+enum class NativeDriverConstructionFailureForTest {
+  allocation,
+  exception,
+};
+
+[[nodiscard]] int run_native_driver_with_construction_failure_for_test(
+    std::istream& input, std::ostream& output, NativeDriverConstructionFailureForTest failure,
+    OutputMode mode = OutputMode::exact);
+#endif
+
 }  // namespace atlaslob::differential

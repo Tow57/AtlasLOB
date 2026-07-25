@@ -46,6 +46,48 @@ jobs:
       - name: Test
         run: ctest --preset ${{ matrix.preset }}
 
+  release-build-and-test:
+    name: Release ${{ matrix.name }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: GCC
+            packages: g++ ninja-build
+            compiler: g++
+            build_directory: release-gcc
+          - name: Clang
+            packages: clang ninja-build
+            compiler: clang++
+            build_directory: release-clang
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes ${{ matrix.packages }}
+
+      - name: Configure release
+        run: >-
+          cmake -S . -B "build/${{ matrix.build_directory }}" -G Ninja
+          -DBUILD_TESTING=ON
+          -DCMAKE_BUILD_TYPE=Release
+          -DCMAKE_CXX_COMPILER="${{ matrix.compiler }}"
+          -DATLAS_ENABLE_INVARIANTS=OFF
+          -DATLAS_WARNINGS_AS_ERRORS=ON
+
+      - name: Build release
+        run: cmake --build "build/${{ matrix.build_directory }}" --parallel 2
+
+      - name: Test release
+        run: ctest --test-dir "build/${{ matrix.build_directory }}" --output-on-failure
+
   sanitizers:
     name: ASan and UBSan
     runs-on: ubuntu-24.04
@@ -113,7 +155,62 @@ jobs:
         run: python -m mypy
 
       - name: Test Python evidence
-        run: python -m pytest
+        run: python -m pytest -m "not campaign and not differential_fuzz"
+
+  phase3-pr-differential:
+    name: Phase 3 PR differential corpus
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    env:
+      ATLAS_DIFF_NATIVE: ${{ github.workspace }}/build/dev-gcc/atlas_diff_native
+      ATLAS_COMPILER_ID: GCC
+      ATLAS_BUILD_TYPE: Debug
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
+        with:
+          python-version: "3.12"
+
+      - name: Install native toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes g++ ninja-build
+
+      - name: Build native evidence adapter
+        run: |
+          cmake --preset dev-gcc
+          cmake --build --preset dev-gcc --target atlas_diff_native --parallel 2
+
+      - name: Install Python evidence dependencies
+        run: python -m pip install --disable-pip-version-check -e ".[dev]"
+
+      - name: Run bounded fuzz and injected-fault proofs
+        run: python -m pytest -m "campaign or differential_fuzz"
+
+      - name: Run fixed 10-by-5,000 exact corpus
+        run: >-
+          python -m atlaslob.cli predefined
+          --tier pr
+          --native "$ATLAS_DIFF_NATIVE"
+          --output "$RUNNER_TEMP/phase3-pr"
+          --case-timeout 300
+          --shrink-evaluations 1000
+          --shrink-timeout 120
+
+      - name: Retain Phase 3 PR evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: phase3-pr-differential
+          path: ${{ runner.temp }}/phase3-pr
+          if-no-files-found: error
+          retention-days: 14
 
   python-wheel:
     name: Python wheel smoke
@@ -162,6 +259,7 @@ jobs:
             "import atlaslob; from importlib.metadata import version; \
             assert atlaslob.ATLASLOB_SEMANTICS_VERSION == 6; \
             assert version('atlaslob') == '0.1.0'"
+          "$RUNNER_TEMP/atlas-wheel-smoke/bin/atlaslob-diff" --help
           "$RUNNER_TEMP/atlas-wheel-smoke/bin/python" -m pip check
 
   formatting:

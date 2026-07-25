@@ -9,6 +9,7 @@
 #include <iterator>
 #include <limits>
 #include <memory>
+#include <new>
 #include <optional>
 #include <ostream>
 #include <stdexcept>
@@ -42,8 +43,95 @@ struct HarnessError final {
   std::string_view code;
 };
 
+enum class ConstructionFailureInjection {
+  none,
+  allocation,
+  exception,
+};
+
 using ParsedHeader = std::variant<DriverConfig, HarnessError>;
 using ParsedCommand = std::variant<domain::Command, HarnessError>;
+
+class DecimalAccumulator final {
+ public:
+  template <typename Integer>
+  void add(Integer value) {
+    static_assert(std::is_integral_v<Integer>);
+    static_assert(std::is_unsigned_v<Integer>);
+
+    std::size_t index = 0U;
+    std::uint32_t carry = 0U;
+    while (value != 0U || carry != 0U) {
+      std::uint32_t chunk = 0U;
+      if constexpr (std::numeric_limits<Integer>::digits < 30) {
+        chunk = static_cast<std::uint32_t>(value);
+        value = 0U;
+      } else {
+        chunk = static_cast<std::uint32_t>(value % static_cast<Integer>(decimal_base));
+        value /= static_cast<Integer>(decimal_base);
+      }
+      if (index == limbs_.size()) {
+        limbs_.push_back(0U);
+      }
+      const auto sum = static_cast<std::uint64_t>(limbs_[index]) + chunk + carry;
+      limbs_[index] = static_cast<std::uint32_t>(sum % decimal_base);
+      carry = static_cast<std::uint32_t>(sum / decimal_base);
+      ++index;
+    }
+  }
+
+  void write(std::ostream& output) const {
+    if (limbs_.empty()) {
+      output.put('0');
+      return;
+    }
+
+    write_decimal_limb(output, limbs_.back(), false);
+    for (auto index = limbs_.size() - 1U; index != 0U; --index) {
+      write_decimal_limb(output, limbs_[index - 1U], true);
+    }
+  }
+
+ private:
+  static constexpr std::uint32_t decimal_base = 1'000'000'000U;
+  static constexpr std::size_t limb_width = 9U;
+
+  static void write_decimal_limb(std::ostream& output, std::uint32_t value, bool pad) {
+    char buffer[limb_width]{};
+    const auto [end, error] = std::to_chars(std::begin(buffer), std::end(buffer), value, 10);
+    if (error != std::errc{}) {
+      output.setstate(std::ios::badbit);
+      return;
+    }
+    const auto width = static_cast<std::size_t>(end - std::begin(buffer));
+    if (pad) {
+      for (auto count = width; count < limb_width; ++count) {
+        output.put('0');
+      }
+    }
+    output.write(buffer, static_cast<std::streamsize>(width));
+  }
+
+  std::vector<std::uint32_t> limbs_;
+};
+
+struct SideSummary final {
+  DecimalAccumulator level_count;
+  DecimalAccumulator order_count;
+  DecimalAccumulator aggregate_quantity;
+};
+
+struct StateEvidence final {
+  BookSnapshot snapshot;
+  BookTop top;
+  std::uint64_t active_order_count{};
+  bool empty{};
+  domain::Sequence next_sequence{};
+  bool sequence_exhausted{};
+  SideSummary bids;
+  SideSummary asks;
+  Digest256 digest;
+};
 
 [[nodiscard]] constexpr bool is_space(char value) noexcept {
   return value == ' ' || value == '\t' || value == '\r' || value == '\n' || value == '\f' ||
@@ -321,6 +409,83 @@ void write_quoted_u32(std::ostream& output, std::uint32_t value) {
   output.put('"');
 }
 
+void write_quoted_decimal(std::ostream& output, const DecimalAccumulator& value) {
+  output.put('"');
+  value.write(output);
+  output.put('"');
+}
+
+[[nodiscard]] SideSummary summarize_side(const std::vector<PriceLevelSnapshot>& levels) {
+  SideSummary summary;
+  summary.level_count.add(levels.size());
+  for (const auto& level : levels) {
+    summary.order_count.add(level.orders.size());
+    summary.aggregate_quantity.add(level.aggregate_quantity.value());
+  }
+  return summary;
+}
+
+[[nodiscard]] BookTop snapshot_top(const BookSnapshot& snapshot) {
+  BookTop top;
+  if (!snapshot.bids.empty()) {
+    top.best_bid = domain::TopOfBookLevel{
+        .price = snapshot.bids.front().price,
+        .aggregate_quantity = snapshot.bids.front().aggregate_quantity,
+    };
+  }
+  if (!snapshot.asks.empty()) {
+    top.best_ask = domain::TopOfBookLevel{
+        .price = snapshot.asks.front().price,
+        .aggregate_quantity = snapshot.asks.front().aggregate_quantity,
+    };
+  }
+  return top;
+}
+
+[[nodiscard]] StateEvidence capture_state(const MatchingEngine& engine) {
+  auto snapshot = engine.snapshot();
+  const auto top = engine.top();
+  const auto active_order_count = engine.active_order_count();
+  const auto empty = engine.empty();
+  const auto next_sequence = engine.next_sequence();
+  const auto sequence_exhausted = engine.sequence_exhausted();
+
+  if constexpr (std::numeric_limits<std::size_t>::digits >
+                std::numeric_limits<std::uint64_t>::digits) {
+    if (active_order_count > std::numeric_limits<std::uint64_t>::max()) {
+      throw std::logic_error{"native evidence active count exceeds its snapshot representation"};
+    }
+  }
+  if (static_cast<std::uint64_t>(active_order_count) != snapshot.active_order_count ||
+      empty != (snapshot.active_order_count == 0U) || top != snapshot_top(snapshot) ||
+      sequence_exhausted != snapshot.sequence_exhausted) {
+    throw std::logic_error{"native evidence observers differ from the public snapshot"};
+  }
+  if (sequence_exhausted) {
+    if (next_sequence.value() != 0U) {
+      throw std::logic_error{"exhausted native evidence has a nonzero next sequence"};
+    }
+  } else if (snapshot.last_sequence.value() == std::numeric_limits<std::uint64_t>::max() ||
+             next_sequence.value() != snapshot.last_sequence.value() + 1U) {
+    throw std::logic_error{"native evidence sequence observers differ from the public snapshot"};
+  }
+
+  auto bids = summarize_side(snapshot.bids);
+  auto asks = summarize_side(snapshot.asks);
+  const auto digest = state_digest(snapshot);
+  return StateEvidence{
+      .snapshot = std::move(snapshot),
+      .top = top,
+      .active_order_count = static_cast<std::uint64_t>(active_order_count),
+      .empty = empty,
+      .next_sequence = next_sequence,
+      .sequence_exhausted = sequence_exhausted,
+      .bids = std::move(bids),
+      .asks = std::move(asks),
+      .digest = digest,
+  };
+}
+
 void write_top_level(std::ostream& output, const std::optional<domain::TopOfBookLevel>& level) {
   if (!level.has_value()) {
     output << "null";
@@ -481,18 +646,29 @@ void write_events(std::ostream& output, const domain::EventBatch& batch) {
   output << ']';
 }
 
-void write_state(std::ostream& output, const MatchingEngine& engine) {
-  const auto top = engine.top();
+void write_state(std::ostream& output, const StateEvidence& state) {
   output << "{\"active_order_count\":";
-  write_quoted_u64(output, static_cast<std::uint64_t>(engine.active_order_count()));
-  output << ",\"empty\":" << (engine.empty() ? "true" : "false") << ",\"next_sequence\":";
-  write_quoted_u64(output, engine.next_sequence().value());
-  output << ",\"sequence_exhausted\":" << (engine.sequence_exhausted() ? "true" : "false")
+  write_quoted_u64(output, state.active_order_count);
+  output << ",\"bid_level_count\":";
+  write_quoted_decimal(output, state.bids.level_count);
+  output << ",\"bid_order_count\":";
+  write_quoted_decimal(output, state.bids.order_count);
+  output << ",\"bid_aggregate_quantity\":";
+  write_quoted_decimal(output, state.bids.aggregate_quantity);
+  output << ",\"ask_level_count\":";
+  write_quoted_decimal(output, state.asks.level_count);
+  output << ",\"ask_order_count\":";
+  write_quoted_decimal(output, state.asks.order_count);
+  output << ",\"ask_aggregate_quantity\":";
+  write_quoted_decimal(output, state.asks.aggregate_quantity);
+  output << ",\"empty\":" << (state.empty ? "true" : "false") << ",\"next_sequence\":";
+  write_quoted_u64(output, state.next_sequence.value());
+  output << ",\"sequence_exhausted\":" << (state.sequence_exhausted ? "true" : "false")
          << ",\"best_bid\":";
-  write_top_level(output, top.best_bid);
+  write_top_level(output, state.top.best_bid);
   output << ",\"best_ask\":";
-  write_top_level(output, top.best_ask);
-  output << ",\"state_digest\":\"" << engine.state_digest().hex() << "\"}";
+  write_top_level(output, state.top.best_ask);
+  output << ",\"state_digest\":\"" << state.digest.hex() << "\"}";
 }
 
 void write_config(std::ostream& output, const DriverConfig& config, OutputMode mode) {
@@ -526,6 +702,7 @@ void write_result(std::ostream& output, const MatchingEngine& engine,
                   const domain::Command& command, const EngineResult& result,
                   std::uint64_t command_index, std::uint64_t line, OutputMode mode,
                   bool checkpoint) {
+  const auto state = capture_state(engine);
   output << "{\"schema\":\"" << adapter_schema << "\",\"kind\":\"result\",\"command_index\":";
   write_quoted_u64(output, command_index);
   output << ",\"line\":";
@@ -535,12 +712,19 @@ void write_result(std::ostream& output, const MatchingEngine& engine,
   const auto* const batch = result.batch();
   if (batch == nullptr) {
     output << "engine_error\",\"command_sequence\":null,\"engine_error\":\""
-           << to_string(result.error()) << "\",\"event_digest\":null,\"events\":null,\"state\":";
+           << to_string(result.error())
+           << "\",\"reject_reason\":null,\"event_digest\":null,\"events\":null,\"state\":";
   } else {
     output << (result.committed() ? "committed" : "rejected") << "\",\"command_sequence\":";
     write_quoted_u64(output, batch->command_sequence().value());
-    output << ",\"engine_error\":null,\"event_digest\":\"" << event_digest(*batch).hex()
-           << "\",\"events\":";
+    output << ",\"engine_error\":null,\"reject_reason\":";
+    if (result.rejected()) {
+      output << '"' << domain::to_string(std::get<domain::RejectedEvent>((*batch)[0]).reason)
+             << '"';
+    } else {
+      output << "null";
+    }
+    output << ",\"event_digest\":\"" << event_digest(*batch).hex() << "\",\"events\":";
     if (mode == OutputMode::exact) {
       write_events(output, *batch);
     } else {
@@ -548,10 +732,10 @@ void write_result(std::ostream& output, const MatchingEngine& engine,
     }
     output << ",\"state\":";
   }
-  write_state(output, engine);
+  write_state(output, state);
   output << ",\"snapshot\":";
   if (checkpoint) {
-    write_snapshot(output, engine.snapshot());
+    write_snapshot(output, state.snapshot);
   } else {
     output << "null";
   }
@@ -560,12 +744,13 @@ void write_result(std::ostream& output, const MatchingEngine& engine,
 
 void write_final(std::ostream& output, const MatchingEngine& engine,
                  std::uint64_t commands_processed) {
+  const auto state = capture_state(engine);
   output << "{\"schema\":\"" << adapter_schema << "\",\"kind\":\"final\",\"commands_processed\":";
   write_quoted_u64(output, commands_processed);
   output << ",\"state\":";
-  write_state(output, engine);
+  write_state(output, state);
   output << ",\"snapshot\":";
-  write_snapshot(output, engine.snapshot());
+  write_snapshot(output, state.snapshot);
   output << "}\n";
 }
 
@@ -578,8 +763,19 @@ void write_final(std::ostream& output, const MatchingEngine& engine,
   return output ? intended_exit_code : native_driver_engine_error_exit_code;
 }
 
-[[nodiscard]] int run_native_driver_impl(std::istream& input, std::ostream& output,
-                                         OutputMode mode) {
+[[nodiscard]] std::unique_ptr<MatchingEngine> construct_engine(
+    const DriverConfig& config, ConstructionFailureInjection failure) {
+  if (failure == ConstructionFailureInjection::allocation) {
+    throw std::bad_alloc{};
+  }
+  if (failure == ConstructionFailureInjection::exception) {
+    throw std::runtime_error{"injected native driver construction failure"};
+  }
+  return std::make_unique<MatchingEngine>(config.instrument_id, config.engine);
+}
+
+[[nodiscard]] int run_native_driver_impl(std::istream& input, std::ostream& output, OutputMode mode,
+                                         ConstructionFailureInjection construction_failure) {
   std::uint64_t line_number = 0U;
   std::string line;
   std::optional<DriverConfig> config;
@@ -616,7 +812,10 @@ void write_final(std::ostream& output, const MatchingEngine& engine,
 
   std::unique_ptr<MatchingEngine> engine;
   try {
-    engine = std::make_unique<MatchingEngine>(config->instrument_id, config->engine);
+    engine = construct_engine(*config, construction_failure);
+  } catch (const std::bad_alloc&) {
+    write_harness_error(output, line_number, "resource_failure");
+    return finish_terminal_record(output, native_driver_engine_error_exit_code);
   } catch (const std::invalid_argument&) {
     write_harness_error(output, line_number, "invalid_engine_config");
     return finish_terminal_record(output, native_driver_input_error_exit_code);
@@ -686,7 +885,7 @@ void write_final(std::ostream& output, const MatchingEngine& engine,
 
 int run_native_driver(std::istream& input, std::ostream& output, OutputMode mode) {
   try {
-    return run_native_driver_impl(input, output, mode);
+    return run_native_driver_impl(input, output, mode, ConstructionFailureInjection::none);
   } catch (...) {
     // Any exception that escapes a pre-record parsing or execution boundary may
     // have occurred after a JSON record began. Do not append a second record to
@@ -695,6 +894,21 @@ int run_native_driver(std::istream& input, std::ostream& output, OutputMode mode
     return native_driver_engine_error_exit_code;
   }
 }
+
+#if defined(ATLAS_DIFF_NATIVE_NO_MAIN)
+int run_native_driver_with_construction_failure_for_test(
+    std::istream& input, std::ostream& output, NativeDriverConstructionFailureForTest failure,
+    OutputMode mode) {
+  const auto injection = failure == NativeDriverConstructionFailureForTest::allocation
+                             ? ConstructionFailureInjection::allocation
+                             : ConstructionFailureInjection::exception;
+  try {
+    return run_native_driver_impl(input, output, mode, injection);
+  } catch (...) {
+    return native_driver_engine_error_exit_code;
+  }
+}
+#endif
 
 }  // namespace atlaslob::differential
 

@@ -15,11 +15,17 @@ latency claims.
 
 ## Current status
 
-**Phase 2 matching MVP is complete on `main`. The first Phase 3 slice now adds a test-only native
-evidence adapter, a standard-library-only internal Python correctness-oracle package,
-independently encoded canonical digests, and named command-by-command cross-language parity
-scenarios. The next slice adds seeded generation, a fixed corpus, and failure persistence;
-shrinking and long/fuzz campaigns follow as separate Phase 3 slices.**
+**Phase 2 matching MVP is complete on `main`. Phase 3 implementation now includes the independent
+Python oracle, deterministic valid/invalid workload generation, fixed and rotating campaigns, a
+streaming differential runner, portable failure bundles, semantic shrinking, metamorphic checks,
+and bounded cross-language fuzzing. Local closure evidence now includes 244 passed, 2
+Windows-symlink skips, and 11 deselected in the default Python selection; 11 passed and 246
+deselected in the marked campaign/fuzz selection; the fixed 10-by-5,000 exact PR corpus; one
+checked 1,000,000-command compact case; and GCC Debug and Release CTest at 288/288 each. The
+`BUILD_TESTING=OFF` production build, pinned clang-format, Ruff, strict mypy, and wheel
+build/install smoke also pass locally. Publication and the hosted GCC, Clang, ASan/UBSan,
+formatting, PR-corpus, and Linux link-safety checks remain pending, so Phase 3 is not yet declared
+complete. Phase 4 has not started.**
 
 | Capability | Status | Evidence |
 | --- | --- | --- |
@@ -49,10 +55,14 @@ shrinking and long/fuzz campaigns follow as separate Phase 3 slices.**
 | Independent Python matching oracle | Complete | `dict`/`deque` model, named transition tests |
 | Named cross-language parity | Complete | Exact per-command events, snapshots, observers, and digests |
 | Internal oracle package | Complete | Python 3.11-3.14 matrix and normal typed-wheel smoke gate |
-| Seeded generation, shrinking, and fuzzing | Planned | Later Phase 3 slices |
-| GCC and Clang CI | Passing on `main`; required on each Phase 3 PR head before merge | `.github/workflows/ci.yml` |
-| ASan and UBSan CI | Passing on `main`; required on each Phase 3 PR head before merge | `asan-ubsan` preset and CI job |
-| Pinned clang-format gate | Passing on `main`; required on each Phase 3 PR head before merge | `format-check` CI job |
+| Versioned deterministic workload generation | Complete | Generator V1, ten profiles, checked manifests |
+| Streaming differential campaigns | Complete | Exact/compact runner, fixed/rotating/published tiers |
+| Failure persistence and semantic shrinking | Complete | Fresh exact replay, bounded deferral, three injected faults |
+| Metamorphic and bounded fuzz evidence | Complete locally | Five properties, two fuzz paths, checked seed corpus |
+| Phase 3 long campaign and final release gates | Pending | Local million-command and final gates pass; hosted evidence pending |
+| GCC and Clang CI | Defined; Phase 3 branch evidence pending publication | `.github/workflows/ci.yml` |
+| ASan and UBSan CI | Defined; Phase 3 branch evidence pending publication | `asan-ubsan` preset and CI job |
+| Pinned clang-format gate | Passes locally; hosted Phase 3 evidence pending publication | `format-check` CI job |
 | Resting book structure | Complete | `stress.InstrumentBookStress*` |
 | Matching and normalized command execution | Complete | Phase 2 |
 | Replay, Python bindings, benchmarks, gateway | Planned | Later gated phases |
@@ -140,6 +150,31 @@ $env:ATLAS_DIFF_NATIVE = "C:\absolute\path\to\atlas_diff_native.exe"
 .\.venv\Scripts\python.exe -m pytest
 ```
 
+Run the bounded default and marked Phase 3 selections separately:
+
+```sh
+python -m pytest -m "not campaign and not differential_fuzz"
+python -m pytest -m "campaign or differential_fuzz"
+```
+
+Run the fixed pull-request policy through the command-line runner:
+
+```sh
+python -m atlaslob.cli predefined \
+  --tier pr \
+  --native build/dev-gcc/atlas_diff_native \
+  --output build/phase3-pr
+```
+
+The PR policy is ten fixed 5,000-command exact cases, one for each required workload profile.
+Main and nightly tiers require an explicit `--epoch`; published release tiers use a checked literal
+seed set. Manual Release work is sharded by compiler and case after a full GCC/Clang Release
+build-and-CTest prerequisite; the sanitizer subset is sharded per case. Capacity-bound Release and
+sanitizer shards defer an exact replay longer than 1,000,000 commands while retaining a portable
+semantic-failure handoff for manual reproduction on a suitable host. See the
+[differential-testing interface](docs/differential-testing.md) and
+[Phase 3 evidence index](docs/evidence/phase3/README.md) before running a long campaign.
+
 ## Supported environments
 
 Ubuntu 24.04 is the primary supported environment because later gateway and profiling work will
@@ -171,6 +206,9 @@ developed with MinGW GCC on Windows, but Linux CI is the support authority.
   encodings, then verifies complete command streams against a separate map/deque reference model.
 - ADR 0010 keeps the Python oracle in a separate process with no bindings or private C++ access
   and defines fatal adapter/resource boundaries for cross-language evidence.
+- ADR 0011 freezes generator V1, ten workload profiles, campaign sizes and seed provenance,
+  bounded-memory comparison, fresh exact replay with an explicit large-prefix deferral boundary,
+  portable failure bundles, semantic shrinking, and the Phase 3 metamorphic/fuzz boundary.
 
 See [the semantic contract](docs/semantics.md) and
 [ADR 0001](docs/decisions/0001-core-semantics.md) plus
@@ -182,8 +220,9 @@ See [the semantic contract](docs/semantics.md) and
 [ADR 0007](docs/decisions/0007-atomic-new-and-cancel-execution.md) plus
 [ADR 0008](docs/decisions/0008-atomic-replace-and-public-engine.md) plus
 [ADR 0009](docs/decisions/0009-canonical-deterministic-evidence.md) plus
-[ADR 0010](docs/decisions/0010-independent-python-oracle-boundary.md) for accepted rules. The
-test-only process schema is documented in
+[ADR 0010](docs/decisions/0010-independent-python-oracle-boundary.md) plus
+[ADR 0011](docs/decisions/0011-deterministic-differential-campaigns.md) for accepted rules. The
+test-only process, workload, campaign, and failure schemas are documented in
 [Differential testing interface](docs/differential-testing.md).
 
 ## Roadmap

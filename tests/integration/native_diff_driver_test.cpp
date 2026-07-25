@@ -15,8 +15,10 @@ namespace {
 using atlaslob::differential::native_driver_engine_error_exit_code;
 using atlaslob::differential::native_driver_input_error_exit_code;
 using atlaslob::differential::native_driver_success_exit_code;
+using atlaslob::differential::NativeDriverConstructionFailureForTest;
 using atlaslob::differential::OutputMode;
 using atlaslob::differential::run_native_driver;
+using atlaslob::differential::run_native_driver_with_construction_failure_for_test;
 
 [[nodiscard]] std::vector<std::string> lines(std::string_view text) {
   std::istringstream input{std::string{text}};
@@ -106,6 +108,7 @@ TEST(NativeDiffDriver, ExactModeSerializesEveryEventAlternativeAndFinalSnapshot)
             std::string::npos);
   EXPECT_NE(output.str().find(R"("type":"accepted")"), std::string::npos);
   EXPECT_NE(output.str().find(R"("type":"rejected")"), std::string::npos);
+  EXPECT_NE(output.str().find(R"("reject_reason":"invalid_side")"), std::string::npos);
   EXPECT_NE(output.str().find(R"("type":"trade")"), std::string::npos);
   EXPECT_NE(output.str().find(R"("type":"rested")"), std::string::npos);
   EXPECT_NE(output.str().find(R"("type":"canceled")"), std::string::npos);
@@ -133,10 +136,43 @@ TEST(NativeDiffDriver, CompactModeOmitsEventsAndEmitsOnlyRequestedCheckpointSnap
   EXPECT_NE(records[1].find(R"("event_digest":")"), std::string::npos);
   EXPECT_NE(records[1].find(R"("events":null)"), std::string::npos);
   EXPECT_NE(records[1].find(R"("snapshot":null)"), std::string::npos);
+  EXPECT_NE(records[2].find(R"("reject_reason":"unknown_order_id")"), std::string::npos);
+  EXPECT_NE(records[2].find(R"("events":null)"), std::string::npos);
   EXPECT_NE(records[2].find(R"("snapshot":{"semantics_version":6)"), std::string::npos);
   EXPECT_EQ(output.str().find(R"("events":[)"), std::string::npos);
   EXPECT_NE(output.str().find(R"("order_id":"18446744073709551615")"), std::string::npos);
   EXPECT_NE(output.str().find(R"("price":"9223372036854775807")"), std::string::npos);
+}
+
+TEST(NativeDiffDriver, StateSideSummariesRemainExactBeyondUnsigned64BitTotals) {
+  constexpr std::string_view stream{
+      "ATLAS_DIFF_V1 7 18446744073709551615 1 2 0\n"
+      "N 11 1 7 1 1 1 1 100 18446744073709551615\n"
+      "N 12 2 7 1 1 1 1 99 18446744073709551615\n"};
+  std::istringstream input{std::string{stream}};
+  std::ostringstream output;
+
+  ASSERT_EQ(run_native_driver(input, output, OutputMode::compact), native_driver_success_exit_code);
+  EXPECT_NE(
+      output.str().find(
+          R"("bid_level_count":"2","bid_order_count":"2","bid_aggregate_quantity":"36893488147419103230","ask_level_count":"0","ask_order_count":"0","ask_aggregate_quantity":"0")"),
+      std::string::npos);
+  EXPECT_NE(output.str().find(R"("active_order_count":"2")"), std::string::npos);
+}
+
+TEST(NativeDiffDriver, StateSideSummariesKeepBidAndAskEvidenceSeparate) {
+  constexpr std::string_view stream{
+      "ATLAS_DIFF_V1 7 100 1 2 2\n"
+      "N 11 1 7 1 1 1 1 99 5\n"
+      "N 12 2 7 2 1 1 1 101 7\n"};
+  std::istringstream input{std::string{stream}};
+  std::ostringstream output;
+
+  ASSERT_EQ(run_native_driver(input, output, OutputMode::compact), native_driver_success_exit_code);
+  EXPECT_NE(
+      output.str().find(
+          R"("bid_level_count":"1","bid_order_count":"1","bid_aggregate_quantity":"5","ask_level_count":"1","ask_order_count":"1","ask_aggregate_quantity":"7")"),
+      std::string::npos);
 }
 
 TEST(NativeDiffDriver, RawEnumsSignedPricesAndAbsentIdsReachDomainValidation) {
@@ -222,6 +258,30 @@ TEST(NativeDiffDriver, RejectsInvalidHeaderAndInputReadFailureDeterministically)
               "{\"schema\":\"atlas_diff_v1\",\"kind\":\"error\",\"line\":\"1\","
               "\"code\":\"input_read_failure\"}\n");
   }
+}
+
+TEST(NativeDiffDriver, ConstructionAllocationFailureUsesResourceFailureClassification) {
+  std::istringstream input{"ATLAS_DIFF_V1 7 1000 1 16 0\n"};
+  std::ostringstream output;
+
+  EXPECT_EQ(run_native_driver_with_construction_failure_for_test(
+                input, output, NativeDriverConstructionFailureForTest::allocation),
+            native_driver_engine_error_exit_code);
+  EXPECT_EQ(output.str(),
+            "{\"schema\":\"atlas_diff_v1\",\"kind\":\"error\",\"line\":\"1\","
+            "\"code\":\"resource_failure\"}\n");
+}
+
+TEST(NativeDiffDriver, NonAllocationConstructionExceptionKeepsConstructionClassification) {
+  std::istringstream input{"ATLAS_DIFF_V1 7 1000 1 16 0\n"};
+  std::ostringstream output;
+
+  EXPECT_EQ(run_native_driver_with_construction_failure_for_test(
+                input, output, NativeDriverConstructionFailureForTest::exception),
+            native_driver_engine_error_exit_code);
+  EXPECT_EQ(output.str(),
+            "{\"schema\":\"atlas_diff_v1\",\"kind\":\"error\",\"line\":\"1\","
+            "\"code\":\"engine_construction_failure\"}\n");
 }
 
 TEST(NativeDiffDriver, IdenticalStreamsProduceByteIdenticalEvidence) {
