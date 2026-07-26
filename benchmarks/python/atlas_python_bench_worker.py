@@ -188,15 +188,11 @@ def _verify_wheel_install(
                 raise ValueError("wheel must contain exactly one METADATA member")
             metadata = archive.read(metadata_names[0]).decode("utf-8")
             wrapper_member = "atlaslob/engine.py"
-            extension_members = tuple(
-                name
-                for name in package_members
-                if PurePosixPath(name).name.startswith("_native_engine.")
-            )
-            if wrapper_member not in package_members or len(extension_members) != 1:
+            extension_member = f"atlaslob/{extension_path.name}"
+            if wrapper_member not in package_members or extension_member not in package_members:
                 raise ValueError("wheel omits the Python wrapper or native extension")
             wheel_wrapper_digest = hashlib.sha256(archive.read(wrapper_member)).hexdigest()
-            wheel_extension_digest = hashlib.sha256(archive.read(extension_members[0])).hexdigest()
+            wheel_extension_digest = hashlib.sha256(archive.read(extension_member)).hexdigest()
     except (OSError, UnicodeDecodeError, zipfile.BadZipFile, KeyError) as exc:
         raise ValueError("wheel cannot be verified") from exc
     name_value: str | None = None

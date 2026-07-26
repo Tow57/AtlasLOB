@@ -32,6 +32,7 @@ class _Distribution(importlib.metadata.Distribution):
             importlib.metadata.PackagePath("atlaslob/__init__.py"),
             importlib.metadata.PackagePath("atlaslob/engine.py"),
             importlib.metadata.PackagePath("atlaslob/_native_engine.test.so"),
+            importlib.metadata.PackagePath("atlaslob/_native_engine.pyi"),
         ]
 
     def locate_file(self, path: str | os.PathLike[str]) -> Path:
@@ -67,13 +68,16 @@ def _wheel_fixture(tmp_path: Path) -> tuple[Path, _Distribution, Path, Path]:
     (package / "__init__.py").write_bytes(b"__version__ = '0.2.0'\n")
     wrapper = package / "engine.py"
     extension = package / "_native_engine.test.so"
+    type_stub = package / "_native_engine.pyi"
     wrapper.write_bytes(b"# wrapper\n")
     extension.write_bytes(b"native-extension")
+    type_stub.write_bytes(b"# native typing surface\n")
     wheel = tmp_path / "atlaslob-0.2.0-cp312-cp312-manylinux.whl"
     with zipfile.ZipFile(wheel, "w") as archive:
         archive.writestr("atlaslob/__init__.py", (package / "__init__.py").read_bytes())
         archive.writestr("atlaslob/engine.py", wrapper.read_bytes())
         archive.writestr("atlaslob/_native_engine.test.so", extension.read_bytes())
+        archive.writestr("atlaslob/_native_engine.pyi", type_stub.read_bytes())
         archive.writestr(
             "atlaslob-0.2.0.dist-info/METADATA",
             "Metadata-Version: 2.1\nName: atlaslob\nVersion: 0.2.0\n",
