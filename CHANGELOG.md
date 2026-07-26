@@ -57,8 +57,9 @@ The format is based on Keep a Changelog, and public releases will follow semanti
 ### Added
 
 - Resumable Phase 5 plan execution across all 51 frozen measurement shapes, with round-robin
-  attempts, strict preflight, retained invalid evidence, non-overwriting resume, physical-host
-  consistency checks, context-separated deterministic reports, and exact bundle finalization.
+  attempts, canonical unique run identities, retained invalid evidence, non-overwriting resume,
+  physical-host consistency checks, boundary-separated deterministic reports, transactional
+  retryable finalization, and exact bundle verification.
 - Separate fixed-counter `perf stat` and DWARF call-graph capture that validates the profiled
   runner result, retains inaccessible-counter failures, summarizes counter availability and
   distributions, sanitizes text reports, and keeps profiling outside headline timing evidence.

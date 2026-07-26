@@ -594,15 +594,45 @@ def render_report_markdown(report: BenchmarkReport) -> str:
 def render_report_svg(report: BenchmarkReport) -> str:
     """Render deterministic, separately scaled median evidence panels."""
 
-    panels: tuple[tuple[str, tuple[tuple[GroupStatistics, str | int], ...]], ...] = (
+    rate_panels = (
         (
-            "Median commands per second",
+            "Core execution median commands per second",
             tuple(
                 (group, group.median_commands_per_second or "0")
                 for group in report.groups
-                if group.median_commands_per_second is not None
+                if group.boundary == "core_throughput"
+                and group.median_commands_per_second is not None
             ),
         ),
+        (
+            "Replay median commands per second",
+            tuple(
+                (group, group.median_commands_per_second or "0")
+                for group in report.groups
+                if group.boundary in {"replay_fast", "replay_verify"}
+                and group.median_commands_per_second is not None
+            ),
+        ),
+        (
+            "Python batch median commands per second",
+            tuple(
+                (group, group.median_commands_per_second or "0")
+                for group in report.groups
+                if group.boundary.startswith("python_")
+                and group.median_commands_per_second is not None
+            ),
+        ),
+        (
+            "Preload median commands per second",
+            tuple(
+                (group, group.median_commands_per_second or "0")
+                for group in report.groups
+                if group.boundary == "core_preload" and group.median_commands_per_second is not None
+            ),
+        ),
+    )
+    panels: tuple[tuple[str, tuple[tuple[GroupStatistics, str | int], ...]], ...] = (
+        *rate_panels,
         (
             "Median p50 service time in nanoseconds",
             tuple(

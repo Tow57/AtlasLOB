@@ -169,9 +169,15 @@ def run_suite(
     for sequence, (block, position, runner) in enumerate(schedule, start=1):
         executable_digest, environment, environment_digest = prepared[runner.variant]
         counters[runner.variant] = counters.get(runner.variant, 0) + 1
-        run_label = (
-            f"{suite_label}-{manifest.workload_id.lower()}-{manifest.stream_sha256[:12]}-{boundary}-"
-            f"{runner.variant}-b{block:05d}-p{position}-r{counters[runner.variant]:05d}"
+        run_label = _run_label(
+            suite_label,
+            manifest.workload_id,
+            manifest.stream_sha256,
+            boundary,
+            runner.variant,
+            block,
+            position,
+            counters[runner.variant],
         )
         try:
             observation = _run_once(
@@ -276,6 +282,22 @@ def run_suite(
         write_canonical_document(path, observation)
         paths.append(path)
     return tuple(paths)
+
+
+def _run_label(
+    suite_label: str,
+    workload_id: str,
+    stream_sha256: str,
+    boundary: str,
+    variant: RunnerVariant,
+    block: int,
+    position: int,
+    counter: int,
+) -> str:
+    return (
+        f"{suite_label}-{workload_id.lower()}-{stream_sha256[:12]}-{boundary}-"
+        f"{variant}-b{block:05d}-p{position}-r{counter:05d}"
+    )
 
 
 def _prepare_runner(

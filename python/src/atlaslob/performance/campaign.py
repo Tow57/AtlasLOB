@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import shutil
+import tempfile
 from collections import defaultdict
 from collections.abc import Sequence
 from dataclasses import dataclass
@@ -25,7 +27,7 @@ from atlaslob.performance.schemas import (
     validate_observation_against_workload,
     write_canonical_document,
 )
-from atlaslob.performance.suite import Runner, RunnerMode, _prepare_runner, run_suite
+from atlaslob.performance.suite import Runner, RunnerMode, _prepare_runner, _run_label, run_suite
 from atlaslob.performance.workloads import (
     BenchmarkPlan,
     BenchmarkPlanPoint,
@@ -191,17 +193,20 @@ def run_campaign(
     _require_one_physical_host(
         tuple(value[1] for value in prepared.values()),
     )
-    loaded_states = {
-        shape: _load_shape_attempts(
+    seen_document_digests: set[str] = set()
+    seen_run_labels: set[str] = set()
+    loaded_states: dict[CampaignShape, list[Observation]] = {}
+    for shape in relevant_shapes:
+        loaded_states[shape] = _load_shape_attempts(
             shape,
             bundle_directory,
             plan,
             manifests,
             prepared,
             suite_label,
+            seen_document_digests,
+            seen_run_labels,
         )
-        for shape in relevant_shapes
-    }
     states = {shape: loaded_states[shape] for shape in selected_shapes}
     if any(len(attempts) > max_attempts for attempts in states.values()):
         raise ValueError("campaign output already exceeds the attempt limit")
@@ -248,6 +253,13 @@ def run_campaign(
                 manifests[_point_shape_key(point)][1],
                 prepared[shape.role],
                 suite_label,
+                attempt,
+            )
+            _record_unique_attempt(
+                paths[0],
+                observation,
+                seen_document_digests,
+                seen_run_labels,
             )
             existing.append(observation)
             if not observation.valid:
@@ -271,6 +283,8 @@ def finalize_campaign(
 
     if isinstance(valid_observations, bool) or not 1 <= valid_observations <= 10_000:
         raise ValueError("valid_observations must be in [1, 10000]")
+    if valid_observations < 10 and not allow_exploratory:
+        raise ValueError("official campaign finalization requires at least ten valid observations")
     if (bundle_directory / "inventory.json").exists():
         raise ValueError("an inventoried campaign is immutable")
     reports_directory = bundle_directory / "reports"
@@ -288,6 +302,9 @@ def finalize_campaign(
     observations_by_context: dict[str, list[Path]] = defaultdict(list)
     roles_by_context: dict[str, set[str]] = defaultdict(set)
     referenced_environments: set[str] = set()
+    seen_document_digests: set[str] = set()
+    seen_run_labels: set[str] = set()
+    suite_labels: set[str] = set()
 
     for shape in shapes:
         point = _point_by_id(plan, shape.point_id)
@@ -297,6 +314,9 @@ def finalize_campaign(
             bundle_directory,
             manifest_path,
             manifest,
+            seen_document_digests,
+            seen_run_labels,
+            suite_labels,
         )
         if sum(observation.valid for _, observation in attempts) < valid_observations:
             raise ValueError(
@@ -317,9 +337,48 @@ def finalize_campaign(
 
     if referenced_environments != set(environment_by_digest):
         raise ValueError("campaign contains an unreferenced environment manifest")
+    if len(suite_labels) != 1:
+        raise ValueError("campaign observations must use one suite label")
     _require_python_harnesses(bundle_directory, tuple(environment_by_digest.values()))
     _require_one_physical_host(tuple(environment for _, environment in environments))
-    reports_directory.mkdir(parents=True, exist_ok=True)
+    reports_preexisted = reports_directory.exists()
+    staging_directory = Path(tempfile.mkdtemp(prefix=".reports-", dir=bundle_directory))
+    reports_published = False
+    try:
+        _render_campaign_reports(
+            bundle_directory,
+            staging_directory,
+            observations_by_context,
+            roles_by_context,
+            manifests,
+            environment_by_digest,
+        )
+        if reports_preexisted:
+            reports_directory.rmdir()
+        staging_directory.replace(reports_directory)
+        reports_published = True
+        write_inventory(bundle_directory)
+        return verify_bundle(bundle_directory)
+    except BaseException:
+        (bundle_directory / "inventory.json").unlink(missing_ok=True)
+        if reports_published and reports_directory.exists():
+            shutil.rmtree(reports_directory)
+        if reports_preexisted and not reports_directory.exists():
+            reports_directory.mkdir()
+        raise
+    finally:
+        if staging_directory.exists():
+            shutil.rmtree(staging_directory)
+
+
+def _render_campaign_reports(
+    bundle_directory: Path,
+    reports_directory: Path,
+    observations_by_context: dict[str, list[Path]],
+    roles_by_context: dict[str, set[str]],
+    manifests: dict[tuple[object, ...], tuple[Path, WorkloadManifest]],
+    environment_by_digest: dict[str, tuple[Path, EnvironmentManifest]],
+) -> None:
     used_report_names: set[str] = set()
     for context in sorted(observations_by_context):
         observation_paths = tuple(
@@ -371,9 +430,6 @@ def finalize_campaign(
             encoding="ascii",
             newline="\n",
         )
-
-    write_inventory(bundle_directory)
-    return verify_bundle(bundle_directory)
 
 
 def _load_plan_manifests(
@@ -508,6 +564,8 @@ def _load_shape_attempts(
     manifests: dict[tuple[object, ...], tuple[Path, WorkloadManifest]],
     prepared: dict[str, tuple[str, EnvironmentManifest, str]],
     suite_label: str,
+    seen_document_digests: set[str],
+    seen_run_labels: set[str],
 ) -> list[Observation]:
     point = _point_by_id(plan, shape.point_id)
     manifest_path, manifest = manifests[_point_shape_key(point)]
@@ -515,17 +573,25 @@ def _load_shape_attempts(
     if not directory.exists():
         return []
     attempts = _strict_attempt_paths(directory)
-    return [
-        _validate_attempt(
+    result: list[Observation] = []
+    for attempt, path in enumerate(attempts, start=1):
+        observation = _validate_attempt(
             path,
             shape,
             manifest_path,
             manifest,
             prepared[shape.role],
             suite_label,
+            attempt,
         )
-        for path in attempts
-    ]
+        _record_unique_attempt(
+            path,
+            observation,
+            seen_document_digests,
+            seen_run_labels,
+        )
+        result.append(observation)
+    return result
 
 
 def _load_shape_attempts_without_runner(
@@ -533,13 +599,24 @@ def _load_shape_attempts_without_runner(
     bundle_directory: Path,
     manifest_path: Path,
     manifest: WorkloadManifest,
+    seen_document_digests: set[str],
+    seen_run_labels: set[str],
+    suite_labels: set[str],
 ) -> tuple[tuple[Path, Observation], ...]:
     directory = _shape_directory(bundle_directory, shape)
     attempts = _strict_attempt_paths(directory)
     result: list[tuple[Path, Observation]] = []
-    for path in attempts:
+    for attempt, path in enumerate(attempts, start=1):
         observation = read_canonical_document(path, observation_from_dict)
         _validate_shape_observation(observation, shape, manifest_path, manifest)
+        _validate_attempt_run_label(observation, shape, manifest, attempt)
+        _record_unique_attempt(
+            path,
+            observation,
+            seen_document_digests,
+            seen_run_labels,
+        )
+        suite_labels.add(observation.suite_label)
         result.append((path, observation))
     return tuple(result)
 
@@ -569,6 +646,7 @@ def _validate_attempt(
     manifest: WorkloadManifest,
     prepared: tuple[str, EnvironmentManifest, str],
     suite_label: str,
+    attempt: int,
 ) -> Observation:
     observation = read_canonical_document(path, observation_from_dict)
     _validate_shape_observation(observation, shape, manifest_path, manifest)
@@ -581,7 +659,43 @@ def _validate_attempt(
         or observation.variant != "standalone"
     ):
         raise ValueError("campaign attempt differs from its runner or suite identity")
+    _validate_attempt_run_label(observation, shape, manifest, attempt)
     return observation
+
+
+def _validate_attempt_run_label(
+    observation: Observation,
+    shape: CampaignShape,
+    manifest: WorkloadManifest,
+    attempt: int,
+) -> None:
+    expected = _run_label(
+        observation.suite_label,
+        manifest.workload_id,
+        manifest.stream_sha256,
+        shape.boundary,
+        "standalone",
+        0,
+        0,
+        _campaign_attempt_counter(shape, attempt),
+    )
+    if observation.run_label != expected:
+        raise ValueError("campaign attempt has a stale or noncanonical run label")
+
+
+def _record_unique_attempt(
+    path: Path,
+    observation: Observation,
+    seen_document_digests: set[str],
+    seen_run_labels: set[str],
+) -> None:
+    document_digest = file_sha256(path)
+    if document_digest in seen_document_digests:
+        raise ValueError("campaign contains a duplicate observation document")
+    if observation.run_label in seen_run_labels:
+        raise ValueError("campaign contains a duplicate observation run label")
+    seen_document_digests.add(document_digest)
+    seen_run_labels.add(observation.run_label)
 
 
 def _validate_shape_observation(
@@ -609,15 +723,21 @@ def _load_environments(
 ) -> tuple[tuple[Path, EnvironmentManifest], ...]:
     if not directory.is_dir():
         raise ValueError("campaign environment directory does not exist")
+    entries = tuple(directory.iterdir())
+    if any(not path.is_file() or path.suffix != ".json" for path in entries):
+        raise ValueError("campaign environment directory contains an unexpected entry")
     values = tuple(
         (
             path,
             read_canonical_document(path, environment_from_dict),
         )
-        for path in sorted(directory.glob("*.json"))
+        for path in sorted(entries)
     )
     if not values:
         raise ValueError("campaign contains no environment manifests")
+    digests = tuple(file_sha256(path) for path, _ in values)
+    if len(set(digests)) != len(digests):
+        raise ValueError("campaign contains duplicate environment documents")
     return values
 
 

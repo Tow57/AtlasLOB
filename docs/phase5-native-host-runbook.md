@@ -111,6 +111,7 @@ Resolve and record the single wheel path:
 ```sh
 set -- out/phase5-python-wheel/atlaslob-*.whl
 test "$#" -eq 1
+test -f "$1"
 export ATLAS_PHASE5_WHEEL="$1"
 ```
 
@@ -253,18 +254,21 @@ campaign_args=(
 Run tiers in this order:
 
 ```sh
-mkdir -p out/phase5-baseline/checkpoints
-for tier in study memory replay python headline; do
-  taskset -c "$ATLAS_PHASE5_CPU" \
-    .venv-phase5/bin/python -m atlaslob.performance run-campaign \
-    "${campaign_args[@]}" --tier "$tier" --resume
+(
+  set -euo pipefail
+  mkdir -p out/phase5-baseline/checkpoints
+  for tier in study memory replay python headline; do
+    taskset -c "$ATLAS_PHASE5_CPU" \
+      .venv-phase5/bin/python -m atlaslob.performance run-campaign \
+      "${campaign_args[@]}" --tier "$tier" --resume
 
-  checkpoint="out/phase5-baseline/checkpoints/after-$tier.sha256"
-  find "$bundle" -type f -print0 |
-    sort -z |
-    xargs -0 sha256sum >"$checkpoint"
-  sha256sum --check "$checkpoint"
-done
+    checkpoint="out/phase5-baseline/checkpoints/after-$tier.sha256"
+    find "$bundle" -type f -print0 |
+      sort -z |
+      xargs -0 sha256sum >"$checkpoint"
+    sha256sum --check "$checkpoint"
+  done
+)
 ```
 
 The driver runs attempts round-robin within each tier. It stops after retaining the first invalid
@@ -342,7 +346,8 @@ contexts while verifying that every environment describes the same physical host
 Create a local checkpoint only after verification:
 
 ```sh
-tar --create --file out/phase5-baseline-bundle.tar -C out/phase5-baseline bundle profiles
+tar --create --file out/phase5-baseline-bundle.tar \
+  -C out/phase5-baseline bundle profiles checkpoints
 sha256sum out/phase5-baseline-bundle.tar \
   >out/phase5-baseline-bundle.tar.sha256
 sha256sum --check out/phase5-baseline-bundle.tar.sha256

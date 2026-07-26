@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import shutil
 from dataclasses import replace
 from pathlib import Path
 
 import pytest
 from atlaslob.performance import campaign
+from atlaslob.performance.bundle import BundleSummary, verify_bundle
 from atlaslob.performance.schemas import (
     EnvironmentManifest,
     Observation,
@@ -13,7 +15,7 @@ from atlaslob.performance.schemas import (
     measurement_parameters_for_boundary,
     write_canonical_document,
 )
-from atlaslob.performance.suite import Runner
+from atlaslob.performance.suite import Runner, _run_label
 from atlaslob.performance.workloads import (
     BenchmarkPlan,
     BenchmarkPlanPoint,
@@ -178,6 +180,25 @@ def _observation(
     )
 
 
+def _attempt_run_label(manifest_path: Path, arguments: dict[str, object]) -> str:
+    manifest = verify_workload_manifest(manifest_path)
+    assert arguments["mode"] == "throughput"
+    suite_label = arguments["suite_label"]
+    counter = arguments["block_start"]
+    assert isinstance(suite_label, str)
+    assert isinstance(counter, int) and not isinstance(counter, bool)
+    return _run_label(
+        suite_label,
+        manifest.workload_id,
+        manifest.stream_sha256,
+        "core_throughput",
+        "standalone",
+        0,
+        0,
+        counter,
+    )
+
+
 def test_study_plan_expands_to_frozen_51_shapes() -> None:
     plan = load_benchmark_plan(REPOSITORY / "benchmarks" / "plans" / "phase5-study-v1.json")
     shapes = campaign.expand_campaign(plan)
@@ -222,17 +243,16 @@ def test_campaign_is_round_robin_resumable_and_retains_invalid_attempt(
     def fake_run_suite(
         manifest_path: Path,
         output: Path,
-        **_kwargs: object,
+        **kwargs: object,
     ) -> tuple[Path, ...]:
         nonlocal invalid_first
         schedule.append(manifest_path.name)
         output.mkdir(parents=True)
-        attempt = output.name.removeprefix("attempt-")
         value = _observation(
             manifest_path,
             environment,
             environment_digest,
-            run_label=f"campaign01-{manifest_path.stem}-{attempt}",
+            run_label=_attempt_run_label(manifest_path, kwargs),
             valid=not invalid_first,
         )
         invalid_first = False
@@ -310,14 +330,14 @@ def test_finalize_campaign_requires_coverage_and_verifies_bundle(
     def fake_run_suite(
         manifest_path: Path,
         output: Path,
-        **_kwargs: object,
+        **kwargs: object,
     ) -> tuple[Path, ...]:
         output.mkdir(parents=True)
         value = _observation(
             manifest_path,
             environment,
             environment_digest,
-            run_label=f"campaign01-{manifest_path.stem}",
+            run_label=_attempt_run_label(manifest_path, kwargs),
         )
         path = output / "observation-00001.json"
         write_canonical_document(path, value)
@@ -353,6 +373,216 @@ def test_finalize_campaign_requires_coverage_and_verifies_bundle(
             bundle,
             valid_observations=1,
             allow_exploratory=True,
+        )
+
+
+def test_campaign_rejects_copied_attempt_before_resuming(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    plan_path, bundle, environment, environment_digest = _prepare_bundle(tmp_path)
+    monkeypatch.setattr(
+        campaign,
+        "_preflight_runners",
+        lambda *_: {"core": (environment.binary_sha256, environment, environment_digest)},
+    )
+
+    def fake_run_suite(
+        manifest_path: Path,
+        output: Path,
+        **kwargs: object,
+    ) -> tuple[Path, ...]:
+        output.mkdir(parents=True)
+        path = output / "observation-00001.json"
+        write_canonical_document(
+            path,
+            _observation(
+                manifest_path,
+                environment,
+                environment_digest,
+                run_label=_attempt_run_label(manifest_path, kwargs),
+            ),
+        )
+        return (path,)
+
+    monkeypatch.setattr(campaign, "run_suite", fake_run_suite)
+    runners = campaign.CampaignRunners(
+        Runner(Path("atlas_bench_runner"), bundle / "environments" / "core.json", "standalone")
+    )
+    campaign.run_campaign(
+        plan_path,
+        bundle,
+        runners=runners,
+        suite_label="campaign01",
+        valid_observations=1,
+        max_attempts=2,
+    )
+    source = (
+        bundle
+        / "observations"
+        / "a-w04"
+        / "core-throughput"
+        / "attempt-00001"
+        / "observation-00001.json"
+    )
+    copied = source.parent.parent / "attempt-00002" / source.name
+    copied.parent.mkdir()
+    shutil.copyfile(source, copied)
+
+    called = False
+
+    def fail_if_called(*_arguments: object, **_keywords: object) -> tuple[Path, ...]:
+        nonlocal called
+        called = True
+        return ()
+
+    monkeypatch.setattr(campaign, "run_suite", fail_if_called)
+    with pytest.raises(ValueError, match="stale or noncanonical run label"):
+        campaign.run_campaign(
+            plan_path,
+            bundle,
+            runners=runners,
+            suite_label="campaign01",
+            valid_observations=2,
+            max_attempts=2,
+            resume=True,
+        )
+    assert not called
+
+
+def test_finalize_campaign_is_retryable_after_verification_failure(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    plan_path, bundle, environment, environment_digest = _prepare_bundle(tmp_path)
+    monkeypatch.setattr(
+        campaign,
+        "_preflight_runners",
+        lambda *_: {"core": (environment.binary_sha256, environment, environment_digest)},
+    )
+
+    def fake_run_suite(
+        manifest_path: Path,
+        output: Path,
+        **kwargs: object,
+    ) -> tuple[Path, ...]:
+        output.mkdir(parents=True)
+        path = output / "observation-00001.json"
+        write_canonical_document(
+            path,
+            _observation(
+                manifest_path,
+                environment,
+                environment_digest,
+                run_label=_attempt_run_label(manifest_path, kwargs),
+            ),
+        )
+        return (path,)
+
+    monkeypatch.setattr(campaign, "run_suite", fake_run_suite)
+    campaign.run_campaign(
+        plan_path,
+        bundle,
+        runners=campaign.CampaignRunners(
+            Runner(Path("atlas_bench_runner"), bundle / "environments" / "core.json", "standalone")
+        ),
+        suite_label="campaign01",
+        valid_observations=1,
+        max_attempts=1,
+    )
+
+    calls = 0
+
+    def fail_once(directory: Path) -> BundleSummary:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            raise ValueError("injected post-publication verification failure")
+        return verify_bundle(directory)
+
+    monkeypatch.setattr(campaign, "verify_bundle", fail_once)
+    with pytest.raises(ValueError, match="injected post-publication"):
+        campaign.finalize_campaign(
+            plan_path,
+            bundle,
+            valid_observations=1,
+            allow_exploratory=True,
+        )
+    assert not (bundle / "inventory.json").exists()
+    assert not (bundle / "reports").exists()
+    assert not tuple(bundle.glob(".reports-*"))
+
+    summary = campaign.finalize_campaign(
+        plan_path,
+        bundle,
+        valid_observations=1,
+        allow_exploratory=True,
+    )
+    assert summary.observations == 2
+
+
+def test_finalize_campaign_rejects_duplicate_environments_without_derived_outputs(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    plan_path, bundle, environment, environment_digest = _prepare_bundle(tmp_path)
+    monkeypatch.setattr(
+        campaign,
+        "_preflight_runners",
+        lambda *_: {"core": (environment.binary_sha256, environment, environment_digest)},
+    )
+
+    def fake_run_suite(
+        manifest_path: Path,
+        output: Path,
+        **kwargs: object,
+    ) -> tuple[Path, ...]:
+        output.mkdir(parents=True)
+        path = output / "observation-00001.json"
+        write_canonical_document(
+            path,
+            _observation(
+                manifest_path,
+                environment,
+                environment_digest,
+                run_label=_attempt_run_label(manifest_path, kwargs),
+            ),
+        )
+        return (path,)
+
+    monkeypatch.setattr(campaign, "run_suite", fake_run_suite)
+    campaign.run_campaign(
+        plan_path,
+        bundle,
+        runners=campaign.CampaignRunners(
+            Runner(Path("atlas_bench_runner"), bundle / "environments" / "core.json", "standalone")
+        ),
+        suite_label="campaign01",
+        valid_observations=1,
+        max_attempts=1,
+    )
+    source = bundle / "environments" / "core.json"
+    shutil.copyfile(source, source.with_name("duplicate.json"))
+
+    with pytest.raises(ValueError, match="duplicate environment documents"):
+        campaign.finalize_campaign(
+            plan_path,
+            bundle,
+            valid_observations=1,
+            allow_exploratory=True,
+        )
+    assert not (bundle / "inventory.json").exists()
+    assert not (bundle / "reports").exists()
+
+
+def test_official_finalization_requires_ten_observations(tmp_path: Path) -> None:
+    plan_path, bundle, _environment_value, _environment_digest = _prepare_bundle(tmp_path)
+
+    with pytest.raises(ValueError, match="at least ten valid observations"):
+        campaign.finalize_campaign(
+            plan_path,
+            bundle,
+            valid_observations=1,
         )
 
 
@@ -429,7 +659,7 @@ def test_finalize_campaign_rejects_missing_and_exploratory_evidence(
     def fake_run_suite(
         manifest_path: Path,
         output: Path,
-        **_kwargs: object,
+        **kwargs: object,
     ) -> tuple[Path, ...]:
         output.mkdir(parents=True)
         path = output / "observation-00001.json"
@@ -439,7 +669,7 @@ def test_finalize_campaign_rejects_missing_and_exploratory_evidence(
                 manifest_path,
                 environment,
                 environment_digest,
-                run_label=f"campaign01-{manifest_path.stem}",
+                run_label=_attempt_run_label(manifest_path, kwargs),
             ),
         )
         return (path,)
@@ -456,12 +686,20 @@ def test_finalize_campaign_rejects_missing_and_exploratory_evidence(
             )
         ),
         suite_label="campaign01",
-        valid_observations=1,
-        max_attempts=1,
+        valid_observations=10,
+        max_attempts=10,
     )
     with pytest.raises(ValueError, match="exploratory evidence"):
         campaign.finalize_campaign(
             plan_path,
             bundle,
-            valid_observations=1,
+            valid_observations=10,
         )
+
+
+def test_native_host_runbook_fails_closed_and_archives_checkpoints() -> None:
+    runbook = (REPOSITORY / "docs" / "phase5-native-host-runbook.md").read_text(encoding="utf-8")
+
+    assert 'test -f "$1"' in runbook
+    assert "(\n  set -euo pipefail\n  mkdir -p out/phase5-baseline/checkpoints" in runbook
+    assert "-C out/phase5-baseline bundle profiles checkpoints" in runbook

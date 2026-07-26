@@ -360,6 +360,67 @@ def test_report_and_svg_regenerate_byte_for_byte(tmp_path: Path) -> None:
         replace(report, groups=(report.groups[0],) * 65_537)
 
 
+def test_svg_keeps_measurement_boundaries_in_separate_panels(tmp_path: Path) -> None:
+    manifest = _w04(tmp_path)
+    environment = _environment("a" * 64)
+    environment_digest = document_sha256(environment_to_dict(environment))
+    report = analyze_observations(
+        (
+            _observation(
+                manifest,
+                environment,
+                environment_digest,
+                elapsed_ns=1_000,
+                run_label="throughput",
+            ),
+            _observation(
+                manifest,
+                environment,
+                environment_digest,
+                elapsed_ns=1_000,
+                run_label="latency",
+                boundary="core_latency",
+                latency=(10,),
+            ),
+        ),
+        workloads=(_manifest_entry(manifest),),
+        environments=((environment_digest, environment),),
+    )
+    groups = {group.boundary: group for group in report.groups}
+    rendered_report = replace(
+        report,
+        groups=tuple(
+            sorted(
+                (
+                    groups["core_throughput"],
+                    replace(
+                        groups["core_throughput"],
+                        boundary="replay_fast",
+                        timed_input_kind="atlslg01",
+                        timed_input_sha256="e" * 64,
+                    ),
+                    replace(groups["core_throughput"], boundary="python_summary"),
+                    replace(groups["core_throughput"], boundary="core_preload"),
+                    groups["core_latency"],
+                ),
+                key=lambda group: group.boundary,
+            )
+        ),
+    )
+
+    svg = render_report_svg(rendered_report)
+    core_title = svg.index("Core execution median commands per second")
+    replay_title = svg.index("Replay median commands per second")
+    python_title = svg.index("Python batch median commands per second")
+    setup_title = svg.index("Preload median commands per second")
+    latency_title = svg.index("Median p50 service time in nanoseconds")
+    assert core_title < svg.index("core_throughput/W04") < replay_title
+    assert replay_title < svg.index("replay_fast/W04") < python_title
+    assert python_title < svg.index("python_summary/W04") < setup_title
+    assert setup_title < svg.index("core_preload/W04") < latency_title
+    assert "core_latency/W04" not in svg[:latency_title]
+
+
 def test_official_report_retains_invalid_observations_as_limitations(
     tmp_path: Path,
 ) -> None:
