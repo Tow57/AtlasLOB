@@ -237,135 +237,35 @@ jobs:
             'import json,pathlib,sys; value=json.loads(pathlib.Path(sys.argv[1]).read_text(encoding="ascii")); assert value["classification"] == "exploratory"; assert value["runtime_kind"] == "cpython"; assert value["build_type"] == "Release"; assert value["optimization"] == "O3"; assert value["ndebug"] is True; assert value["frame_pointers"] is True; assert value["invariants"] is False; assert value["sanitizers"] is False; assert value["lto"] is False; assert value["warnings_as_errors"] is True; assert value["debug_symbols"] is True; assert value["cxx20"] is True; assert value["release_flags_locked"] is True' \
             "$smoke_root/environments/python-cp312.json"
 
-      - name: Run one exploratory observation per core and setup boundary
+      - name: Run and finalize the complete threshold-free exploratory campaign
         run: |
           smoke_root="$RUNNER_TEMP/atlas-phase5-benchmark-smoke"
-          mapfile -t w04_manifests < <(find "$smoke_root/materialized" -maxdepth 1 -name 'w04-*.json')
-          if (( ${#w04_manifests[@]} != 1 )); then
-            printf 'expected one W04 smoke manifest, found %s\n' \
-              "${#w04_manifests[@]}" >&2
-            exit 1
-          fi
-          manifest="${w04_manifests[0]}"
-          for mode in throughput latency construction preload; do
-            python -m atlaslob.performance run-suite \
-              --manifest "$manifest" \
-              --output "$smoke_root/run-$mode" \
-              --runner build/release-benchmark-gcc/atlas_bench_runner \
-              --environment "$smoke_root/environments/core.json" \
-              --suite-label ci-core \
-              --mode "$mode" \
-              --observations 1
-          done
-          python -m atlaslob.performance run-suite \
-            --manifest "$manifest" \
-            --output "$smoke_root/run-allocation" \
-            --runner build/release-benchmark-gcc/atlas_bench_alloc_runner \
-            --environment "$smoke_root/environments/allocation.json" \
-            --suite-label ci-allocation \
-            --mode allocation \
-            --observations 1
-          python -m atlaslob.performance run-suite \
-            --manifest "$manifest" \
-            --output "$smoke_root/run-setup-allocation" \
-            --runner build/release-benchmark-gcc/atlas_bench_alloc_runner \
-            --environment "$smoke_root/environments/allocation.json" \
-            --suite-label ci-allocation \
-            --mode setup-allocation \
-            --observations 1
-
-      - name: Run one exploratory CPython observation per batch output mode
-        run: |
-          smoke_root="$RUNNER_TEMP/atlas-phase5-benchmark-smoke"
-          worker="$GITHUB_WORKSPACE/benchmarks/python/atlas_python_bench_worker.py"
-          mapfile -t w04_manifests < <(find "$smoke_root/materialized" -maxdepth 1 -name 'w04-*.json')
-          if (( ${#w04_manifests[@]} != 1 )); then
-            printf 'expected one W04 smoke manifest, found %s\n' \
-              "${#w04_manifests[@]}" >&2
-            exit 1
-          fi
-          for mode in python-objects python-columns python-summary; do
-            python -m atlaslob.performance run-suite \
-              --manifest "${w04_manifests[0]}" \
-              --output "$smoke_root/run-$mode-batch-64" \
-              --runner "$ATLAS_CP312_TARGET_PYTHON" \
-              --environment "$smoke_root/environments/python-cp312.json" \
-              --wheel "$ATLAS_CP312_WHEEL" \
-              --python-worker "$worker" \
-              --suite-label ci-python-cp312 \
-              --mode "$mode" \
-              --batch-size 64 \
-              --observations 1
-          done
-          python -c \
-            'import json,pathlib,sys; documents=[json.loads((pathlib.Path(sys.argv[1])/f"run-{mode}-batch-64"/"observation-00001.json").read_text(encoding="ascii")) for mode in ("python-objects","python-columns","python-summary")]; assert all(value["valid"] is True for value in documents); assert {value["boundary"] for value in documents} == {"python_objects","python_columns","python_summary"}; assert all(value["measurement_parameters"]["batch_size"] == "64" for value in documents)' \
-            "$smoke_root"
-
-      - name: Run one exploratory replay observation per mode
-        run: |
-          smoke_root="$RUNNER_TEMP/atlas-phase5-benchmark-smoke"
-          mapfile -t w10_manifests < <(find "$smoke_root/materialized" -maxdepth 1 -name 'w10-*.json')
-          if (( ${#w10_manifests[@]} != 1 )); then
-            printf 'expected one W10 smoke manifest, found %s\n' \
-              "${#w10_manifests[@]}" >&2
-            exit 1
-          fi
-          for mode in replay-fast replay-verify; do
-            python -m atlaslob.performance run-suite \
-              --manifest "${w10_manifests[0]}" \
-              --output "$smoke_root/run-$mode" \
-              --runner build/release-benchmark-gcc/atlas_bench_runner \
-              --environment "$smoke_root/environments/core.json" \
-              --suite-label ci-replay \
-              --mode "$mode" \
-              --observations 1
-          done
-
-      - name: Regenerate reports byte for byte
-        run: |
-          smoke_root="$RUNNER_TEMP/atlas-phase5-benchmark-smoke"
-          bundle="$smoke_root/bundle"
-          mkdir -p \
-            "$bundle/workloads" \
-            "$bundle/environments" \
-            "$bundle/observations" \
-            "$bundle/reports" \
-            "$smoke_root/repeated-report"
-          mapfile -t source_manifests < <(find "$smoke_root/materialized" -maxdepth 1 -name 'w04-*.json')
-          manifest_name="$(basename "${source_manifests[0]}")"
-          stream_name="$(python -c \
-            'import json,sys; print(json.load(open(sys.argv[1], encoding="ascii"))["stream_file"])' \
-            "${source_manifests[0]}")"
-          cp "${source_manifests[0]}" "$bundle/workloads/$manifest_name"
-          cp "$smoke_root/materialized/$stream_name" "$bundle/workloads/$stream_name"
-          cp "$smoke_root/environments/core.json" "$bundle/environments/core.json"
-          cp "$smoke_root/run-throughput/observation-00001.json" \
-            "$bundle/observations/observation-00001.json"
-          manifest="$bundle/workloads/$manifest_name"
-          python -m atlaslob.performance analyze "$bundle/observations" \
-            --manifest "$manifest" \
+          bundle="$smoke_root/campaign-bundle"
+          worker="$bundle/harness/atlas_python_bench_worker.py"
+          mkdir -p "$bundle/workloads" "$bundle/environments" "$bundle/harness"
+          cp "$smoke_root"/materialized/* "$bundle/workloads/"
+          cp "$smoke_root"/environments/*.json "$bundle/environments/"
+          cp benchmarks/python/atlas_python_bench_worker.py "$worker"
+          python -m atlaslob.performance run-campaign \
+            --plan benchmarks/plans/ci-smoke-v1.json \
+            --bundle "$bundle" \
+            --runner build/release-benchmark-gcc/atlas_bench_runner \
             --environment "$bundle/environments/core.json" \
-            --output "$bundle/reports/report.json" \
-            --markdown "$bundle/reports/report.md" \
-            --svg "$bundle/reports/report.svg"
-          python -m atlaslob.performance analyze "$bundle/observations" \
-            --manifest "$manifest" \
-            --environment "$bundle/environments/core.json" \
-            --output "$smoke_root/repeated-report/report.json" \
-            --markdown "$smoke_root/repeated-report/report.md" \
-            --svg "$smoke_root/repeated-report/report.svg"
-          cmp --silent \
-            "$bundle/reports/report.json" "$smoke_root/repeated-report/report.json"
-          cmp --silent \
-            "$bundle/reports/report.md" "$smoke_root/repeated-report/report.md"
-          cmp --silent \
-            "$bundle/reports/report.svg" "$smoke_root/repeated-report/report.svg"
-
-      - name: Verify exploratory sample bundle
-        run: >-
-          python -m atlaslob.performance verify-bundle
-          "$RUNNER_TEMP/atlas-phase5-benchmark-smoke/bundle"
-          --create-inventory
+            --allocation-runner build/release-benchmark-gcc/atlas_bench_alloc_runner \
+            --allocation-environment "$bundle/environments/allocation.json" \
+            --python-runner "$ATLAS_CP312_TARGET_PYTHON" \
+            --python-environment "$bundle/environments/python-cp312.json" \
+            --wheel "$ATLAS_CP312_WHEEL" \
+            --python-worker "$worker" \
+            --suite-label ci-campaign \
+            --valid-observations 1 \
+            --max-attempts 1
+          python -m atlaslob.performance finalize-campaign \
+            --plan benchmarks/plans/ci-smoke-v1.json \
+            --bundle "$bundle" \
+            --valid-observations 1 \
+            --allow-exploratory
+          python -m atlaslob.performance verify-bundle "$bundle"
 
       - name: Retain exploratory benchmark smoke evidence
         if: always()

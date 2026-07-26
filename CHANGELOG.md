@@ -56,6 +56,15 @@ The format is based on Keep a Changelog, and public releases will follow semanti
 
 ### Added
 
+- Resumable Phase 5 plan execution across all 51 frozen measurement shapes, with round-robin
+  attempts, strict preflight, retained invalid evidence, non-overwriting resume, physical-host
+  consistency checks, context-separated deterministic reports, and exact bundle finalization.
+- Separate fixed-counter `perf stat` and DWARF call-graph capture that validates the profiled
+  runner result, retains inaccessible-counter failures, summarizes counter availability and
+  distributions, sanitizes text reports, and keeps profiling outside headline timing evidence.
+- A bare-metal Ubuntu 24.04 native-host runbook covering CPU/SMT selection, Clang/GCC and CPython
+  builds, official environment qualification, the 510-observation baseline, W04/W05 profiles,
+  bundle verification, and local checkpointing without changing host or kernel policy.
 - ADR 0016 and a Phase 5 methodology contract separating C++ core, replay, Python batch,
   allocation, memory, and future gateway evidence; defining native-host qualification,
   deterministic sampling, process-level observations, robust statistics, optimization acceptance

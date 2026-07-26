@@ -66,6 +66,11 @@ class Runner:
     variant: RunnerVariant
     wheel: Path | None = None
     worker: Path | None = None
+    command_prefix: tuple[str, ...] = ()
+
+    def __post_init__(self) -> None:
+        if any(not isinstance(item, str) or not item for item in self.command_prefix):
+            raise ValueError("runner command prefix must contain nonempty strings")
 
 
 @dataclass(frozen=True, slots=True)
@@ -377,6 +382,7 @@ def _run_once(
         assert batch_size is not None
         common_parameters = dict(workload_measurement_parameters(manifest))
         arguments = [
+            *runner.command_prefix,
             str(runner.executable),
             str(runner.worker),
             "run",
@@ -393,7 +399,7 @@ def _run_once(
             mode.removeprefix("python-"),
         ]
     else:
-        arguments = [str(runner.executable), *common_arguments]
+        arguments = [*runner.command_prefix, str(runner.executable), *common_arguments]
         for name, value in measurement_parameters_for_boundary(manifest, boundary):
             arguments.extend(("--measurement-parameter", f"{name}={value}"))
         if mode in {"replay-fast", "replay-verify"}:

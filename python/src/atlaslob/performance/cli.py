@@ -13,10 +13,16 @@ from atlaslob.performance.analysis import (
     render_report_svg,
 )
 from atlaslob.performance.bundle import verify_bundle, write_inventory
+from atlaslob.performance.campaign import (
+    CampaignRunners,
+    finalize_campaign,
+    run_campaign,
+)
 from atlaslob.performance.environment import (
     capture_environment,
     capture_python_environment,
 )
+from atlaslob.performance.profiling import capture_profile
 from atlaslob.performance.schemas import write_canonical_document
 from atlaslob.performance.suite import Runner, run_suite
 from atlaslob.performance.workloads import (
@@ -95,6 +101,43 @@ def parser() -> argparse.ArgumentParser:
     suite.add_argument("--batch-size", type=int, choices=(1, 64, 1024, 65_536))
     suite.add_argument("--timeout", type=_positive_u64, default=900)
 
+    campaign = commands.add_parser("run-campaign")
+    campaign.add_argument("--plan", type=Path, required=True)
+    campaign.add_argument("--bundle", type=Path, required=True)
+    campaign.add_argument("--runner", type=Path, required=True)
+    campaign.add_argument("--environment", type=Path, required=True)
+    campaign.add_argument("--allocation-runner", type=Path)
+    campaign.add_argument("--allocation-environment", type=Path)
+    campaign.add_argument("--python-runner", type=Path)
+    campaign.add_argument("--python-environment", type=Path)
+    campaign.add_argument("--wheel", type=Path)
+    campaign.add_argument("--python-worker", type=Path)
+    campaign.add_argument("--suite-label", required=True)
+    campaign.add_argument("--valid-observations", type=_positive_u64, default=10)
+    campaign.add_argument("--max-attempts", type=_positive_u64, default=20)
+    campaign.add_argument("--timeout", type=_positive_u64, default=900)
+    filters = campaign.add_mutually_exclusive_group()
+    filters.add_argument("--point", action="append", default=[])
+    filters.add_argument("--tier", action="append", default=[])
+    campaign.add_argument("--resume", action="store_true")
+
+    finalize = commands.add_parser("finalize-campaign")
+    finalize.add_argument("--plan", type=Path, required=True)
+    finalize.add_argument("--bundle", type=Path, required=True)
+    finalize.add_argument("--valid-observations", type=_positive_u64, default=10)
+    finalize.add_argument("--allow-exploratory", action="store_true")
+
+    profile = commands.add_parser("capture-profile")
+    profile.add_argument("--manifest", type=Path, required=True)
+    profile.add_argument("--output", type=Path, required=True)
+    profile.add_argument("--runner", type=Path, required=True)
+    profile.add_argument("--environment", type=Path, required=True)
+    profile.add_argument("--perf", type=Path, required=True)
+    profile.add_argument("--suite-label", required=True)
+    profile.add_argument("--kind", choices=("stat", "record"), required=True)
+    profile.add_argument("--observations", type=_positive_u64)
+    profile.add_argument("--timeout", type=_positive_u64, default=900)
+
     analyze = commands.add_parser("analyze")
     analyze.add_argument("input", type=Path)
     analyze.add_argument("--output", type=Path, required=True)
@@ -119,6 +162,12 @@ def main(arguments: list[str] | None = None) -> int:
             return _capture_environment(options)
         if options.command == "run-suite":
             return _run_suite(options)
+        if options.command == "run-campaign":
+            return _run_campaign(options)
+        if options.command == "finalize-campaign":
+            return _finalize_campaign(options)
+        if options.command == "capture-profile":
+            return _capture_profile(options)
         if options.command == "analyze":
             return _analyze(options)
         if options.command == "verify-bundle":
@@ -300,6 +349,98 @@ def _run_suite(options: argparse.Namespace) -> int:
         timeout_seconds=options.timeout,
     )
     print(f"retained {len(paths)} observations")
+    return 0
+
+
+def _run_campaign(options: argparse.Namespace) -> int:
+    allocation_inputs = (options.allocation_runner, options.allocation_environment)
+    if (allocation_inputs[0] is None) != (allocation_inputs[1] is None):
+        raise ValueError("allocation runner and environment must be supplied together")
+    python_inputs = (
+        options.python_runner,
+        options.python_environment,
+        options.wheel,
+        options.python_worker,
+    )
+    if any(item is not None for item in python_inputs) and any(
+        item is None for item in python_inputs
+    ):
+        raise ValueError("Python campaign inputs must be supplied together")
+    summary = run_campaign(
+        options.plan,
+        options.bundle,
+        runners=CampaignRunners(
+            core=Runner(options.runner, options.environment, "standalone"),
+            allocation=(
+                None
+                if options.allocation_runner is None
+                else Runner(
+                    options.allocation_runner,
+                    options.allocation_environment,
+                    "standalone",
+                )
+            ),
+            python=(
+                None
+                if options.python_runner is None
+                else Runner(
+                    options.python_runner,
+                    options.python_environment,
+                    "standalone",
+                    wheel=options.wheel,
+                    worker=options.python_worker,
+                )
+            ),
+        ),
+        suite_label=options.suite_label,
+        valid_observations=options.valid_observations,
+        max_attempts=options.max_attempts,
+        timeout_seconds=options.timeout,
+        point_ids=options.point,
+        tiers=options.tier,
+        resume=options.resume,
+    )
+    print(
+        f"campaign shapes={summary.shapes} attempts={summary.attempts} "
+        f"valid={summary.valid} invalid={summary.invalid}"
+    )
+    return 0
+
+
+def _finalize_campaign(options: argparse.Namespace) -> int:
+    summary = finalize_campaign(
+        options.plan,
+        options.bundle,
+        valid_observations=options.valid_observations,
+        allow_exploratory=options.allow_exploratory,
+    )
+    print(
+        f"finalized files={summary.files} workloads={summary.workloads} "
+        f"environments={summary.environments} "
+        f"observations={summary.observations} reports={summary.reports}"
+    )
+    return 0
+
+
+def _capture_profile(options: argparse.Namespace) -> int:
+    observations = (
+        10
+        if options.observations is None and options.kind == "stat"
+        else 1
+        if options.observations is None
+        else options.observations
+    )
+    summary = capture_profile(
+        options.manifest,
+        options.output,
+        runner=Runner(options.runner, options.environment, "standalone"),
+        perf_executable=options.perf,
+        suite_label=options.suite_label,
+        kind=options.kind,
+        observations=observations,
+        timeout_seconds=options.timeout,
+    )
+    print(f"profile kind={summary.kind} captures={summary.captures}")
     return 0
 
 

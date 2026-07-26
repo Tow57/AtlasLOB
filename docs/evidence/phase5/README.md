@@ -1,8 +1,8 @@
 # Phase 5 evidence
 
-Phase 5 is the measured portfolio-release milestone. The PR 1 benchmark-contract infrastructure
-is complete locally. No native Ubuntu baseline, official observation, experiment result, or
-performance claim exists yet.
+Phase 5 is the measured portfolio-release milestone. The PR 1 benchmark contract is merged, and
+the PR 2 branch implements baseline/profile campaign automation. No native Ubuntu baseline,
+official observation, experiment result, or performance claim exists yet.
 
 ## Current state
 
@@ -15,7 +15,8 @@ performance claim exists yet.
 | Independent-process orchestration and A-B-B-A scheduling | Complete locally |
 | Deterministic analysis, experiment decisions, Markdown/SVG, and bundle verification | Complete locally |
 | Shared-CI benchmark smoke definition | Passed on PR #11 implementation head `35b09ba` |
-| Native Ubuntu baseline and Linux `perf` profiles | Not started |
+| Resumable baseline and Linux `perf` campaign automation | Implemented on PR 2 branch |
+| Native Ubuntu baseline and Linux `perf` profiles | Awaiting dedicated Ubuntu host |
 | Hypothesis-driven experiments | Not started |
 | Exact-tag `v1.0.0` evidence bundle | Not started |
 
@@ -59,5 +60,6 @@ file.
 No throughput, latency, allocation, memory, scalability, durability, security, or
 production-readiness claim is currently authorized.
 
-The next evidence step is the unchanged Phase 4 baseline on the qualified native Ubuntu host.
-Until that run exists, all locally or CI-produced observations are infrastructure validation only.
+The next evidence step is the unchanged Phase 4 baseline on the qualified native Ubuntu host,
+using the [native-host baseline runbook](../../phase5-native-host-runbook.md). Until that run
+exists, all locally or CI-produced observations are infrastructure validation only.

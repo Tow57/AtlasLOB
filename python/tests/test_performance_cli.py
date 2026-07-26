@@ -108,6 +108,89 @@ def test_candidate_wheel_requires_candidate_runner(
     assert "candidate wheel requires" in capsys.readouterr().err
 
 
+def test_campaign_filters_are_mutually_exclusive() -> None:
+    with pytest.raises(SystemExit):
+        cli.parser().parse_args(
+            (
+                "run-campaign",
+                "--plan",
+                "plan.json",
+                "--bundle",
+                "bundle",
+                "--runner",
+                "runner",
+                "--environment",
+                "environment.json",
+                "--suite-label",
+                "campaign01",
+                "--point",
+                "point-a",
+                "--tier",
+                "study",
+            )
+        )
+
+
+def test_campaign_rejects_partial_runner_families(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    called = False
+
+    def fail_if_called(*_arguments: object, **_keywords: object) -> object:
+        nonlocal called
+        called = True
+        return object()
+
+    monkeypatch.setattr(cli, "run_campaign", fail_if_called)
+    status = cli.main(
+        [
+            "run-campaign",
+            "--plan",
+            "plan.json",
+            "--bundle",
+            "bundle",
+            "--runner",
+            "runner",
+            "--environment",
+            "environment.json",
+            "--allocation-runner",
+            "allocation-runner",
+            "--suite-label",
+            "campaign01",
+        ]
+    )
+
+    assert status == 1
+    assert not called
+    assert "supplied together" in capsys.readouterr().err
+
+
+def test_profile_parser_exposes_fixed_capture_modes() -> None:
+    options = cli.parser().parse_args(
+        (
+            "capture-profile",
+            "--manifest",
+            "workload.json",
+            "--output",
+            "profile",
+            "--runner",
+            "atlas_bench_runner",
+            "--environment",
+            "environment.json",
+            "--perf",
+            "/usr/bin/perf",
+            "--suite-label",
+            "profile01",
+            "--kind",
+            "record",
+        )
+    )
+
+    assert options.kind == "record"
+    assert options.observations is None
+
+
 @pytest.mark.parametrize(
     "arguments",
     (

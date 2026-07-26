@@ -23,9 +23,9 @@ uncancelled `main` workflow passes the compiler, Release, sanitizer, decoder-fuz
 includes deterministic multi-instrument routing, write-ahead logging and replay, persisted
 snapshots and recovery, and the lazy native-only `atlaslob.Engine` API with strict owned batch
 outputs. Package version 0.2.0 builds and clean-smokes CPython 3.11-3.14 manylinux x86-64 wheels
-plus a PEP 517 source distribution. The Phase 5 benchmark-contract infrastructure is complete;
-the authoritative native-host study has not started, and no performance or production-readiness
-claim is made.**
+plus a PEP 517 source distribution. The Phase 5 benchmark contract and resumable baseline/profile
+campaign are implemented; the authoritative native-host study awaits the dedicated Ubuntu
+installation, and no performance or production-readiness claim is made.**
 
 See the [Phase 4 evidence index](docs/evidence/phase4/README.md) for the current validation
 boundary.
@@ -35,7 +35,8 @@ Phase 5's measurement boundaries and claim policy are in the
 [benchmark evidence format](docs/benchmark-evidence-format.md) specifies every canonical field
 and hash binding, while the
 [benchmark reproduction guide](docs/benchmark-reproduction.md) walks from an opt-in build to a
-verified exploratory bundle.
+verified exploratory bundle. The
+[native-host runbook](docs/phase5-native-host-runbook.md) freezes the later official campaign.
 
 | Capability | Status | Evidence |
 | --- | --- | --- |
@@ -85,7 +86,8 @@ verified exploratory bundle.
 | Resting book structure | Complete | `stress.InstrumentBookStress*` |
 | Matching and normalized command execution | Complete | Phase 2 |
 | Reproducible benchmark and evidence infrastructure | Complete | [ADR 0016](docs/decisions/0016-reproducible-performance-evidence.md), deterministic smoke fixtures and bundle verifier |
-| Native-host baseline, profiles, and experiments | Planned | Phase 5 on the qualified native Ubuntu host |
+| Resumable baseline and `perf` campaign | Implemented; awaiting native run | [Native-host runbook](docs/phase5-native-host-runbook.md) |
+| Native-host baseline, profiles, and experiments | Awaiting Ubuntu host | Phase 5 qualified-host gate |
 | Versioned Linux gateway | Deferred | Phase 6 |
 
 ## Quick start

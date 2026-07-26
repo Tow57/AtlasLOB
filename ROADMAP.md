@@ -206,6 +206,7 @@ was retargeted, revalidated, and squash-merged as `075d29a`; the uncancelled wor
 ## Phase 5 - Measured portfolio release
 
 - [x] Frozen workloads and environment manifests.
+- [x] Resumable 51-shape baseline orchestration and separate Linux `perf` capture.
 - [ ] Baseline throughput, latency, allocation, and memory results.
 - [ ] Linux `perf` profiles and hypothesis-driven experiments.
 - [ ] Raw data, reproducible analysis, and limitations.
@@ -216,6 +217,11 @@ measurement contract. The first slice adds opt-in benchmark builds, strict versi
 schemas, deterministic workload materialization, single-observation native runners, allocation
 instrumentation, analysis tooling, and threshold-free hosted smoke checks. It deliberately
 publishes no performance result.
+
+The second slice adds round-robin plan execution, strict resume without overwriting failed
+attempts, complete campaign finalization, physical-host consistency checks across distinct
+core/allocation/CPython build contexts, fixed Linux `perf` capture, and an exact native-host
+runbook. The draft remains blocked on the later qualified-host evidence run.
 
 Authoritative baseline and experiment measurements require a dedicated native Ubuntu 24.04
 x86-64 host. WSL2, containers, and shared CI are limited to exploratory or smoke runs. The gateway

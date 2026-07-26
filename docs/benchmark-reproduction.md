@@ -269,3 +269,7 @@ The native-host run book adds controls that are intentionally absent from explor
 Until all official prerequisites and scales in
 [Performance methodology](performance-methodology.md#required-scales) are satisfied, generated
 reports must remain labeled exploratory and cannot support a portfolio performance claim.
+
+The complete resumable Phase 5 baseline sequence, including CPU selection, official environment
+qualification, all 51 campaign shapes, and separate `perf` capture, is specified in the
+[native-host baseline runbook](phase5-native-host-runbook.md).

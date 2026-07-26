@@ -592,24 +592,55 @@ def render_report_markdown(report: BenchmarkReport) -> str:
 
 
 def render_report_svg(report: BenchmarkReport) -> str:
-    """Render a deterministic throughput-only median-rate bar chart."""
+    """Render deterministic, separately scaled median evidence panels."""
 
-    groups = tuple(
-        group
-        for group in report.groups
-        if group.boundary == "core_throughput" and group.median_commands_per_second is not None
+    panels: tuple[tuple[str, tuple[tuple[GroupStatistics, str | int], ...]], ...] = (
+        (
+            "Median commands per second",
+            tuple(
+                (group, group.median_commands_per_second or "0")
+                for group in report.groups
+                if group.median_commands_per_second is not None
+            ),
+        ),
+        (
+            "Median p50 service time in nanoseconds",
+            tuple(
+                (group, dict(group.latency_quantiles_ns)["p50"])
+                for group in report.groups
+                if group.latency_quantiles_ns
+            ),
+        ),
+        (
+            "Median process RSS delta bytes per resting order",
+            tuple(
+                (group, group.process_rss_delta_bytes_per_resting_order.median)
+                for group in report.groups
+                if group.process_rss_delta_bytes_per_resting_order is not None
+            ),
+        ),
+        (
+            "Median allocations per command",
+            tuple(
+                (group, group.allocations_per_command.median)
+                for group in report.groups
+                if group.allocations_per_command is not None
+            ),
+        ),
     )
+    nonempty_panels = tuple(panel for panel in panels if panel[1])
     width = 1_400
     row_height = 34
+    panel_header_height = 38
     top = 72
     bottom = 28
-    height = top + bottom + row_height * max(1, len(groups))
-    with localcontext() as context:
-        context.prec = 80
-        rates = tuple(Decimal(group.median_commands_per_second or "0") for group in groups)
-        maximum = max(rates, default=Decimal(1))
-        if maximum <= 0:
-            maximum = Decimal(1)
+    row_count = sum(len(rows) for _, rows in nonempty_panels)
+    height = (
+        top
+        + bottom
+        + panel_header_height * max(1, len(nonempty_panels))
+        + row_height * max(1, row_count)
+    )
     plot_left = 700
     plot_width = 640
     elements = [
@@ -620,35 +651,51 @@ def render_report_svg(report: BenchmarkReport) -> str:
         ),
         '<rect width="100%" height="100%" fill="#ffffff"/>',
         '<text x="20" y="30" font-family="sans-serif" font-size="18">'
-        "AtlasLOB C++ core throughput-only median commands per second</text>",
+        "AtlasLOB benchmark scaling evidence</text>",
         f'<text x="20" y="50" font-family="sans-serif" font-size="12">'
         f"Qualification: {escape(report.classification.upper())}</text>",
     ]
-    if not groups:
+    if not nonempty_panels:
         elements.append(
             '<text x="20" y="82" font-family="sans-serif" font-size="12">'
-            "No throughput groups are present.</text>"
+            "No plottable groups are present.</text>"
         )
-    for index, (group, rate) in enumerate(zip(groups, rates, strict=True)):
-        y = top + index * row_height
+    y = top
+    for title, rows in nonempty_panels:
+        elements.append(
+            f'<text x="20" y="{y + 22}" font-family="sans-serif" '
+            f'font-size="14">{escape(title)}</text>'
+        )
+        y += panel_header_height
         with localcontext() as context:
             context.prec = 80
-            bar_width = int((rate * plot_width / maximum).to_integral_value())
-        label = escape(
-            f"{group.workload_id} [{_parameter_text(group.measurement_parameters)}] "
-            f"/{group.workload_sha256[:8]} "
-            f"bin={group.binary_sha256[:8]} invalid={group.invalid_observations}"
-        )
-        value = escape(group.median_commands_per_second or "0")
-        elements.extend(
-            (
-                f'<text x="20" y="{y + 19}" font-family="monospace" font-size="12">{label}</text>',
-                f'<rect x="{plot_left}" y="{y + 4}" width="{bar_width}" '
-                'height="20" fill="#2457c5"/>',
-                f'<text x="{plot_left + bar_width + 6}" y="{y + 19}" '
-                f'font-family="monospace" font-size="12">{value}</text>',
+            values = tuple(Decimal(str(value)) for _, value in rows)
+            maximum = max((abs(value) for value in values), default=Decimal(1))
+            if maximum <= 0:
+                maximum = Decimal(1)
+        for group, value in rows:
+            numeric = Decimal(str(value))
+            with localcontext() as context:
+                context.prec = 80
+                bar_width = int((abs(numeric) * plot_width / maximum).to_integral_value())
+            label = escape(
+                f"{group.boundary}/{group.workload_id} "
+                f"[{_parameter_text(group.measurement_parameters)}] "
+                f"/{group.workload_sha256[:8]} "
+                f"bin={group.binary_sha256[:8]} invalid={group.invalid_observations}"
             )
-        )
+            fill = "#a33a3a" if numeric < 0 else "#2457c5"
+            elements.extend(
+                (
+                    f'<text x="20" y="{y + 19}" font-family="monospace" '
+                    f'font-size="12">{label}</text>',
+                    f'<rect x="{plot_left}" y="{y + 4}" width="{bar_width}" '
+                    f'height="20" fill="{fill}"/>',
+                    f'<text x="{plot_left + bar_width + 6}" y="{y + 19}" '
+                    f'font-family="monospace" font-size="12">{escape(str(value))}</text>',
+                )
+            )
+            y += row_height
     elements.append("</svg>")
     return "\n".join(elements) + "\n"
 
