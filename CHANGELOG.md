@@ -60,6 +60,8 @@ The format is based on Keep a Changelog, and public releases will follow semanti
   attempts, canonical unique run identities, retained invalid evidence, non-overwriting resume,
   physical-host consistency checks, boundary-separated deterministic reports, transactional
   retryable finalization, and exact bundle verification.
+- Made bounded target-wheel identity capture classify output overflow deterministically even when
+  the child exits before the orchestrator observes the overflow signal.
 - Separate fixed-counter `perf stat` and DWARF call-graph capture that validates the profiled
   runner result, retains inaccessible-counter failures, summarizes counter availability and
   distributions, sanitizes text reports, and keeps profiling outside headline timing evidence.

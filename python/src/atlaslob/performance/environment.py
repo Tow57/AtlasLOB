@@ -416,6 +416,7 @@ def _bounded_identity_process(
     assert process.stdout is not None
     assert process.stderr is not None
     exceeded = threading.Event()
+    read_failed = threading.Event()
     outputs = (bytearray(), bytearray())
 
     def read_stream(stream: BinaryIO, output: bytearray, maximum: int) -> None:
@@ -426,7 +427,7 @@ def _bounded_identity_process(
                     return
                 output.extend(chunk)
         except OSError:
-            exceeded.set()
+            read_failed.set()
 
     threads = (
         threading.Thread(
@@ -450,6 +451,10 @@ def _bounded_identity_process(
                 failure = "target-wheel identity output exceeds its bound"
                 process.kill()
                 break
+            if read_failed.is_set():
+                failure = "target-wheel identity output could not be captured"
+                process.kill()
+                break
             if time.monotonic() >= deadline:
                 failure = "target-wheel identity worker timed out"
                 process.kill()
@@ -468,9 +473,31 @@ def _bounded_identity_process(
         thread.join(timeout=1)
     process.stdout.close()
     process.stderr.close()
-    if failure is not None or exceeded.is_set() or any(thread.is_alive() for thread in threads):
-        raise ValueError(failure or "target-wheel identity output could not be captured")
+    capture_error = _identity_capture_error(
+        failure,
+        exceeded=exceeded.is_set(),
+        read_failed=read_failed.is_set(),
+        threads_alive=any(thread.is_alive() for thread in threads),
+    )
+    if capture_error is not None:
+        raise ValueError(capture_error)
     return process.returncode, bytes(outputs[0]), bytes(outputs[1])
+
+
+def _identity_capture_error(
+    failure: str | None,
+    *,
+    exceeded: bool,
+    read_failed: bool,
+    threads_alive: bool,
+) -> str | None:
+    if failure is not None:
+        return failure
+    if exceeded:
+        return "target-wheel identity output exceeds its bound"
+    if read_failed or threads_alive:
+        return "target-wheel identity output could not be captured"
+    return None
 
 
 def _unique_identity_object(

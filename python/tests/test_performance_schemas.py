@@ -330,3 +330,15 @@ def test_python_identity_worker_output_is_bounded(tmp_path: Path) -> None:
             cwd=tmp_path,
             environment=dict(os.environ),
         )
+
+
+def test_python_identity_overflow_precedes_late_reader_completion() -> None:
+    assert (
+        environment_module._identity_capture_error(
+            None,
+            exceeded=True,
+            read_failed=False,
+            threads_alive=True,
+        )
+        == "target-wheel identity output exceeds its bound"
+    )
