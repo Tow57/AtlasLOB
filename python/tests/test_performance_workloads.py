@@ -714,6 +714,23 @@ def test_python_plan_requires_the_exact_frozen_batch_sizes() -> None:
     assert point.python_batch_sizes == (1, 64, 1_024, 65_536)
 
 
+def test_latency_plan_requires_one_frozen_stride_sample() -> None:
+    with pytest.raises(ValueError, match="at least one frozen-stride sample"):
+        BenchmarkPlanPoint(
+            point_id="latency-w05",
+            tier="smoke",
+            workload_id="W05",
+            seed=5,
+            preload_commands=16,
+            warmup_commands=9,
+            measured_commands=18,
+            active_order_target=16,
+            instrument_count=1,
+            sweep_depth=8,
+            boundaries=("core_latency", "core_throughput"),
+        )
+
+
 def test_plan_preflights_every_collision_before_materializing(
     tmp_path: Path,
 ) -> None:

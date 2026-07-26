@@ -71,6 +71,7 @@ LOG_MATERIALIZATION_SCHEMA: Final = "ATLAS_BENCH_LOG_MATERIALIZATION_V1"
 _PLAN_TIERS: Final = frozenset({"smoke", "study", "headline", "memory", "python", "replay"})
 _PYTHON_OUTPUT_MODES: Final = frozenset({"objects", "columns", "summary"})
 _PYTHON_BATCH_SIZES: Final = (1, 64, 1_024, 65_536)
+_LATENCY_SAMPLE_STRIDE: Final = 32
 _LOG_RECEIPT_KEYS: Final = {
     "committed",
     "event_digest",
@@ -144,6 +145,8 @@ class BenchmarkPlanPoint:
             or any(boundary not in BOUNDARIES for boundary in self.boundaries)
         ):
             raise ValueError("benchmark plan boundaries must be nonempty, unique, and sorted")
+        if "core_latency" in self.boundaries and self.measured_commands < _LATENCY_SAMPLE_STRIDE:
+            raise ValueError("latency plan points must produce at least one frozen-stride sample")
         if self.workload_id == "W10":
             if any(not boundary.startswith("replay_") for boundary in self.boundaries):
                 raise ValueError("W10 plan points permit only replay boundaries")
