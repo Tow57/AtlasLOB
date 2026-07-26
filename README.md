@@ -17,17 +17,25 @@ latency claims.
 
 **Phases 0 through 4 are integrated on remote `main`. Phase 3 merged through PR #5, followed by
 the four sequential Phase 4 slices: router PR #7, command-log/replay PR #8, snapshot/recovery PR
-#6, and native-Python PR #9. The final Phase 4 merge is `075d29a`; its uncancelled `main` workflow
-passes the compiler, Release, sanitizer, decoder-fuzz, Python 3.11-3.14, formatting, native
-extension, source-distribution, and manylinux wheel gates. Phase 4 includes deterministic
-multi-instrument routing, write-ahead logging and replay, persisted snapshots and recovery, and the
-lazy native-only `atlaslob.Engine` API with strict owned batch outputs. Package version 0.2.0
-builds and clean-smokes CPython 3.11-3.14 manylinux x86-64 wheels plus a PEP 517 source
-distribution. Phase 5 measurement work is next; no benchmark or production-readiness claim is
-made.**
+#6, and native-Python PR #9. PR #10 records the final integration evidence at `39c9592`. Its
+uncancelled `main` workflow passes the compiler, Release, sanitizer, decoder-fuzz, Python
+3.11-3.14, formatting, native-extension, source-distribution, and manylinux-wheel gates. Phase 4
+includes deterministic multi-instrument routing, write-ahead logging and replay, persisted
+snapshots and recovery, and the lazy native-only `atlaslob.Engine` API with strict owned batch
+outputs. Package version 0.2.0 builds and clean-smokes CPython 3.11-3.14 manylinux x86-64 wheels
+plus a PEP 517 source distribution. The Phase 5 benchmark-contract infrastructure is complete;
+the authoritative native-host study has not started, and no performance or production-readiness
+claim is made.**
 
 See the [Phase 4 evidence index](docs/evidence/phase4/README.md) for the current validation
 boundary.
+
+Phase 5's measurement boundaries and claim policy are in the
+[performance methodology](docs/performance-methodology.md). The
+[benchmark evidence format](docs/benchmark-evidence-format.md) specifies every canonical field
+and hash binding, while the
+[benchmark reproduction guide](docs/benchmark-reproduction.md) walks from an opt-in build to a
+verified exploratory bundle.
 
 | Capability | Status | Evidence |
 | --- | --- | --- |
@@ -76,7 +84,9 @@ boundary.
 | CPython 3.11-3.14 manylinux wheels and source distribution | Complete on `main` | `cibuildwheel==4.1.0`, clean wheel/auditwheel and PEP 517 sdist smoke |
 | Resting book structure | Complete | `stress.InstrumentBookStress*` |
 | Matching and normalized command execution | Complete | Phase 2 |
-| Benchmarks and gateway | Planned | Later gated phases |
+| Reproducible benchmark and evidence infrastructure | Complete | [ADR 0016](docs/decisions/0016-reproducible-performance-evidence.md), deterministic smoke fixtures and bundle verifier |
+| Native-host baseline, profiles, and experiments | Planned | Phase 5 on the qualified native Ubuntu host |
+| Versioned Linux gateway | Deferred | Phase 6 |
 
 ## Quick start
 
@@ -133,8 +143,8 @@ python3 -m venv .venv
 .venv/bin/python -m pip install -e ".[dev]"
 cmake --preset dev-gcc
 cmake --build --preset dev-gcc --target atlas_diff_native
-.venv/bin/python -m ruff format --check python tests/fuzz/run_command_log_fuzz_smoke.py
-.venv/bin/python -m ruff check python tests/fuzz/run_command_log_fuzz_smoke.py
+.venv/bin/python -m ruff format --check python benchmarks/python tests/fuzz/run_command_log_fuzz_smoke.py tests/packaging
+.venv/bin/python -m ruff check python benchmarks/python tests/fuzz/run_command_log_fuzz_smoke.py tests/packaging
 .venv/bin/python -m mypy
 .venv/bin/python -m pytest
 ```
@@ -146,8 +156,8 @@ py -3.11 -m venv .venv
 .\.venv\Scripts\python.exe -m pip install -e ".[dev]"
 cmake --preset dev-gcc
 cmake --build --preset dev-gcc --target atlas_diff_native
-.\.venv\Scripts\python.exe -m ruff format --check python tests/fuzz/run_command_log_fuzz_smoke.py
-.\.venv\Scripts\python.exe -m ruff check python tests/fuzz/run_command_log_fuzz_smoke.py
+.\.venv\Scripts\python.exe -m ruff format --check python benchmarks/python tests/fuzz/run_command_log_fuzz_smoke.py tests/packaging
+.\.venv\Scripts\python.exe -m ruff check python benchmarks/python tests/fuzz/run_command_log_fuzz_smoke.py tests/packaging
 .\.venv\Scripts\python.exe -m mypy
 .\.venv\Scripts\python.exe -m pytest
 ```
@@ -240,6 +250,10 @@ developed with MinGW GCC on Windows, but Linux CI is the support authority.
   prefix-committing object/column/summary batches, persistence and read-only recovery errors,
   per-engine mutex and GIL order, owned return values, and the CPython-specific manylinux
   distribution policy.
+- ADR 0016 freezes opt-in measurement boundaries, qualified-environment evidence, versioned
+  benchmark schemas, process-level sampling and comparison rules, optimization acceptance gates,
+  and the exact-tag portfolio release workflow. Shared CI measurements remain smoke evidence and
+  cannot support latency or hardware-counter claims.
 
 See [the semantic contract](docs/semantics.md) and
 [ADR 0001](docs/decisions/0001-core-semantics.md) plus
@@ -256,10 +270,13 @@ See [the semantic contract](docs/semantics.md) and
 [ADR 0012](docs/decisions/0012-multi-instrument-routing-and-global-sequencing.md) plus
 [ADR 0013](docs/decisions/0013-command-log-and-replay.md) plus
 [ADR 0014](docs/decisions/0014-persisted-snapshots-and-log-suffix-recovery.md) plus
-[ADR 0015](docs/decisions/0015-native-python-bindings-and-packaging.md) for accepted rules.
+[ADR 0015](docs/decisions/0015-native-python-bindings-and-packaging.md) plus
+[ADR 0016](docs/decisions/0016-reproducible-performance-evidence.md) for accepted rules.
 The
 test-only process, workload, campaign, and failure schemas are documented in
 [Differential testing interface](docs/differential-testing.md).
+The separate Phase 5 measurement schemas are documented in
+[Benchmark evidence format](docs/benchmark-evidence-format.md).
 
 ## Roadmap
 

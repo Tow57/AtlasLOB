@@ -88,6 +88,294 @@ jobs:
       - name: Test release
         run: ctest --test-dir "build/${{ matrix.build_directory }}" --output-on-failure
 
+  benchmark-smoke:
+    name: Phase 5 benchmark smoke (exploratory)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up CPython
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
+        with:
+          python-version: "3.12"
+
+      - name: Install GCC and Ninja
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes g++ ninja-build
+
+      - name: Configure opt-in Release benchmark build with tests
+        run: cmake --preset release-benchmark-gcc -DBUILD_TESTING=ON
+
+      - name: Build all native benchmark targets
+        run: cmake --build --preset release-benchmark-gcc --parallel 2
+
+      - name: Run native benchmark contract tests
+        run: >-
+          ctest --test-dir build/release-benchmark-gcc
+          --label-regex benchmark
+          --no-tests=error
+          --output-on-failure
+
+      - name: Run Google Benchmark JSON dry run
+        run: |
+          mkdir -p "$RUNNER_TEMP/atlas-phase5-benchmark-smoke"
+          build/release-benchmark-gcc/atlas_microbench \
+            --benchmark_dry_run=true \
+            --benchmark_filter=PublicEngine \
+            --benchmark_out="$RUNNER_TEMP/atlas-phase5-benchmark-smoke/google-benchmark.json" \
+            --benchmark_out_format=json
+          python -m json.tool \
+            "$RUNNER_TEMP/atlas-phase5-benchmark-smoke/google-benchmark.json" \
+            >/dev/null
+
+      - name: Install Python development package
+        run: python -m pip install --disable-pip-version-check -e ".[dev]"
+
+      - name: Run performance evidence unit tests
+        run: python -m pytest -q python/tests/test_performance_*.py
+
+      - name: Build and install the unrepaired CPython 3.12 measurement wheel
+        run: |
+          smoke_root="$RUNNER_TEMP/atlas-phase5-benchmark-smoke"
+          wheel_build="$smoke_root/python-wheel-build-cp312"
+          wheelhouse="$smoke_root/python-wheelhouse"
+          target_venv="$RUNNER_TEMP/atlas-phase5-python-target-cp312"
+          mkdir -p "$wheelhouse"
+          python -m pip wheel . \
+            --disable-pip-version-check \
+            --no-deps \
+            --wheel-dir "$wheelhouse" \
+            -Cbuild-dir="$wheel_build" \
+            -Ccmake.define.CMAKE_BUILD_TYPE=Release \
+            -Ccmake.define.CMAKE_EXPORT_COMPILE_COMMANDS=ON \
+            -Ccmake.define.ATLAS_ENABLE_INVARIANTS=OFF \
+            -Ccmake.define.ATLAS_ENABLE_ASAN=OFF \
+            -Ccmake.define.ATLAS_ENABLE_UBSAN=OFF \
+            -Ccmake.define.ATLAS_ENABLE_TSAN=OFF \
+            -Ccmake.define.ATLAS_WARNINGS_AS_ERRORS=ON \
+            -Ccmake.define.CMAKE_INTERPROCEDURAL_OPTIMIZATION=OFF \
+            -Ccmake.define.CMAKE_CXX_FLAGS_RELEASE="-O3 -DNDEBUG -g -fno-omit-frame-pointer"
+          shopt -s nullglob
+          wheels=("$wheelhouse"/atlaslob-*.whl)
+          if (( ${#wheels[@]} != 1 )); then
+            printf 'expected one unrepaired CPython 3.12 wheel, found %s\n' \
+              "${#wheels[@]}" >&2
+            exit 1
+          fi
+          test -f "$wheel_build/CMakeCache.txt"
+          test -f "$wheel_build/compile_commands.json"
+          python -m venv "$target_venv"
+          "$target_venv/bin/python" -m pip install \
+            --disable-pip-version-check \
+            --no-deps \
+            "${wheels[0]}"
+          "$target_venv/bin/python" -m pip check
+          printf 'ATLAS_CP312_WHEEL=%s\n' "${wheels[0]}" >>"$GITHUB_ENV"
+          printf 'ATLAS_CP312_TARGET_PYTHON=%s\n' \
+            "$target_venv/bin/python" >>"$GITHUB_ENV"
+          printf 'ATLAS_CP312_WHEEL_BUILD=%s\n' "$wheel_build" >>"$GITHUB_ENV"
+
+      - name: Regenerate checked tiny workloads byte for byte
+        run: >-
+          python -m atlaslob.performance materialize
+          --plan benchmarks/plans/ci-smoke-v1.json
+          --output "$RUNNER_TEMP/atlas-phase5-benchmark-smoke/materialized"
+          --log-materializer
+          build/release-benchmark-gcc/atlas_bench_log_materializer
+
+      - name: Compare checked workload evidence
+        run: >-
+          diff --recursive --brief
+          benchmarks/fixtures/v1
+          "$RUNNER_TEMP/atlas-phase5-benchmark-smoke/materialized"
+
+      - name: Capture explicitly exploratory environments
+        run: |
+          smoke_root="$RUNNER_TEMP/atlas-phase5-benchmark-smoke"
+          mkdir -p "$smoke_root/environments"
+          python -m atlaslob.performance capture-environment \
+            --binary build/release-benchmark-gcc/atlas_bench_runner \
+            --build-directory build/release-benchmark-gcc \
+            --output "$smoke_root/environments/core.json" \
+            --repository . \
+            --host-class github-hosted-ubuntu2404-x86-64 \
+            --storage-class ephemeral-hosted-storage \
+            --smt-sibling-idle unknown
+          python -m atlaslob.performance capture-environment \
+            --binary build/release-benchmark-gcc/atlas_bench_alloc_runner \
+            --build-directory build/release-benchmark-gcc \
+            --output "$smoke_root/environments/allocation.json" \
+            --repository . \
+            --host-class github-hosted-ubuntu2404-x86-64 \
+            --storage-class ephemeral-hosted-storage \
+            --smt-sibling-idle unknown
+          python -c \
+            "import json,pathlib,sys; assert all(json.loads(pathlib.Path(p).read_text(encoding='ascii'))['classification'] == 'exploratory' for p in sys.argv[1:])" \
+            "$smoke_root/environments/core.json" \
+            "$smoke_root/environments/allocation.json"
+
+      - name: Capture the exploratory CPython 3.12 wheel environment
+        run: |
+          smoke_root="$RUNNER_TEMP/atlas-phase5-benchmark-smoke"
+          worker="$GITHUB_WORKSPACE/benchmarks/python/atlas_python_bench_worker.py"
+          python -m atlaslob.performance capture-environment \
+            --target-python "$ATLAS_CP312_TARGET_PYTHON" \
+            --wheel "$ATLAS_CP312_WHEEL" \
+            --python-worker "$worker" \
+            --build-directory "$ATLAS_CP312_WHEEL_BUILD" \
+            --output "$smoke_root/environments/python-cp312.json" \
+            --repository . \
+            --host-class github-hosted-ubuntu2404-x86-64 \
+            --storage-class ephemeral-hosted-storage \
+            --smt-sibling-idle unknown
+          python -c \
+            'import json,pathlib,sys; value=json.loads(pathlib.Path(sys.argv[1]).read_text(encoding="ascii")); assert value["classification"] == "exploratory"; assert value["runtime_kind"] == "cpython"; assert value["build_type"] == "Release"; assert value["optimization"] == "O3"; assert value["ndebug"] is True; assert value["frame_pointers"] is True; assert value["invariants"] is False; assert value["sanitizers"] is False; assert value["lto"] is False; assert value["warnings_as_errors"] is True; assert value["debug_symbols"] is True; assert value["cxx20"] is True; assert value["release_flags_locked"] is True' \
+            "$smoke_root/environments/python-cp312.json"
+
+      - name: Run one exploratory observation per core and setup boundary
+        run: |
+          smoke_root="$RUNNER_TEMP/atlas-phase5-benchmark-smoke"
+          mapfile -t w04_manifests < <(find "$smoke_root/materialized" -maxdepth 1 -name 'w04-*.json')
+          if (( ${#w04_manifests[@]} != 1 )); then
+            printf 'expected one W04 smoke manifest, found %s\n' \
+              "${#w04_manifests[@]}" >&2
+            exit 1
+          fi
+          manifest="${w04_manifests[0]}"
+          for mode in throughput latency construction preload; do
+            python -m atlaslob.performance run-suite \
+              --manifest "$manifest" \
+              --output "$smoke_root/run-$mode" \
+              --runner build/release-benchmark-gcc/atlas_bench_runner \
+              --environment "$smoke_root/environments/core.json" \
+              --suite-label ci-core \
+              --mode "$mode" \
+              --observations 1
+          done
+          python -m atlaslob.performance run-suite \
+            --manifest "$manifest" \
+            --output "$smoke_root/run-allocation" \
+            --runner build/release-benchmark-gcc/atlas_bench_alloc_runner \
+            --environment "$smoke_root/environments/allocation.json" \
+            --suite-label ci-allocation \
+            --mode allocation \
+            --observations 1
+          python -m atlaslob.performance run-suite \
+            --manifest "$manifest" \
+            --output "$smoke_root/run-setup-allocation" \
+            --runner build/release-benchmark-gcc/atlas_bench_alloc_runner \
+            --environment "$smoke_root/environments/allocation.json" \
+            --suite-label ci-allocation \
+            --mode setup-allocation \
+            --observations 1
+
+      - name: Run one exploratory CPython observation per batch output mode
+        run: |
+          smoke_root="$RUNNER_TEMP/atlas-phase5-benchmark-smoke"
+          worker="$GITHUB_WORKSPACE/benchmarks/python/atlas_python_bench_worker.py"
+          mapfile -t w04_manifests < <(find "$smoke_root/materialized" -maxdepth 1 -name 'w04-*.json')
+          if (( ${#w04_manifests[@]} != 1 )); then
+            printf 'expected one W04 smoke manifest, found %s\n' \
+              "${#w04_manifests[@]}" >&2
+            exit 1
+          fi
+          for mode in python-objects python-columns python-summary; do
+            python -m atlaslob.performance run-suite \
+              --manifest "${w04_manifests[0]}" \
+              --output "$smoke_root/run-$mode-batch-64" \
+              --runner "$ATLAS_CP312_TARGET_PYTHON" \
+              --environment "$smoke_root/environments/python-cp312.json" \
+              --wheel "$ATLAS_CP312_WHEEL" \
+              --python-worker "$worker" \
+              --suite-label ci-python-cp312 \
+              --mode "$mode" \
+              --batch-size 64 \
+              --observations 1
+          done
+          python -c \
+            'import json,pathlib,sys; documents=[json.loads((pathlib.Path(sys.argv[1])/f"run-{mode}-batch-64"/"observation-00001.json").read_text(encoding="ascii")) for mode in ("python-objects","python-columns","python-summary")]; assert all(value["valid"] is True for value in documents); assert {value["boundary"] for value in documents} == {"python_objects","python_columns","python_summary"}; assert all(value["measurement_parameters"]["batch_size"] == "64" for value in documents)' \
+            "$smoke_root"
+
+      - name: Run one exploratory replay observation per mode
+        run: |
+          smoke_root="$RUNNER_TEMP/atlas-phase5-benchmark-smoke"
+          mapfile -t w10_manifests < <(find "$smoke_root/materialized" -maxdepth 1 -name 'w10-*.json')
+          if (( ${#w10_manifests[@]} != 1 )); then
+            printf 'expected one W10 smoke manifest, found %s\n' \
+              "${#w10_manifests[@]}" >&2
+            exit 1
+          fi
+          for mode in replay-fast replay-verify; do
+            python -m atlaslob.performance run-suite \
+              --manifest "${w10_manifests[0]}" \
+              --output "$smoke_root/run-$mode" \
+              --runner build/release-benchmark-gcc/atlas_bench_runner \
+              --environment "$smoke_root/environments/core.json" \
+              --suite-label ci-replay \
+              --mode "$mode" \
+              --observations 1
+          done
+
+      - name: Regenerate reports byte for byte
+        run: |
+          smoke_root="$RUNNER_TEMP/atlas-phase5-benchmark-smoke"
+          bundle="$smoke_root/bundle"
+          mkdir -p \
+            "$bundle/workloads" \
+            "$bundle/environments" \
+            "$bundle/observations" \
+            "$bundle/reports" \
+            "$smoke_root/repeated-report"
+          mapfile -t source_manifests < <(find "$smoke_root/materialized" -maxdepth 1 -name 'w04-*.json')
+          manifest_name="$(basename "${source_manifests[0]}")"
+          stream_name="$(python -c \
+            'import json,sys; print(json.load(open(sys.argv[1], encoding="ascii"))["stream_file"])' \
+            "${source_manifests[0]}")"
+          cp "${source_manifests[0]}" "$bundle/workloads/$manifest_name"
+          cp "$smoke_root/materialized/$stream_name" "$bundle/workloads/$stream_name"
+          cp "$smoke_root/environments/core.json" "$bundle/environments/core.json"
+          cp "$smoke_root/run-throughput/observation-00001.json" \
+            "$bundle/observations/observation-00001.json"
+          manifest="$bundle/workloads/$manifest_name"
+          python -m atlaslob.performance analyze "$bundle/observations" \
+            --manifest "$manifest" \
+            --environment "$bundle/environments/core.json" \
+            --output "$bundle/reports/report.json" \
+            --markdown "$bundle/reports/report.md" \
+            --svg "$bundle/reports/report.svg"
+          python -m atlaslob.performance analyze "$bundle/observations" \
+            --manifest "$manifest" \
+            --environment "$bundle/environments/core.json" \
+            --output "$smoke_root/repeated-report/report.json" \
+            --markdown "$smoke_root/repeated-report/report.md" \
+            --svg "$smoke_root/repeated-report/report.svg"
+          cmp --silent \
+            "$bundle/reports/report.json" "$smoke_root/repeated-report/report.json"
+          cmp --silent \
+            "$bundle/reports/report.md" "$smoke_root/repeated-report/report.md"
+          cmp --silent \
+            "$bundle/reports/report.svg" "$smoke_root/repeated-report/report.svg"
+
+      - name: Verify exploratory sample bundle
+        run: >-
+          python -m atlaslob.performance verify-bundle
+          "$RUNNER_TEMP/atlas-phase5-benchmark-smoke/bundle"
+          --create-inventory
+
+      - name: Retain exploratory benchmark smoke evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: phase5-exploratory-benchmark-smoke
+          path: ${{ runner.temp }}/atlas-phase5-benchmark-smoke
+          if-no-files-found: warn
+          retention-days: 14
+
   sanitizers:
     name: ASan and UBSan
     runs-on: ubuntu-24.04
@@ -204,12 +492,14 @@ jobs:
         run: >-
           python -m ruff format --check
           python tests/fuzz/run_command_log_fuzz_smoke.py
+          benchmarks/python
           tests/packaging
 
       - name: Lint Python
         run: >-
           python -m ruff check
           python tests/fuzz/run_command_log_fuzz_smoke.py
+          benchmarks/python
           tests/packaging
 
       - name: Type-check Python

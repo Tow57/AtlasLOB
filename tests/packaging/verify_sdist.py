@@ -32,6 +32,7 @@ def main() -> int:
         root / "THIRD_PARTY_NOTICES.md",
         root / "pyproject.toml",
         root / "cmake" / "AtlasSanitizers.cmake",
+        root / "benchmarks" / "python" / "atlas_python_bench_worker.py",
         root / "include" / "atlaslob" / "multi_instrument_engine.hpp",
         root / "include" / "atlaslob" / "persistence" / "logged_engine.hpp",
         root / "src" / "core" / "multi_instrument_engine.cpp",
@@ -40,6 +41,8 @@ def main() -> int:
         root / "python" / "src" / "atlaslob" / "__init__.py",
         root / "python" / "src" / "atlaslob" / "engine.py",
         root / "python" / "src" / "atlaslob" / "_native_engine.pyi",
+        root / "python" / "src" / "atlaslob" / "performance" / "__main__.py",
+        root / "python" / "src" / "atlaslob" / "performance" / "schemas.py",
         root / "python" / "src" / "atlaslob" / "py.typed",
     }
     missing = sorted(str(name) for name in required - names)

@@ -205,11 +205,21 @@ was retargeted, revalidated, and squash-merged as `075d29a`; the uncancelled wor
 
 ## Phase 5 - Measured portfolio release
 
-- [ ] Frozen workloads and environment manifests.
+- [x] Frozen workloads and environment manifests.
 - [ ] Baseline throughput, latency, allocation, and memory results.
 - [ ] Linux `perf` profiles and hypothesis-driven experiments.
 - [ ] Raw data, reproducible analysis, and limitations.
 - [ ] Clean-clone review, evidence map, and tagged release.
+
+[ADR 0016](docs/decisions/0016-reproducible-performance-evidence.md) freezes the Phase 5
+measurement contract. The first slice adds opt-in benchmark builds, strict versioned evidence
+schemas, deterministic workload materialization, single-observation native runners, allocation
+instrumentation, analysis tooling, and threshold-free hosted smoke checks. It deliberately
+publishes no performance result.
+
+Authoritative baseline and experiment measurements require a dedicated native Ubuntu 24.04
+x86-64 host. WSL2, containers, and shared CI are limited to exploratory or smoke runs. The gateway
+workload W11 remains visibly deferred to Phase 6.
 
 ## Phase 6 - Optional Linux systems extension
 

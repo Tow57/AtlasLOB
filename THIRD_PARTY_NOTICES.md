@@ -15,6 +15,18 @@ fetches the following pinned test-only dependency.
 GoogleTest is used only by AtlasLOB's test targets and is not linked into the production libraries
 or command-line executable.
 
+## Google Benchmark
+
+- Project: Google Benchmark
+- Version: 1.9.5
+- Commit: `192ef10025eb2c4cdd392bc502f0c852196baa48`
+- Source: <https://github.com/google/benchmark>
+- License: Apache-2.0
+
+Google Benchmark is fetched only when `ATLAS_BUILD_BENCHMARKS=ON`. It is linked exclusively into
+opt-in measurement executables and is not part of AtlasLOB's production libraries, command-line
+tools, Python extension, or wheel artifacts.
+
 ## Native Python build and wheel tools
 
 The installed `atlaslob` package has no third-party Python runtime dependency. Building its private

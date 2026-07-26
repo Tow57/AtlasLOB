@@ -32,8 +32,8 @@ environment with the following Linux or macOS commands:
 ```sh
 python3 -m venv .venv
 .venv/bin/python -m pip install -e ".[dev]"
-.venv/bin/python -m ruff format --check python
-.venv/bin/python -m ruff check python
+.venv/bin/python -m ruff format --check python benchmarks/python tests/fuzz/run_command_log_fuzz_smoke.py tests/packaging
+.venv/bin/python -m ruff check python benchmarks/python tests/fuzz/run_command_log_fuzz_smoke.py tests/packaging
 .venv/bin/python -m mypy
 .venv/bin/python -m pytest
 ```
@@ -43,8 +43,8 @@ Use these corresponding commands on Windows PowerShell:
 ```powershell
 py -3.11 -m venv .venv
 .\.venv\Scripts\python.exe -m pip install -e ".[dev]"
-.\.venv\Scripts\python.exe -m ruff format --check python
-.\.venv\Scripts\python.exe -m ruff check python
+.\.venv\Scripts\python.exe -m ruff format --check python benchmarks/python tests/fuzz/run_command_log_fuzz_smoke.py tests/packaging
+.\.venv\Scripts\python.exe -m ruff check python benchmarks/python tests/fuzz/run_command_log_fuzz_smoke.py tests/packaging
 .\.venv\Scripts\python.exe -m mypy
 .\.venv\Scripts\python.exe -m pytest
 ```

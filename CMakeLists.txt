@@ -20,6 +20,11 @@ option(ATLAS_ENABLE_TSAN "Enable ThreadSanitizer" OFF)
 option(ATLAS_ENABLE_INVARIANTS "Enable expensive internal invariant checks" ON)
 option(ATLAS_BUILD_FUZZERS "Build Clang libFuzzer decoder targets" OFF)
 option(ATLAS_BUILD_PYTHON "Build the private CPython extension module" OFF)
+option(ATLAS_BUILD_BENCHMARKS "Build opt-in performance measurement tools" OFF)
+
+if(BUILD_TESTING OR ATLAS_BUILD_BENCHMARKS)
+  include(AtlasDependencies)
+endif()
 
 if(ATLAS_BUILD_PYTHON)
   # The native extension links the project libraries into a shared module.
@@ -239,6 +244,22 @@ if(ATLAS_BUILD_PYTHON)
       PROPERTY LINK_DEPENDS "${ATLAS_NATIVE_ENGINE_VERSION_SCRIPT}"
     )
   endif()
+  if(MINGW)
+    # A wheel must not depend on the build machine's MinGW runtime DLLs. Keep
+    # the CPython DLL dynamic while embedding the GCC, C++, and winpthreads
+    # runtimes in the extension itself.
+    target_link_options(
+      atlas_native_engine
+      PRIVATE
+        -static-libstdc++
+        -static-libgcc
+        -Wl,-Bstatic
+        -Wl,--whole-archive
+        -lwinpthread
+        -Wl,--no-whole-archive
+        -Wl,-Bdynamic
+    )
+  endif()
   atlas_set_project_warnings(atlas_native_engine)
   atlas_enable_sanitizers(atlas_native_engine)
 
@@ -373,10 +394,202 @@ set_target_properties(atlas_cli PROPERTIES CXX_EXTENSIONS OFF)
 atlas_set_project_warnings(atlas_cli)
 atlas_enable_sanitizers(atlas_cli)
 
+if(ATLAS_BUILD_BENCHMARKS)
+  atlas_setup_benchmark_dependencies()
+
+  add_library(
+    atlas_benchmark_support
+    STATIC
+    src/benchmark/benchmark_log_materializer.cpp
+    src/benchmark/benchmark_log_materializer.hpp
+    src/benchmark/benchmark_observation.cpp
+    src/benchmark/benchmark_observation.hpp
+    src/benchmark/benchmark_replay.cpp
+    src/benchmark/benchmark_replay.hpp
+    src/benchmark/benchmark_runner.cpp
+    src/benchmark/benchmark_runner.hpp
+    src/benchmark/benchmark_workload.cpp
+    src/benchmark/benchmark_workload.hpp
+  )
+  target_link_libraries(
+    atlas_benchmark_support
+    PUBLIC AtlasLOB::core
+    PRIVATE AtlasLOB::persistence
+    PRIVATE atlas_persistence_cli_support
+    PRIVATE atlas_internal_utility
+  )
+  target_include_directories(
+    atlas_benchmark_support
+    PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/src/benchmark"
+    PRIVATE
+      "${CMAKE_CURRENT_SOURCE_DIR}/src/persistence"
+      "${CMAKE_CURRENT_SOURCE_DIR}/src/utility"
+  )
+  target_compile_features(atlas_benchmark_support PUBLIC cxx_std_20)
+  set_target_properties(
+    atlas_benchmark_support
+    PROPERTIES CXX_EXTENSIONS OFF
+  )
+  atlas_set_project_warnings(atlas_benchmark_support)
+  atlas_enable_sanitizers(atlas_benchmark_support)
+
+  add_executable(
+    atlas_bench_runner
+    src/benchmark/atlas_bench_runner_main.cpp
+  )
+  target_link_libraries(atlas_bench_runner PRIVATE atlas_benchmark_support)
+  target_compile_features(atlas_bench_runner PRIVATE cxx_std_20)
+  set_target_properties(atlas_bench_runner PROPERTIES CXX_EXTENSIONS OFF)
+  atlas_set_project_warnings(atlas_bench_runner)
+  atlas_enable_sanitizers(atlas_bench_runner)
+
+  add_executable(
+    atlas_bench_alloc_runner
+    src/benchmark/allocation_tracker.cpp
+    src/benchmark/allocation_tracker.hpp
+    src/benchmark/atlas_bench_alloc_runner_main.cpp
+  )
+  target_link_libraries(atlas_bench_alloc_runner PRIVATE atlas_benchmark_support)
+  if(MINGW)
+    # Keep every replaceable-new caller on the same C++ runtime side of the
+    # allocation tracker. Dynamic MinGW libstdc++ may otherwise allocate in the
+    # DLL and deallocate through this executable's interposed delete surface.
+    target_link_options(
+      atlas_bench_alloc_runner
+      PRIVATE -static-libstdc++ -static-libgcc
+    )
+  endif()
+  target_compile_features(atlas_bench_alloc_runner PRIVATE cxx_std_20)
+  set_target_properties(
+    atlas_bench_alloc_runner
+    PROPERTIES CXX_EXTENSIONS OFF
+  )
+  atlas_set_project_warnings(atlas_bench_alloc_runner)
+  atlas_enable_sanitizers(atlas_bench_alloc_runner)
+
+  add_executable(
+    atlas_bench_log_materializer
+    src/benchmark/atlas_bench_log_materializer_main.cpp
+  )
+  target_link_libraries(atlas_bench_log_materializer PRIVATE atlas_benchmark_support)
+  target_compile_features(atlas_bench_log_materializer PRIVATE cxx_std_20)
+  set_target_properties(
+    atlas_bench_log_materializer
+    PROPERTIES CXX_EXTENSIONS OFF
+  )
+  atlas_set_project_warnings(atlas_bench_log_materializer)
+  atlas_enable_sanitizers(atlas_bench_log_materializer)
+
+  add_executable(atlas_microbench benchmarks/micro/atlas_microbench.cpp)
+  target_link_libraries(
+    atlas_microbench
+    PRIVATE
+      AtlasLOB::core
+      benchmark::benchmark
+  )
+  target_compile_features(atlas_microbench PRIVATE cxx_std_20)
+  set_target_properties(atlas_microbench PROPERTIES CXX_EXTENSIONS OFF)
+  atlas_set_project_warnings(atlas_microbench)
+  atlas_enable_sanitizers(atlas_microbench)
+
+  add_custom_target(
+    benchmark-smoke
+    COMMAND
+      "$<TARGET_FILE:atlas_microbench>"
+      --benchmark_dry_run=true
+      --benchmark_filter=PublicEngine
+    DEPENDS
+      atlas_bench_alloc_runner
+      atlas_bench_log_materializer
+      atlas_bench_runner
+      atlas_microbench
+    COMMENT "Running AtlasLOB microbenchmark dry-run smoke"
+    USES_TERMINAL
+    VERBATIM
+  )
+
+  if(BUILD_TESTING)
+    add_test(
+      NAME benchmark.microbench_dry_run
+      COMMAND
+        atlas_microbench
+        --benchmark_dry_run=true
+        --benchmark_filter=PublicEngine
+    )
+    set_tests_properties(
+      benchmark.microbench_dry_run
+      PROPERTIES LABELS "benchmark"
+    )
+  endif()
+endif()
+
 if(BUILD_TESTING)
-  include(AtlasDependencies)
   atlas_setup_test_dependencies()
   include(GoogleTest)
+
+  if(ATLAS_BUILD_BENCHMARKS)
+    add_executable(
+      atlas_benchmark_tests
+      tests/unit/benchmark_runner_test.cpp
+    )
+    target_link_libraries(
+      atlas_benchmark_tests
+      PRIVATE
+        atlas_benchmark_support
+        atlas_internal_utility
+        GTest::gtest_main
+    )
+    target_compile_features(atlas_benchmark_tests PRIVATE cxx_std_20)
+    set_target_properties(
+      atlas_benchmark_tests
+      PROPERTIES CXX_EXTENSIONS OFF
+    )
+    atlas_set_project_warnings(atlas_benchmark_tests)
+    atlas_enable_sanitizers(atlas_benchmark_tests)
+
+    gtest_discover_tests(
+      atlas_benchmark_tests
+      TEST_PREFIX "benchmark."
+      PROPERTIES LABELS "benchmark"
+    )
+
+    add_executable(
+      atlas_allocation_tracker_process_test
+      src/benchmark/allocation_tracker.cpp
+      src/benchmark/allocation_tracker.hpp
+      tests/unit/allocation_tracker_process_test.cpp
+    )
+    target_include_directories(
+      atlas_allocation_tracker_process_test
+      PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src/benchmark"
+    )
+    target_compile_features(atlas_allocation_tracker_process_test PRIVATE cxx_std_20)
+    set_target_properties(
+      atlas_allocation_tracker_process_test
+      PROPERTIES CXX_EXTENSIONS OFF
+    )
+    if(MINGW)
+      target_link_options(
+        atlas_allocation_tracker_process_test
+        PRIVATE -static-libstdc++ -static-libgcc
+      )
+    endif()
+    atlas_set_project_warnings(atlas_allocation_tracker_process_test)
+    atlas_enable_sanitizers(atlas_allocation_tracker_process_test)
+    add_test(
+      NAME benchmark.allocation_tracker_process
+      COMMAND atlas_allocation_tracker_process_test
+    )
+    set_tests_properties(
+      benchmark.allocation_tracker_process
+      PROPERTIES LABELS "benchmark"
+    )
+    add_dependencies(
+      benchmark-smoke
+      atlas_allocation_tracker_process_test
+      atlas_benchmark_tests
+    )
+  endif()
 
   add_executable(atlas_diff_native tests/differential/native_driver.cpp)
   target_link_libraries(atlas_diff_native PRIVATE AtlasLOB::core)
@@ -718,6 +931,8 @@ file(
   "${CMAKE_CURRENT_SOURCE_DIR}/src/*.cpp"
   "${CMAKE_CURRENT_SOURCE_DIR}/tests/*.hpp"
   "${CMAKE_CURRENT_SOURCE_DIR}/tests/*.cpp"
+  "${CMAKE_CURRENT_SOURCE_DIR}/benchmarks/*.hpp"
+  "${CMAKE_CURRENT_SOURCE_DIR}/benchmarks/*.cpp"
 )
 
 find_program(CLANG_FORMAT_EXECUTABLE NAMES clang-format)

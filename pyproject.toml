@@ -35,6 +35,7 @@ cmake.version = ">=3.25"
 cmake.build-type = "Release"
 build.targets = ["atlas_native_engine"]
 wheel.packages = ["python/src/atlaslob"]
+wheel.exclude = ["atlaslob/performance/**"]
 install.components = ["python"]
 sdist.inclusion-mode = "explicit"
 sdist.include = [
@@ -42,6 +43,7 @@ sdist.include = [
   "/cmake",
   "/include",
   "/src",
+  "/benchmarks/python/atlas_python_bench_worker.py",
   "/python/src/atlaslob",
   "/LICENSE",
   "/README.md",
@@ -104,6 +106,7 @@ strict = true
 files = [
   "python/src",
   "python/tests",
+  "benchmarks/python/atlas_python_bench_worker.py",
   "tests/fuzz/run_command_log_fuzz_smoke.py",
   "tests/packaging",
 ]
