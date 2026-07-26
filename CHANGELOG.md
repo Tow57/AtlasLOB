@@ -39,6 +39,8 @@ The format is based on Keep a Changelog, and public releases will follow semanti
   checkpoint cadence, contiguous sequence timeline, process exit, and final state; impossible
   event envelopes, snapshots, and malformed numeric JSON now fail as protocol errors.
 - Aligned the internal oracle package and CI support window to Python 3.11 through 3.14.
+- Made locally built MinGW extension wheels self-contained with respect to the GCC, C++, and
+  winpthreads runtime DLLs while retaining the CPython DLL as the intended dynamic dependency.
 - Extended per-command state evidence with exact bid/ask level, order, and aggregate summaries.
 - Replaced command-sized native transcript buffering in long differential cases with incremental
   strict JSONL decoding, a bounded line queue, disk-spooled reference evidence, and rolling
@@ -54,6 +56,13 @@ The format is based on Keep a Changelog, and public releases will follow semanti
 
 ### Added
 
+- ADR 0016 and a Phase 5 methodology contract separating C++ core, replay, Python batch,
+  allocation, memory, and future gateway evidence; defining native-host qualification,
+  deterministic sampling, process-level observations, robust statistics, optimization acceptance
+  gates, privacy rules, and the exact-tag release workflow.
+- An opt-in benchmark-contract foundation for deterministic workload/environment manifests,
+  strict observation/report schemas, core and allocation runners, Google Benchmark microcases,
+  standard-library Python orchestration and analysis, and threshold-free Ubuntu smoke validation.
 - A private pybind11 3.0.4 `_native_engine` module and public immutable Python engine values for
   live execution, write-ahead logged execution, clean writable recovery, torn valid-prefix
   read-only recovery, top-of-book inspection, snapshots, state digests, and snapshot publication.

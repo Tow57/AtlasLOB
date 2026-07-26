@@ -68,6 +68,7 @@ def _verify_one(wheel: Path, interpreter: str) -> None:
             if name.endswith(FORBIDDEN_SUFFIXES)
             or "/tests/" in f"/{name}"
             or "/corpus/" in f"/{name}"
+            or name.startswith("atlaslob/performance/")
             or "__pycache__" in name
             or name.endswith((".pyc", ".pyo"))
         )

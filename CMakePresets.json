@@ -19,6 +19,24 @@
       }
     },
     {
+      "name": "release-benchmark-base",
+      "hidden": true,
+      "inherits": "base",
+      "cacheVariables": {
+        "BUILD_TESTING": "OFF",
+        "CMAKE_BUILD_TYPE": "Release",
+        "CMAKE_CXX_FLAGS_RELEASE": "-O3 -DNDEBUG -g -fno-omit-frame-pointer",
+        "CMAKE_INTERPROCEDURAL_OPTIMIZATION": "OFF",
+        "ATLAS_BUILD_BENCHMARKS": "ON",
+        "ATLAS_BUILD_FUZZERS": "OFF",
+        "ATLAS_BUILD_PYTHON": "OFF",
+        "ATLAS_ENABLE_ASAN": "OFF",
+        "ATLAS_ENABLE_INVARIANTS": "OFF",
+        "ATLAS_ENABLE_TSAN": "OFF",
+        "ATLAS_ENABLE_UBSAN": "OFF"
+      }
+    },
+    {
       "name": "dev-gcc",
       "displayName": "Development with GCC",
       "inherits": "base",
@@ -54,6 +72,27 @@
         "CMAKE_CXX_COMPILER": "g++",
         "ATLAS_ENABLE_INVARIANTS": "OFF"
       }
+    },
+    {
+      "name": "release-benchmark-gcc",
+      "displayName": "Release benchmark tools with GCC",
+      "inherits": "release-benchmark-base",
+      "cacheVariables": {
+        "CMAKE_CXX_COMPILER": "g++"
+      }
+    },
+    {
+      "name": "release-benchmark-clang",
+      "displayName": "Release benchmark tools with Clang",
+      "inherits": "release-benchmark-base",
+      "cacheVariables": {
+        "CMAKE_CXX_COMPILER": "clang++"
+      }
+    },
+    {
+      "name": "release-profile",
+      "displayName": "Release profiling build with Clang",
+      "inherits": "release-benchmark-clang"
     }
   ],
   "buildPresets": [
@@ -72,6 +111,18 @@
     {
       "name": "release",
       "configurePreset": "release"
+    },
+    {
+      "name": "release-benchmark-gcc",
+      "configurePreset": "release-benchmark-gcc"
+    },
+    {
+      "name": "release-benchmark-clang",
+      "configurePreset": "release-benchmark-clang"
+    },
+    {
+      "name": "release-profile",
+      "configurePreset": "release-profile"
     }
   ],
   "testPresets": [
