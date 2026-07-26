@@ -40,6 +40,32 @@ def test_public_aliases_accept_reusable_hardware_classes(
     environment._validate_public_alias("local-nvme-ssd", "storage_class", informative=True)
 
 
+def test_hosted_ci_aliases_do_not_embed_the_runner_account(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(platform, "node", lambda: "fv-az1234-567")
+    monkeypatch.setattr(getpass, "getuser", lambda: "runner")
+    monkeypatch.setenv("USER", "runner")
+    monkeypatch.delenv("USERNAME", raising=False)
+    monkeypatch.delenv("LOGNAME", raising=False)
+
+    environment._validate_public_alias(
+        "github-hosted-ubuntu2404-x86-64",
+        "host_class",
+    )
+    environment._validate_public_alias(
+        "ephemeral-hosted-storage",
+        "storage_class",
+        informative=True,
+    )
+    with pytest.raises(ValueError, match="ambient username or hostname"):
+        environment._validate_public_alias(
+            "ephemeral-hosted-runner",
+            "storage_class",
+            informative=True,
+        )
+
+
 @pytest.mark.parametrize("value", ("", "unknown", "unavailable"))
 def test_storage_class_requires_an_informative_alias(
     monkeypatch: pytest.MonkeyPatch,

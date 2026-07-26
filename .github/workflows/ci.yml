@@ -204,7 +204,7 @@ jobs:
             --output "$smoke_root/environments/core.json" \
             --repository . \
             --host-class github-hosted-ubuntu2404-x86-64 \
-            --storage-class ephemeral-hosted-runner \
+            --storage-class ephemeral-hosted-storage \
             --smt-sibling-idle unknown
           python -m atlaslob.performance capture-environment \
             --binary build/release-benchmark-gcc/atlas_bench_alloc_runner \
@@ -212,7 +212,7 @@ jobs:
             --output "$smoke_root/environments/allocation.json" \
             --repository . \
             --host-class github-hosted-ubuntu2404-x86-64 \
-            --storage-class ephemeral-hosted-runner \
+            --storage-class ephemeral-hosted-storage \
             --smt-sibling-idle unknown
           python -c \
             "import json,pathlib,sys; assert all(json.loads(pathlib.Path(p).read_text(encoding='ascii'))['classification'] == 'exploratory' for p in sys.argv[1:])" \
@@ -231,7 +231,7 @@ jobs:
             --output "$smoke_root/environments/python-cp312.json" \
             --repository . \
             --host-class github-hosted-ubuntu2404-x86-64 \
-            --storage-class ephemeral-hosted-runner \
+            --storage-class ephemeral-hosted-storage \
             --smt-sibling-idle unknown
           python -c \
             'import json,pathlib,sys; value=json.loads(pathlib.Path(sys.argv[1]).read_text(encoding="ascii")); assert value["classification"] == "exploratory"; assert value["runtime_kind"] == "cpython"; assert value["build_type"] == "Release"; assert value["optimization"] == "O3"; assert value["ndebug"] is True; assert value["frame_pointers"] is True; assert value["invariants"] is False; assert value["sanitizers"] is False; assert value["lto"] is False; assert value["warnings_as_errors"] is True; assert value["debug_symbols"] is True; assert value["cxx20"] is True; assert value["release_flags_locked"] is True' \
