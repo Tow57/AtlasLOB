@@ -47,6 +47,8 @@ _MODE_BY_BOUNDARY: Final[dict[str, RunnerMode]] = {
     "python_summary": "python-summary",
 }
 _ALLOCATION_BOUNDARIES: Final = frozenset({"core_allocation", "core_setup_allocation"})
+_PYTHON_BATCH_SIZES: Final = (1, 64, 1_024, 65_536)
+_ATTEMPT_SLOTS_PER_BATCH: Final = 10_000
 _ATTEMPT_PREFIX: Final = "attempt-"
 _OBSERVATION_NAME: Final = "observation-00001.json"
 _PHYSICAL_HOST_FIELDS: Final = (
@@ -233,7 +235,7 @@ def run_campaign(
                 suite_label=suite_label,
                 mode=shape.mode,
                 observations=1,
-                block_start=attempt,
+                block_start=_campaign_attempt_counter(shape, attempt),
                 batch_size=shape.batch_size,
                 timeout_seconds=timeout_seconds,
             )
@@ -464,6 +466,13 @@ def _runner_for_role(role: str, runners: CampaignRunners) -> Runner:
 
 def _shape_directory(bundle_directory: Path, shape: CampaignShape) -> Path:
     return bundle_directory / "observations" / shape.point_id / shape.directory_name
+
+
+def _campaign_attempt_counter(shape: CampaignShape, attempt: int) -> int:
+    if shape.batch_size is None:
+        return attempt
+    batch_index = _PYTHON_BATCH_SIZES.index(shape.batch_size)
+    return batch_index * _ATTEMPT_SLOTS_PER_BATCH + attempt
 
 
 def _existing_campaign_shapes(

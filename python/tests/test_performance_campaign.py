@@ -193,6 +193,16 @@ def test_study_plan_expands_to_frozen_51_shapes() -> None:
         1_024,
         65_536,
     }
+    python_shapes = tuple(shape for shape in shapes if shape.role == "python")
+    assert len(
+        {
+            (
+                shape.boundary,
+                campaign._campaign_attempt_counter(shape, 1),
+            )
+            for shape in python_shapes
+        }
+    ) == len(python_shapes)
 
 
 def test_campaign_is_round_robin_resumable_and_retains_invalid_attempt(
