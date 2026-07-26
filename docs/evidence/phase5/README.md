@@ -14,7 +14,7 @@ performance claim exists yet.
 | Core, setup, allocation, replay, and Python batch runners | Complete locally |
 | Independent-process orchestration and A-B-B-A scheduling | Complete locally |
 | Deterministic analysis, experiment decisions, Markdown/SVG, and bundle verification | Complete locally |
-| Shared-CI benchmark smoke definition | Complete locally; hosted result pending |
+| Shared-CI benchmark smoke definition | Passed on PR #11 implementation head `35b09ba` |
 | Native Ubuntu baseline and Linux `perf` profiles | Not started |
 | Hypothesis-driven experiments | Not started |
 | Exact-tag `v1.0.0` evidence bundle | Not started |

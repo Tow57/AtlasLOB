@@ -43,8 +43,10 @@ The PR 1 infrastructure is complete locally:
   stream-to-log equivalence, experiment-note bindings, and full-file SHA-256 inventory.
 
 This branch contains infrastructure only. It does not contain an authoritative baseline,
-optimization result, or publishable performance number. Hosted benchmark-smoke results remain
-pending until the branch is published.
+optimization result, or publishable performance number. The complete 16-job hosted run passed on
+PR #11 implementation head `35b09ba`, including the threshold-free exploratory benchmark smoke,
+GCC/Clang Debug and Release, ASan/UBSan, CPython 3.11-3.14, differential, fuzz, wheel, source
+distribution, native-extension, and formatting gates.
 
 The authoritative Phase 5 host remains a dedicated native Ubuntu 24.04 x86-64 machine. WSL2,
 containers, and GitHub-hosted runners may provide exploratory or smoke evidence, but their
