@@ -18,9 +18,9 @@ import re
 import sys
 import time
 import zipfile
-from collections.abc import Iterable, Sequence
+from collections.abc import Callable, Iterable, Sequence
 from pathlib import Path, PurePosixPath
-from typing import TYPE_CHECKING, BinaryIO, Protocol, TypeVar
+from typing import TYPE_CHECKING, BinaryIO, Protocol, TypeVar, cast
 
 if TYPE_CHECKING:
     from atlaslob.domain import Command, InstrumentConfig
@@ -38,6 +38,10 @@ T = TypeVar("T")
 
 class _Digest(Protocol):
     def update(self, data: bytes) -> None: ...
+
+
+class _ResourceUsage(Protocol):
+    ru_maxrss: int
 
 
 def _remove_source_shadowing() -> None:
@@ -366,9 +370,12 @@ def _rss_bytes() -> int:
 
 def _peak_rss_bytes() -> int:
     try:
-        import resource
-
-        usage = resource.getrusage(resource.RUSAGE_SELF)  # type: ignore[attr-defined]
+        resource_module = importlib.import_module("resource")
+        process_scope = getattr(resource_module, "RUSAGE_SELF", None)
+        get_resource_usage = getattr(resource_module, "getrusage", None)
+        if not isinstance(process_scope, int) or not callable(get_resource_usage):
+            return 0
+        usage = cast(Callable[[int], _ResourceUsage], get_resource_usage)(process_scope)
         return int(usage.ru_maxrss) * 1024
     except (ImportError, OSError, ValueError):
         return 0
