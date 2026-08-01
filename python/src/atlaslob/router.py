@@ -16,6 +16,7 @@ from atlaslob.domain import (
     ATLASLOB_SEMANTICS_VERSION,
     U64_MAX,
     BookTop,
+    CanceledEvent,
     CancelOrder,
     Command,
     EngineError,
@@ -31,7 +32,9 @@ from atlaslob.domain import (
     RejectedEvent,
     RejectReason,
     ReplaceOrder,
+    RestedEvent,
     TimeInForce,
+    TradeEvent,
     command_type,
 )
 from atlaslob.reference import (
@@ -52,7 +55,12 @@ class _ActiveIdentity:
 
 
 class ReferenceRouter:
-    """Deterministic, eager multi-instrument reference engine."""
+    """Deterministic multi-instrument reference engine.
+
+    Invariant checks are eager by default. Setting check_invariants=False is an
+    explicit bulk-execution policy; snapshots and state digests still perform
+    full validation.
+    """
 
     def __init__(
         self,
@@ -60,6 +68,7 @@ class ReferenceRouter:
         config: MultiInstrumentEngineConfig | None = None,
         *,
         first_sequence: int = 1,
+        check_invariants: bool = True,
     ) -> None:
         if not isinstance(catalog, tuple):
             raise TypeError("catalog must be a tuple of InstrumentConfig values")
@@ -76,13 +85,19 @@ class ReferenceRouter:
             or not 1 <= first_sequence <= U64_MAX
         ):
             raise ValueError("first_sequence must be a nonzero u64")
+        if not isinstance(check_invariants, bool):
+            raise TypeError("check_invariants must be a bool")
 
         self._catalog = tuple(sorted(catalog, key=lambda entry: entry.instrument_id))
         self._config = config if config is not None else MultiInstrumentEngineConfig()
         if not isinstance(self._config, MultiInstrumentEngineConfig):
             raise TypeError("config must be a MultiInstrumentEngineConfig")
         self._books = {
-            entry.instrument_id: ReferenceEngine(entry.instrument_id, entry.matching)
+            entry.instrument_id: ReferenceEngine(
+                entry.instrument_id,
+                entry.matching,
+                check_invariants=check_invariants,
+            )
             for entry in self._catalog
         }
         self._active: dict[int, _ActiveIdentity] = {}
@@ -90,6 +105,7 @@ class ReferenceRouter:
         self._last_sequence = first_sequence - 1
         self._sequence_exhausted = False
         self._poisoned = False
+        self._check_invariants = check_invariants
         self.assert_invariants()
 
     @property
@@ -132,7 +148,8 @@ class ReferenceRouter:
 
         try:
             result = self._execute_sequenced(command, sequence)
-            self.assert_invariants()
+            if self._check_invariants:
+                self.assert_invariants()
             return result
         except BaseException:
             self._poisoned = True
@@ -399,19 +416,24 @@ class ReferenceRouter:
         command: Command,
         sequence: int,
     ) -> ReferenceResult:
-        before = set(book._orders)
         result = book._execute_at_sequence(command, sequence)
         if not result.committed:
             raise RuntimeError("prevalidated routed command was unexpectedly rejected")
-        after = set(book._orders)
-        for order_id in before - after:
-            del self._active[order_id]
-        for order_id in after - before:
-            order = book._orders[order_id]
-            self._active[order_id] = _ActiveIdentity(
-                instrument_id=order.instrument_id,
-                client_id=order.client_id,
-            )
+        batch = result.batch
+        if batch is None:
+            raise RuntimeError("committed routed command is missing its event batch")
+        for event in batch.events:
+            if isinstance(event, TradeEvent) and event.resting_remaining == 0:
+                del self._active[event.resting_order_id]
+            elif isinstance(event, CanceledEvent):
+                del self._active[event.order_id]
+            elif isinstance(event, RestedEvent):
+                if event.order_id in self._active:
+                    raise RuntimeError("rested order is already present in the global directory")
+                self._active[event.order_id] = _ActiveIdentity(
+                    instrument_id=event.header.instrument_id,
+                    client_id=event.client_id,
+                )
         return result
 
     def _issue_sequence(self) -> int | None:

@@ -1,13 +1,14 @@
 """Straightforward, independent reference matching engine.
 
-The oracle deliberately favors inspectability over speed.  Price levels are
-plain dictionaries of FIFO deques, active identity is a separate dictionary,
-and best-price traversal sorts integer prices on demand.  It does not import
-the native AtlasLOB library or mirror its private storage and planning types.
+The oracle deliberately favors inspectability over production-engine structure.
+Price levels remain plain dictionaries of FIFO deques, augmented by validated
+aggregate caches and lazy best-price heaps. It does not import the native
+AtlasLOB library or mirror its private storage and planning types.
 """
 
 from __future__ import annotations
 
+import heapq
 from collections import deque
 from collections.abc import Iterable
 from dataclasses import dataclass
@@ -76,6 +77,7 @@ class _FillProjection:
 
 
 _Levels = dict[int, deque[_Order]]
+_PriceHeap = list[tuple[int, int, int]]
 
 
 def _is_valid_side(value: int) -> bool:
@@ -159,7 +161,12 @@ def _validate_replace_shape(order: ReplaceOrder) -> RejectReason:
 
 
 class ReferenceEngine:
-    """Independent price-time matching oracle for one routed instrument."""
+    """Independent price-time matching oracle for one routed instrument.
+
+    Invariant checks are eager by default. Setting check_invariants=False is an
+    explicit bulk-execution policy; snapshots and state digests still perform
+    full validation.
+    """
 
     def __init__(
         self,
@@ -167,6 +174,7 @@ class ReferenceEngine:
         config: MatchingConfig | None = None,
         *,
         first_sequence: int = 1,
+        check_invariants: bool = True,
     ) -> None:
         if (
             isinstance(instrument_id, bool)
@@ -180,16 +188,26 @@ class ReferenceEngine:
             or not 1 <= first_sequence <= U64_MAX
         ):
             raise ValueError("first_sequence must be a nonzero u64")
+        if not isinstance(check_invariants, bool):
+            raise TypeError("check_invariants must be a bool")
 
         self._instrument_id = instrument_id
         self._config = config if config is not None else MatchingConfig()
         self._bids: _Levels = {}
         self._asks: _Levels = {}
+        self._bid_aggregates: dict[int, int] = {}
+        self._ask_aggregates: dict[int, int] = {}
+        self._bid_heap: _PriceHeap = []
+        self._ask_heap: _PriceHeap = []
+        self._bid_level_generations: dict[int, int] = {}
+        self._ask_level_generations: dict[int, int] = {}
+        self._next_level_generation = 1
         self._orders: dict[int, _Order] = {}
         self._next_sequence = first_sequence
         self._last_sequence = first_sequence - 1
         self._sequence_exhausted = False
         self._poisoned = False
+        self._check_invariants = check_invariants
         self.assert_invariants()
 
     @property
@@ -269,7 +287,8 @@ class ReferenceEngine:
             else:
                 raise TypeError(f"unsupported command type: {type(command)!r}")
 
-            self.assert_invariants()
+            if self._check_invariants:
+                self.assert_invariants()
             return result
         except BaseException:
             # Python is the correctness oracle, not the availability boundary. A MemoryError or
@@ -323,6 +342,9 @@ class ReferenceEngine:
 
         self._append_side_invariant_errors(
             self._bids,
+            self._bid_aggregates,
+            self._bid_heap,
+            self._bid_level_generations,
             Side.BUY,
             seen,
             priorities,
@@ -330,6 +352,9 @@ class ReferenceEngine:
         )
         self._append_side_invariant_errors(
             self._asks,
+            self._ask_aggregates,
+            self._ask_heap,
+            self._ask_level_generations,
             Side.SELL,
             seen,
             priorities,
@@ -588,7 +613,8 @@ class ReferenceEngine:
         if price is None:
             raise RuntimeError("resting projection is missing a price")
         levels = self._bids if order.side == Side.BUY else self._asks
-        projected_aggregate = sum(queued.remaining_quantity for queued in levels.get(price, ()))
+        aggregates = self._aggregates(levels)
+        projected_aggregate = aggregates.get(price, 0)
         if (
             removes_old is not None
             and removes_old.side == order.side
@@ -601,10 +627,7 @@ class ReferenceEngine:
         opposite = self._asks if aggressor.side == Side.BUY else self._bids
         remaining = aggressor.quantity
         terminal_count = 0
-        for price in self._ordered_prices(
-            opposite,
-            descending=aggressor.side == Side.SELL,
-        ):
+        for price in self._iter_prices(opposite, descending=aggressor.side == Side.SELL):
             if remaining == 0 or not self._crosses(aggressor, price):
                 break
             for passive in opposite[price]:
@@ -624,13 +647,11 @@ class ReferenceEngine:
         events: list[Event],
     ) -> int:
         opposite = self._asks if aggressor.side == Side.BUY else self._bids
+        aggregates = self._aggregates(opposite)
         remaining = aggressor.quantity
-        prices = self._ordered_prices(
-            opposite,
-            descending=aggressor.side == Side.SELL,
-        )
-        for price in prices:
-            if remaining == 0 or not self._crosses(aggressor, price):
+        while remaining:
+            price = self._best_price(opposite, descending=aggressor.side == Side.SELL)
+            if price is None or not self._crosses(aggressor, price):
                 break
             queue = opposite[price]
             while queue and remaining:
@@ -638,6 +659,7 @@ class ReferenceEngine:
                 execution_quantity = min(remaining, passive.remaining_quantity)
                 remaining -= execution_quantity
                 passive.remaining_quantity -= execution_quantity
+                aggregates[price] -= execution_quantity
                 events.append(
                     TradeEvent(
                         _header(events, sequence, aggressor.instrument_id),
@@ -656,7 +678,7 @@ class ReferenceEngine:
                     queue.popleft()
                     del self._orders[passive.order_id]
             if not queue:
-                del opposite[price]
+                self._remove_level(opposite, price)
         return remaining
 
     def _rest(self, order: NewOrder, remaining: int, sequence: int) -> None:
@@ -672,7 +694,13 @@ class ReferenceEngine:
             priority_sequence=sequence,
         )
         levels = self._bids if rested.side == Side.BUY else self._asks
-        levels.setdefault(rested.price, deque()).append(rested)
+        queue = levels.get(rested.price)
+        if queue is None:
+            queue = deque()
+            levels[rested.price] = queue
+            self._register_level(levels, rested.price)
+        queue.append(rested)
+        self._aggregates(levels)[rested.price] += remaining
         self._orders[rested.order_id] = rested
 
     def _erase(self, order: _Order) -> None:
@@ -684,8 +712,9 @@ class ReferenceEngine:
                 break
         else:
             raise RuntimeError(f"active order {order.order_id} is not queued")
+        self._aggregates(levels)[order.price] -= order.remaining_quantity
         if not queue:
-            del levels[order.price]
+            self._remove_level(levels, order.price)
         del self._orders[order.order_id]
 
     @staticmethod
@@ -778,13 +807,16 @@ class ReferenceEngine:
     def _ordered_prices(levels: _Levels, *, descending: bool) -> list[int]:
         return sorted(levels, reverse=descending)
 
-    @staticmethod
-    def _top_level(levels: _Levels, *, descending: bool) -> TopOfBookLevel | None:
-        if not levels:
+    def _top_level(
+        self,
+        levels: _Levels,
+        *,
+        descending: bool,
+    ) -> TopOfBookLevel | None:
+        price = self._best_price(levels, descending=descending)
+        if price is None:
             return None
-        price = max(levels) if descending else min(levels)
-        aggregate = sum(order.remaining_quantity for order in levels[price])
-        return TopOfBookLevel(price, aggregate)
+        return TopOfBookLevel(price, self._aggregates(levels)[price])
 
     @classmethod
     def _snapshot_levels(
@@ -820,11 +852,23 @@ class ReferenceEngine:
     def _append_side_invariant_errors(
         self,
         levels: _Levels,
+        aggregates: dict[int, int],
+        price_heap: _PriceHeap,
+        level_generations: dict[int, int],
         expected_side: Side,
         seen: dict[int, _Order],
         priorities: set[int],
         errors: list[str],
     ) -> None:
+        if set(aggregates) != set(levels):
+            errors.append(f"{expected_side.name.lower()} aggregate levels differ from queues")
+        if set(level_generations) != set(levels):
+            errors.append(f"{expected_side.name.lower()} price-index levels differ from queues")
+        heap_entries = set(price_heap)
+        for price, generation in level_generations.items():
+            key = -price if expected_side == Side.BUY else price
+            if (key, generation, price) not in heap_entries:
+                errors.append(f"price level {price} is missing from the best-price index")
         for price, queue in levels.items():
             if not queue:
                 errors.append(f"price level {price} is empty")
@@ -857,6 +901,79 @@ class ReferenceEngine:
                 aggregate += order.remaining_quantity
             if aggregate > U64_MAX:
                 errors.append(f"price level {price} aggregate overflows u64")
+            if aggregates.get(price) != aggregate:
+                errors.append(f"price level {price} cached aggregate differs from queued quantity")
+
+        indexed_best = self._best_price(levels, descending=expected_side == Side.BUY)
+        expected_best = (
+            (max(levels) if expected_side == Side.BUY else min(levels)) if levels else None
+        )
+        if indexed_best != expected_best:
+            errors.append(f"{expected_side.name.lower()} best-price index is inconsistent")
+
+    def _aggregates(self, levels: _Levels) -> dict[int, int]:
+        return self._bid_aggregates if levels is self._bids else self._ask_aggregates
+
+    def _price_index(
+        self,
+        levels: _Levels,
+    ) -> tuple[_PriceHeap, dict[int, int], bool]:
+        if levels is self._bids:
+            return self._bid_heap, self._bid_level_generations, True
+        return self._ask_heap, self._ask_level_generations, False
+
+    def _register_level(self, levels: _Levels, price: int) -> None:
+        heap, generations, descending = self._price_index(levels)
+        generation = self._next_level_generation
+        self._next_level_generation += 1
+        generations[price] = generation
+        self._aggregates(levels)[price] = 0
+        heapq.heappush(heap, (-price if descending else price, generation, price))
+
+    def _remove_level(self, levels: _Levels, price: int) -> None:
+        del levels[price]
+        del self._aggregates(levels)[price]
+        _, generations, _ = self._price_index(levels)
+        del generations[price]
+
+    def _prepare_price_heap(self, levels: _Levels) -> _PriceHeap:
+        heap, generations, descending = self._price_index(levels)
+        while heap and generations.get(heap[0][2]) != heap[0][1]:
+            heapq.heappop(heap)
+        if len(heap) > max(64, 2 * len(levels)):
+            heap[:] = [
+                (-price if descending else price, generation, price)
+                for price, generation in generations.items()
+            ]
+            heapq.heapify(heap)
+        return heap
+
+    def _best_price(self, levels: _Levels, *, descending: bool) -> int | None:
+        _, _, indexed_descending = self._price_index(levels)
+        if descending != indexed_descending:
+            raise RuntimeError("price index requested with the wrong ordering")
+        heap = self._prepare_price_heap(levels)
+        return None if not heap else heap[0][2]
+
+    def _iter_prices(self, levels: _Levels, *, descending: bool) -> Iterable[int]:
+        _, generations, indexed_descending = self._price_index(levels)
+        if descending != indexed_descending:
+            raise RuntimeError("price index requested with the wrong ordering")
+        heap = self._prepare_price_heap(levels)
+        if not heap:
+            return
+        frontier: _PriceHeap = [(heap[0][0], 0, 0)]
+        while frontier:
+            _, _, index = heapq.heappop(frontier)
+            entry = heap[index]
+            left = 2 * index + 1
+            right = left + 1
+            if left < len(heap):
+                heapq.heappush(frontier, (heap[left][0], heap[left][1], left))
+            if right < len(heap):
+                heapq.heappush(frontier, (heap[right][0], heap[right][1], right))
+            if generations.get(entry[2]) == entry[1]:
+                yield entry[2]
 
     @staticmethod
     def _require_representable(command: Command) -> None:

@@ -355,8 +355,17 @@ def materialize_benchmark_plan(
     output_directory: Path,
     *,
     log_materializer: Path | None = None,
+    eager_invariant_checks: bool = False,
 ) -> tuple[tuple[Path, WorkloadManifest], ...]:
-    """Materialize every resolved plan point, reusing identical stream shapes."""
+    """Materialize every resolved plan point, reusing identical stream shapes.
+
+    Bulk materialization checks full oracle invariants at region boundaries by
+    default. Passing eager_invariant_checks=True is intended for equivalence
+    tests and retains the ordinary per-command oracle policy.
+    """
+
+    if not isinstance(eager_invariant_checks, bool):
+        raise TypeError("eager_invariant_checks must be a bool")
 
     resolved = load_benchmark_plan(plan) if isinstance(plan, Path) else plan
     replay_required = any(point.workload_id == "W10" for point in resolved.points)
@@ -415,6 +424,7 @@ def materialize_benchmark_plan(
                     active_order_target=point.active_order_target,
                     sweep_depth=point.sweep_depth,
                     log_materializer=(log_materializer if point.workload_id == "W10" else None),
+                    eager_invariant_checks=eager_invariant_checks,
                 )
                 artifacts[key] = artifact
                 created.extend(_published_manifest_paths(*artifact))
@@ -561,8 +571,18 @@ def materialize_workload(
     active_order_target: int = 64,
     sweep_depth: int = 16,
     log_materializer: Path | None = None,
+    eager_invariant_checks: bool = False,
 ) -> tuple[Path, WorkloadManifest]:
-    """Write one canonical ATLAS_DIFF_V2 stream and its resolved manifest."""
+    """Write one canonical ATLAS_DIFF_V2 stream and its resolved manifest.
+
+    The default bulk path performs full invariant validation at initialization,
+    after preload, at measured-region entry, and during final digest production.
+    Set eager_invariant_checks=True to additionally validate after every
+    command; generated artifact bytes are identical under both policies.
+    """
+
+    if not isinstance(eager_invariant_checks, bool):
+        raise TypeError("eager_invariant_checks must be a bool")
 
     for name, value in (
         ("seed", seed),
@@ -629,7 +649,11 @@ def materialize_workload(
         warmup_commands=warmup_commands,
         measured_commands=measured_commands,
     )
-    router = ReferenceRouter(spec.catalog, spec.engine)
+    router = ReferenceRouter(
+        spec.catalog,
+        spec.engine,
+        check_invariants=eager_invariant_checks,
+    )
     native_input = MultiNativeInput(spec.catalog, spec.engine)
     expected_empty_state_digest = router.state_digest()
     preload_event_hasher = hashlib.sha256()
@@ -676,6 +700,7 @@ def materialize_workload(
                     after_preload_active_order_count = router.active_order_count
                     expected_preload_state_digest = router.state_digest()
                 if completed_commands == preload_commands + warmup_commands:
+                    router.assert_invariants()
                     measured_start_active_order_count = router.active_order_count
                 if command_index < preload_commands:
                     if result.error is not None:

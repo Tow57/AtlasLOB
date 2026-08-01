@@ -9,8 +9,11 @@ from atlaslob.domain import (
     CancelOrder,
     Command,
     EngineSnapshot,
+    InstrumentConfig,
+    MatchingConfig,
     NewOrder,
     OrderType,
+    ReferenceResult,
     ReplaceOrder,
     Side,
     TimeInForce,
@@ -35,6 +38,7 @@ from atlaslob.performance.workloads import (
     materialize_workload,
     verify_workload_manifest,
 )
+from atlaslob.reference import ReferenceEngine
 from atlaslob.router import ReferenceRouter
 
 REPOSITORY = Path(__file__).resolve().parents[2]
@@ -113,9 +117,13 @@ def _shape(workload_id: str) -> _Shape:
 
 
 def _native_log_materializer() -> Path:
-    if not NATIVE_LOG_MATERIALIZER.is_file():
-        pytest.skip("native benchmark log materializer has not been built")
-    return NATIVE_LOG_MATERIALIZER
+    for candidate in (
+        NATIVE_LOG_MATERIALIZER,
+        REPOSITORY / "build" / "release-benchmark-clang" / "atlas_bench_log_materializer",
+    ):
+        if candidate.is_file():
+            return candidate
+    pytest.skip("native benchmark log materializer has not been built")
 
 
 def _reference_region_state(
@@ -213,6 +221,186 @@ def test_every_tiny_workload_materializes_and_deeply_reproduces(
         manifest.measured_commands
     )
     assert verify_workload_manifest(manifest_path) == manifest
+
+
+@pytest.mark.parametrize("workload_id", ("W04", "W05", "W06", "W07", "W09"))
+def test_eager_and_bulk_materialization_are_byte_identical(
+    tmp_path: Path,
+    workload_id: str,
+) -> None:
+    eager_directory = tmp_path / "eager"
+    bulk_directory = tmp_path / "bulk"
+    shape = _shape(workload_id)
+
+    eager_path, eager = materialize_workload(
+        workload_id,
+        eager_directory,
+        seed=23,
+        eager_invariant_checks=True,
+        **shape,
+    )
+    bulk_path, bulk = materialize_workload(
+        workload_id,
+        bulk_directory,
+        seed=23,
+        **shape,
+    )
+
+    assert eager == bulk
+    assert eager_path.read_bytes() == bulk_path.read_bytes()
+    assert (eager_directory / eager.stream_file).read_bytes() == (
+        bulk_directory / bulk.stream_file
+    ).read_bytes()
+    assert (
+        eager.stream_sha256,
+        eager.expected_event_digest,
+        eager.expected_final_digest,
+        eager.operation_distribution,
+        eager.after_preload_active_order_count,
+        eager.measured_start_active_order_count,
+        eager.final_active_order_count,
+        eager.expected_committed,
+        eager.expected_rejected,
+        eager.expected_events,
+    ) == (
+        bulk.stream_sha256,
+        bulk.expected_event_digest,
+        bulk.expected_final_digest,
+        bulk.operation_distribution,
+        bulk.after_preload_active_order_count,
+        bulk.measured_start_active_order_count,
+        bulk.final_active_order_count,
+        bulk.expected_committed,
+        bulk.expected_rejected,
+        bulk.expected_events,
+    )
+
+
+def _assert_router_active_identity_exact(router: ReferenceRouter) -> None:
+    expected = {
+        order_id: (order.instrument_id, order.client_id)
+        for book in router._books.values()
+        for order_id, order in book._orders.items()
+    }
+    actual = {
+        order_id: (identity.instrument_id, identity.client_id)
+        for order_id, identity in router._active.items()
+    }
+    assert actual == expected
+    router.assert_invariants()
+
+
+def test_bulk_router_projects_every_active_identity_transition_from_events() -> None:
+    router = ReferenceRouter(
+        (InstrumentConfig(1, MatchingConfig(max_active_orders=32)),),
+        check_invariants=False,
+    )
+    commands: tuple[Command, ...] = (
+        NewOrder(1, 1, 1, Side.BUY, OrderType.LIMIT, TimeInForce.GTC, 100, 1),
+        NewOrder(1, 1, 1, Side.BUY, OrderType.LIMIT, TimeInForce.GTC, 100, 1),
+        NewOrder(2, 2, 1, Side.SELL, OrderType.LIMIT, TimeInForce.GTC, 110, 1),
+        CancelOrder(1, 1, 1),
+        NewOrder(3, 3, 1, Side.BUY, OrderType.LIMIT, TimeInForce.GTC, 99, 1),
+        ReplaceOrder(3, 3, 4, 1, 98, 1),
+        NewOrder(9, 6, 1, Side.BUY, OrderType.MARKET, TimeInForce.IOC, None, 1),
+        NewOrder(9, 7, 1, Side.BUY, OrderType.LIMIT, TimeInForce.IOC, 50, 1),
+        NewOrder(9, 8, 1, Side.SELL, OrderType.MARKET, TimeInForce.IOC, None, 1),
+        CancelOrder(9, 999, 1),
+    )
+
+    for command in commands:
+        result = router.execute(command)
+        assert result.error is None
+        _assert_router_active_identity_exact(router)
+    assert router.active_order_count == 0
+
+
+@pytest.mark.parametrize(("eager", "expected_calls"), ((False, 5), (True, 85)))
+def test_materialization_invariant_check_policy_has_promised_boundaries(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    eager: bool,
+    expected_calls: int,
+) -> None:
+    calls = 0
+    original = ReferenceRouter.assert_invariants
+
+    def counted(router: ReferenceRouter) -> None:
+        nonlocal calls
+        calls += 1
+        original(router)
+
+    monkeypatch.setattr(ReferenceRouter, "assert_invariants", counted)
+    materialize_workload(
+        "W04",
+        tmp_path,
+        seed=31,
+        preload_commands=20,
+        warmup_commands=20,
+        measured_commands=40,
+        active_order_target=20,
+        eager_invariant_checks=eager,
+    )
+    assert calls == expected_calls
+
+
+def test_default_router_and_engine_remain_eager(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    router_calls = 0
+    engine_calls = 0
+    original_router = ReferenceRouter.assert_invariants
+    original_engine = ReferenceEngine.assert_invariants
+
+    def counted_router(router: ReferenceRouter) -> None:
+        nonlocal router_calls
+        router_calls += 1
+        original_router(router)
+
+    def counted_engine(engine: ReferenceEngine) -> None:
+        nonlocal engine_calls
+        engine_calls += 1
+        original_engine(engine)
+
+    monkeypatch.setattr(ReferenceRouter, "assert_invariants", counted_router)
+    monkeypatch.setattr(ReferenceEngine, "assert_invariants", counted_engine)
+    router = ReferenceRouter((InstrumentConfig(1),))
+    router.execute(NewOrder(1, 1, 1, Side.BUY, OrderType.LIMIT, TimeInForce.GTC, 100, 1))
+    router.execute(CancelOrder(1, 1, 1))
+
+    assert router_calls == 3
+    assert engine_calls == 3
+
+
+def test_bulk_materialization_detects_corruption_at_preload_boundary_and_cleans_staging(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    original = ReferenceRouter.execute
+
+    def corrupt_after_preload(
+        router: ReferenceRouter,
+        command: Command,
+    ) -> ReferenceResult:
+        result = original(router, command)
+        if router.next_sequence == 21:
+            book = router._books[1]
+            price = next(iter(book._bid_aggregates))
+            book._bid_aggregates[price] += 1
+        return result
+
+    monkeypatch.setattr(ReferenceRouter, "execute", corrupt_after_preload)
+    with pytest.raises(RuntimeError, match="cached aggregate"):
+        materialize_workload(
+            "W04",
+            tmp_path,
+            seed=37,
+            preload_commands=20,
+            warmup_commands=20,
+            measured_commands=40,
+            active_order_target=20,
+        )
+    assert tuple(tmp_path.iterdir()) == ()
 
 
 def test_w11_is_explicitly_deferred() -> None:
@@ -892,16 +1080,26 @@ def test_checked_smoke_plan_regenerates_the_exact_fixture_tree(
     tmp_path: Path,
 ) -> None:
     smoke = load_benchmark_plan(REPOSITORY / "benchmarks" / "plans" / "ci-smoke-v1.json")
+    materializer = _native_log_materializer()
+    bulk_directory = tmp_path / "bulk"
+    eager_directory = tmp_path / "eager"
     materialize_benchmark_plan(
         smoke,
-        tmp_path,
-        log_materializer=_native_log_materializer(),
+        bulk_directory,
+        log_materializer=materializer,
+    )
+    materialize_benchmark_plan(
+        smoke,
+        eager_directory,
+        log_materializer=materializer,
+        eager_invariant_checks=True,
     )
     fixture_directory = REPOSITORY / "benchmarks" / "fixtures" / "v1"
     expected = {
         path.name: path.read_bytes() for path in fixture_directory.iterdir() if path.is_file()
     }
-    actual = {path.name: path.read_bytes() for path in tmp_path.iterdir() if path.is_file()}
-    assert actual == expected
-    assert len(tuple(tmp_path.glob("w04-*.json"))) == 1
-    assert len(tuple(tmp_path.glob("w10-*.json"))) == 1
+    bulk = {path.name: path.read_bytes() for path in bulk_directory.iterdir() if path.is_file()}
+    eager = {path.name: path.read_bytes() for path in eager_directory.iterdir() if path.is_file()}
+    assert eager == bulk == expected
+    assert len(tuple(bulk_directory.glob("w04-*.json"))) == 1
+    assert len(tuple(bulk_directory.glob("w10-*.json"))) == 1
