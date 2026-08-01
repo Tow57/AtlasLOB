@@ -785,13 +785,13 @@ def _filesystem(path: Path) -> str:
         )
     except (OSError, subprocess.TimeoutExpired):
         return "unknown"
-    value = completed.stdout.strip().lower()
+    value = completed.stdout.removesuffix("\n")
     if (
         completed.returncode != 0
         or completed.stderr
         or not value
         or not value.isascii()
-        or re.fullmatch(r"[a-z0-9_.+-]+", value) is None
+        or re.fullmatch(r"[a-z0-9_.+-]+(?:/[a-z0-9_.+-]+)*", value) is None
     ):
         return "unknown"
     return value
