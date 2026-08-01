@@ -136,6 +136,12 @@ Materialization emits and verification reproduces exactly these keys:
 | `w09_primary_activity_basis_points` | W09 primary-instrument activity share, or zero. |
 | `warmup_commands` | Repeated warm-up size. |
 
+Parameter values otherwise remain limited to 256 safe ASCII measurement characters. The three
+per-instrument decimal CSV values (`actual_instrument_command_counts`, `stream_command_budgets`,
+and `w09_active_order_counts`) have a key-specific 25,231-character limit. That bound is the
+longest possible vector under the V1 limits of 4,096 instruments and 100,000,000 total commands:
+656 six-digit counts, 3,440 five-digit counts, and 4,095 commas.
+
 Verification regenerates the command sequence, compares every canonical stream line, executes
 every command through a fresh independent `ReferenceRouter`, recomputes region boundaries,
 per-instrument command counts, operation counts, outcomes, event digests, active counts, and state

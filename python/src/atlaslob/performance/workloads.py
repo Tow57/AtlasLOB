@@ -47,11 +47,13 @@ from atlaslob.multi_native import (
 )
 from atlaslob.performance.schemas import (
     BOUNDARIES,
+    MAX_WORKLOAD_COUNT_VECTOR_CHARS,
     CatalogEntry,
     WorkloadManifest,
     canonical_json_bytes,
     file_sha256,
     read_canonical_document,
+    validate_workload_parameters,
     workload_from_dict,
     workload_to_dict,
 )
@@ -350,6 +352,70 @@ def load_benchmark_plan(path: Path) -> BenchmarkPlan:
     return plan
 
 
+def preflight_benchmark_plan(plan: BenchmarkPlan | Path) -> None:
+    """Validate every unique resolved manifest shape without generating streams."""
+
+    resolved = load_benchmark_plan(plan) if isinstance(plan, Path) else plan
+    seen: set[tuple[str, int, int, int, int, int, int, int]] = set()
+    for point in resolved.points:
+        key = _plan_point_shape_key(point)
+        if key in seen:
+            continue
+        seen.add(key)
+        command_count = point.preload_commands + point.warmup_commands + point.measured_commands
+        spec = build_workload_spec(
+            point.workload_id,
+            command_count=command_count,
+            instrument_count=point.instrument_count,
+            active_order_target=point.active_order_target,
+            sweep_depth=point.sweep_depth,
+        )
+        maximum_counts = _maximal_count_vector(point.instrument_count, command_count)
+        parameters = _resolved_parameters(
+            point.workload_id,
+            spec,
+            active_order_target=point.active_order_target,
+            instrument_count=point.instrument_count,
+            sweep_depth=point.sweep_depth,
+            preload_commands=point.preload_commands,
+            warmup_commands=point.warmup_commands,
+            measured_commands=point.measured_commands,
+            after_preload_active_order_count=point.active_order_target,
+            measured_start_active_order_count=point.active_order_target,
+            actual_instrument_command_counts=maximum_counts,
+        )
+        validate_workload_parameters(parameters)
+
+
+def _maximal_count_vector(entry_count: int, total_count: int) -> tuple[int, ...]:
+    """Return a bounded count vector with the longest possible decimal CSV."""
+
+    if not 1 <= entry_count <= MAX_BENCHMARK_INSTRUMENTS:
+        raise ValueError("count-vector entry count is outside the benchmark bound")
+    if not 0 <= total_count <= MAX_BENCHMARK_COMMANDS:
+        raise ValueError("count-vector total is outside the benchmark bound")
+    counts = [0] * entry_count
+    remaining = total_count
+    lower_threshold = 0
+    upper_threshold = 10
+    while remaining:
+        increment = upper_threshold - lower_threshold
+        upgraded = min(entry_count, remaining // increment)
+        for index in range(upgraded):
+            counts[index] = upper_threshold
+        remaining -= upgraded * increment
+        if upgraded < entry_count:
+            counts[0] += remaining
+            remaining = 0
+        else:
+            lower_threshold = upper_threshold
+            upper_threshold *= 10
+    result = tuple(counts)
+    if len(",".join(str(count) for count in result)) > MAX_WORKLOAD_COUNT_VECTOR_CHARS:
+        raise ValueError("resolved count vector exceeds the workload schema bound")
+    return result
+
+
 def materialize_benchmark_plan(
     plan: BenchmarkPlan | Path,
     output_directory: Path,
@@ -373,6 +439,8 @@ def materialize_benchmark_plan(
         raise ValueError("a native log materializer is required exactly when the plan contains W10")
     if log_materializer is not None:
         _require_log_materializer(log_materializer)
+
+    preflight_benchmark_plan(resolved)
 
     artifacts: dict[
         tuple[str, int, int, int, int, int, int, int],
@@ -843,7 +911,15 @@ def materialize_workload(
     return manifest_path, manifest
 
 
-def verify_workload_manifest(path: Path) -> WorkloadManifest:
+def verify_workload_manifest(
+    path: Path,
+    *,
+    eager_invariant_checks: bool = True,
+) -> WorkloadManifest:
+    """Deeply reproduce a workload, with eager oracle checks by default."""
+
+    if not isinstance(eager_invariant_checks, bool):
+        raise TypeError("eager_invariant_checks must be a bool")
     manifest = read_canonical_document(path, workload_from_dict)
     if manifest.generator_version != BENCHMARK_GENERATOR_VERSION:
         raise ValueError("unsupported benchmark workload generator version")
@@ -896,7 +972,11 @@ def verify_workload_manifest(path: Path) -> WorkloadManifest:
         warmup_commands=manifest.warmup_commands,
         measured_commands=manifest.measured_commands,
     )
-    router = ReferenceRouter(spec.catalog, spec.engine)
+    router = ReferenceRouter(
+        spec.catalog,
+        spec.engine,
+        check_invariants=eager_invariant_checks,
+    )
     expected_empty_state_digest = router.state_digest()
     preload_event_hasher = hashlib.sha256()
     event_hasher = hashlib.sha256()
@@ -946,6 +1026,7 @@ def verify_workload_manifest(path: Path) -> WorkloadManifest:
                     after_preload_active_order_count = router.active_order_count
                     expected_preload_state_digest = router.state_digest()
                 if completed_commands == manifest.preload_commands + manifest.warmup_commands:
+                    router.assert_invariants()
                     measured_start_active_order_count = router.active_order_count
                 if command_index < manifest.preload_commands:
                     if result.error is not None:

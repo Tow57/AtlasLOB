@@ -10,14 +10,19 @@ from types import SimpleNamespace
 import pytest
 from atlaslob.performance import environment as environment_module
 from atlaslob.performance.schemas import (
+    MAX_MEASUREMENT_VALUE_CHARS,
+    MAX_WORKLOAD_COUNT_VECTOR_CHARS,
     CatalogEntry,
     EnvironmentManifest,
     Observation,
+    canonical_json_bytes,
     environment_from_dict,
     observation_from_dict,
     observation_to_dict,
     parse_canonical_document,
     read_canonical_document,
+    workload_from_dict,
+    workload_to_dict,
     write_canonical_document,
 )
 from atlaslob.performance.workloads import materialize_workload
@@ -307,6 +312,54 @@ def test_schema_structural_bounds_fail_before_large_evidence_is_accepted(
         replace(
             observation,
             measurement_parameters=tuple((f"dimension-{index:03d}", "1") for index in range(65)),
+        )
+
+
+def test_workload_count_vectors_use_the_derived_key_specific_bound(
+    tmp_path: Path,
+) -> None:
+    _, manifest = materialize_workload(
+        "W04",
+        tmp_path,
+        seed=17,
+        preload_commands=20,
+        warmup_commands=20,
+        measured_commands=40,
+        active_order_target=20,
+    )
+    maximal_value = ",".join(("100000",) * 656 + ("10000",) * 3_440)
+    assert len(maximal_value) == MAX_WORKLOAD_COUNT_VECTOR_CHARS == 25_231
+    assert sum(int(value) for value in maximal_value.split(",")) == 100_000_000
+    assert len(maximal_value.split(",")) == 4_096
+
+    accepted_parameters = tuple(
+        (name, maximal_value if name == "actual_instrument_command_counts" else value)
+        for name, value in manifest.parameters
+    )
+    accepted = replace(manifest, parameters=accepted_parameters)
+    encoded = canonical_json_bytes(workload_to_dict(accepted))
+    assert parse_canonical_document(encoded, workload_from_dict) == accepted
+
+    with pytest.raises(ValueError, match="actual_instrument_command_counts"):
+        replace(
+            manifest,
+            parameters=tuple(
+                (name, maximal_value + "0" if name == "actual_instrument_command_counts" else value)
+                for name, value in manifest.parameters
+            ),
+        )
+    with pytest.raises(ValueError, match="active_order_target"):
+        replace(
+            manifest,
+            parameters=tuple(
+                (
+                    name,
+                    "x" * (MAX_MEASUREMENT_VALUE_CHARS + 1)
+                    if name == "active_order_target"
+                    else value,
+                )
+                for name, value in manifest.parameters
+            ),
         )
 
 

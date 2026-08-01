@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import os
+from collections import Counter
+from dataclasses import replace
 from pathlib import Path
 from typing import NotRequired, TypedDict
 
@@ -21,7 +23,9 @@ from atlaslob.domain import (
 from atlaslob.performance import workloads as workloads_module
 from atlaslob.performance.schemas import (
     canonical_json_bytes,
+    validate_workload_parameters,
     workload_to_dict,
+    write_canonical_document,
 )
 from atlaslob.performance.workloads import (
     BENCHMARK_GENERATOR_VERSION,
@@ -32,10 +36,13 @@ from atlaslob.performance.workloads import (
     BenchmarkPlan,
     BenchmarkPlanPoint,
     _iter_benchmark_commands,
+    _maximal_count_vector,
+    _resolved_parameters,
     build_workload_spec,
     load_benchmark_plan,
     materialize_benchmark_plan,
     materialize_workload,
+    preflight_benchmark_plan,
     verify_workload_manifest,
 )
 from atlaslob.reference import ReferenceEngine
@@ -341,6 +348,38 @@ def test_materialization_invariant_check_policy_has_promised_boundaries(
         active_order_target=20,
         eager_invariant_checks=eager,
     )
+    assert calls == expected_calls
+
+
+@pytest.mark.parametrize(("eager", "expected_calls"), ((False, 5), (None, 85)))
+def test_deep_verification_policy_defaults_to_eager_and_checks_bulk_boundaries(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    eager: bool | None,
+    expected_calls: int,
+) -> None:
+    manifest_path, _ = materialize_workload(
+        "W04",
+        tmp_path,
+        seed=43,
+        preload_commands=20,
+        warmup_commands=20,
+        measured_commands=40,
+        active_order_target=20,
+    )
+    calls = 0
+    original = ReferenceRouter.assert_invariants
+
+    def counted(router: ReferenceRouter) -> None:
+        nonlocal calls
+        calls += 1
+        original(router)
+
+    monkeypatch.setattr(ReferenceRouter, "assert_invariants", counted)
+    if eager is None:
+        verify_workload_manifest(manifest_path)
+    else:
+        verify_workload_manifest(manifest_path, eager_invariant_checks=eager)
     assert calls == expected_calls
 
 
@@ -702,6 +741,120 @@ def test_w09_catalog_is_bounded_at_4096_instruments() -> None:
             instrument_count=MAX_BENCHMARK_INSTRUMENTS + 1,
             active_order_target=MAX_BENCHMARK_INSTRUMENTS + 1,
         )
+
+
+def test_official_w09_4096_parameters_fit_the_bounded_schema() -> None:
+    plan = load_benchmark_plan(REPOSITORY / "benchmarks" / "plans" / "phase5-study-v1.json")
+    point = next(point for point in plan.points if point.point_id == "study-w09-i4096")
+    command_count = point.preload_commands + point.warmup_commands + point.measured_commands
+    spec = build_workload_spec(
+        point.workload_id,
+        command_count=command_count,
+        instrument_count=point.instrument_count,
+        active_order_target=point.active_order_target,
+        sweep_depth=point.sweep_depth,
+    )
+    actual = Counter(
+        command.instrument_id
+        for command in _iter_benchmark_commands(
+            point.workload_id,
+            spec,
+            point.seed,
+            active_order_target=point.active_order_target,
+            sweep_depth=point.sweep_depth,
+            preload_commands=point.preload_commands,
+            warmup_commands=point.warmup_commands,
+            measured_commands=point.measured_commands,
+        )
+    )
+    actual_counts = tuple(
+        actual[instrument_id] for instrument_id in range(1, point.instrument_count + 1)
+    )
+    parameters = _resolved_parameters(
+        point.workload_id,
+        spec,
+        active_order_target=point.active_order_target,
+        instrument_count=point.instrument_count,
+        sweep_depth=point.sweep_depth,
+        preload_commands=point.preload_commands,
+        warmup_commands=point.warmup_commands,
+        measured_commands=point.measured_commands,
+        after_preload_active_order_count=point.active_order_target,
+        measured_start_active_order_count=point.active_order_target,
+        actual_instrument_command_counts=actual_counts,
+    )
+    values = dict(parameters)
+
+    assert sum(actual_counts) == command_count == 2_327_680
+    assert len(values["actual_instrument_command_counts"]) == 16_387
+    assert len(values["stream_command_budgets"]) == 16_387
+    assert len(values["w09_active_order_counts"]) == 12_291
+    validate_workload_parameters(parameters)
+
+
+def test_phase5_study_manifest_preflight_generates_no_stream_commands(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def forbid_generation(*_args: object, **_kwargs: object) -> None:
+        raise AssertionError("preflight generated stream commands")
+
+    monkeypatch.setattr(workloads_module, "_iter_benchmark_commands", forbid_generation)
+    preflight_benchmark_plan(REPOSITORY / "benchmarks" / "plans" / "phase5-study-v1.json")
+    maximal = _maximal_count_vector(4_096, 100_000_000)
+    assert len(maximal) == 4_096
+    assert sum(maximal) == 100_000_000
+    assert len(",".join(str(count) for count in maximal)) == 25_231
+
+
+def test_w09_maximum_catalog_round_trips_and_deeply_verifies_exact_counts(
+    tmp_path: Path,
+) -> None:
+    manifest_path, manifest = materialize_workload(
+        "W09",
+        tmp_path,
+        seed=41,
+        preload_commands=4_096,
+        warmup_commands=2,
+        measured_commands=2,
+        active_order_target=4_096,
+        instrument_count=4_096,
+    )
+    verified = verify_workload_manifest(manifest_path, eager_invariant_checks=False)
+    assert verified == manifest
+    actual_counts = tuple(
+        int(count)
+        for count in dict(manifest.parameters)["actual_instrument_command_counts"].split(",")
+    )
+    assert len(actual_counts) == 4_096
+    assert sum(actual_counts) == manifest.command_count
+
+    tampered_counts = list(actual_counts)
+    tampered_counts[0] += 1
+    tampered_counts[1] -= 1
+    tampered_value = ",".join(str(count) for count in tampered_counts)
+    tampered = replace(
+        manifest,
+        parameters=tuple(
+            (name, tampered_value if name == "actual_instrument_command_counts" else value)
+            for name, value in manifest.parameters
+        ),
+    )
+    tampered_path = tmp_path / "tampered.json"
+    write_canonical_document(tampered_path, tampered)
+    with pytest.raises(ValueError, match="resolved parameters are not reproducible"):
+        verify_workload_manifest(tampered_path, eager_invariant_checks=False)
+    assert (tmp_path / manifest.stream_file).read_bytes() == (
+        tmp_path / verified.stream_file
+    ).read_bytes()
+    assert (
+        verified.stream_sha256,
+        verified.expected_event_digest,
+        verified.expected_final_digest,
+    ) == (
+        manifest.stream_sha256,
+        manifest.expected_event_digest,
+        manifest.expected_final_digest,
+    )
 
 
 def test_w10_is_an_empty_to_empty_replay_source_with_native_log(

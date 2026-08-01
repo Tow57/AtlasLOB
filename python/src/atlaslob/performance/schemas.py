@@ -30,6 +30,11 @@ MAX_CATALOG_ENTRIES: Final = 4_096
 MAX_COMMANDS_PER_WORKLOAD: Final = 100_000_000
 MAX_OPERATION_KINDS: Final = 64
 MAX_PARAMETERS: Final = 64
+MAX_MEASUREMENT_VALUE_CHARS: Final = 256
+# A decimal CSV with at most 4,096 entries whose nonnegative values sum to at
+# most 100,000,000 is longest when 656 entries are 100,000 and the remaining
+# 3,440 are 10,000: 656 * 6 + 3,440 * 5 + 4,095 commas.
+MAX_WORKLOAD_COUNT_VECTOR_CHARS: Final = 25_231
 MAX_LATENCY_SAMPLES: Final = 200_000
 MAX_AFFINITY_CPUS: Final = 16_384
 MAX_COMPILER_FLAGS: Final = 16_384
@@ -77,7 +82,15 @@ BENCHMARK_WORKLOAD_IDS: Final = frozenset(
 _DIGEST = re.compile(r"[0-9a-f]{64}\Z")
 _IDENTIFIER = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,127}\Z")
 _HOST_ALIAS = re.compile(r"(?=.{1,64}\Z)[a-z0-9]+(?:-[a-z0-9]+)*\Z")
-_MEASUREMENT_VALUE = re.compile(r"[A-Za-z0-9_.+,-]{1,256}\Z")
+_MEASUREMENT_VALUE = re.compile(r"[A-Za-z0-9_.+,-]+\Z")
+_COUNT_VECTOR_VALUE = re.compile(r"(?:0|[1-9][0-9]*)(?:,(?:0|[1-9][0-9]*))*\Z")
+_WORKLOAD_COUNT_VECTOR_PARAMETERS: Final = frozenset(
+    {
+        "actual_instrument_command_counts",
+        "stream_command_budgets",
+        "w09_active_order_counts",
+    }
+)
 _DECIMAL = re.compile(r"(?:0|[1-9][0-9]*)\Z")
 _RATE = re.compile(r"(?:0|[1-9][0-9]*)(?:\.[0-9]+)?\Z")
 _IPV4 = re.compile(r"(?<![0-9])(?:[0-9]{1,3}\.){3}[0-9]{1,3}(?![0-9])")
@@ -165,7 +178,7 @@ class WorkloadManifest:
             raise ValueError("operation names must be nonempty ASCII")
         for name, count in self.operation_distribution:
             _require_uint(f"operation_distribution.{name}", count, U64_MAX)
-        _require_parameter_pairs("parameters", self.parameters)
+        validate_workload_parameters(self.parameters)
         for count_name, count_value in (
             ("preload_commands", self.preload_commands),
             ("warmup_commands", self.warmup_commands),
@@ -2879,11 +2892,28 @@ def _require_parameter_pairs(name: str, value: tuple[tuple[str, str], ...]) -> N
         raise ValueError(f"{name} must have unique sorted names")
     for parameter_name, parameter_value in value:
         _require_identifier(f"{name} name", parameter_name)
+        maximum_length = (
+            MAX_WORKLOAD_COUNT_VECTOR_CHARS
+            if name == "parameters" and parameter_name in _WORKLOAD_COUNT_VECTOR_PARAMETERS
+            else MAX_MEASUREMENT_VALUE_CHARS
+        )
         if (
             not isinstance(parameter_value, str)
+            or not 1 <= len(parameter_value) <= maximum_length
             or _MEASUREMENT_VALUE.fullmatch(parameter_value) is None
+            or (
+                name == "parameters"
+                and parameter_name in _WORKLOAD_COUNT_VECTOR_PARAMETERS
+                and _COUNT_VECTOR_VALUE.fullmatch(parameter_value) is None
+            )
         ):
             raise ValueError(f"{name}.{parameter_name} is not a safe measurement value")
+
+
+def validate_workload_parameters(value: tuple[tuple[str, str], ...]) -> None:
+    """Validate bounded canonical workload parameter names and values."""
+
+    _require_parameter_pairs("parameters", value)
 
 
 def _require_safe_relative_path(name: str, value: str) -> None:
