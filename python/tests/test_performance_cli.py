@@ -73,6 +73,27 @@ def test_run_suite_parser_exposes_every_python_output_boundary(mode: str) -> Non
     assert options.batch_size == 1024
 
 
+def test_run_suite_parser_exposes_opt_in_native_diagnostic_phases() -> None:
+    options = cli.parser().parse_args(
+        (
+            "run-suite",
+            "--manifest",
+            "workload.json",
+            "--output",
+            "observations",
+            "--runner",
+            "runner",
+            "--environment",
+            "environment.json",
+            "--suite-label",
+            "native01",
+            "--diagnostic-phases",
+        )
+    )
+
+    assert options.diagnostic_phases is True
+
+
 def test_candidate_wheel_requires_candidate_runner(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],

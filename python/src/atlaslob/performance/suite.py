@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import base64
+import hashlib
+import signal
 import subprocess
 import threading
 import time
@@ -62,6 +65,8 @@ _BOUNDARY_BY_MODE = {
     "python-columns": "python_columns",
     "python-summary": "python_summary",
 }
+_DIAGNOSTIC_PHASE_PREFIX = b"ATLAS_DIAGNOSTIC_PHASE "
+_DIAGNOSTIC_EXCERPT_BYTES = 512
 
 
 @dataclass(frozen=True, slots=True)
@@ -97,6 +102,7 @@ def run_suite(
     block_start: int = 1,
     batch_size: int | None = None,
     timeout_seconds: int = 900,
+    diagnostic_phases: bool = False,
 ) -> tuple[Path, ...]:
     """Deeply verify an untrusted manifest path, then launch its suite."""
 
@@ -111,6 +117,7 @@ def run_suite(
         block_start=block_start,
         batch_size=batch_size,
         timeout_seconds=timeout_seconds,
+        diagnostic_phases=diagnostic_phases,
         verified_workload=None,
     )
 
@@ -127,6 +134,7 @@ def run_verified_suite(
     block_start: int = 1,
     batch_size: int | None = None,
     timeout_seconds: int = 900,
+    diagnostic_phases: bool = False,
 ) -> tuple[Path, ...]:
     """Revalidate a verified capability byte-for-byte, then launch its suite."""
 
@@ -141,6 +149,7 @@ def run_verified_suite(
         block_start=block_start,
         batch_size=batch_size,
         timeout_seconds=timeout_seconds,
+        diagnostic_phases=diagnostic_phases,
         verified_workload=workload,
     )
 
@@ -157,6 +166,7 @@ def _run_suite(
     block_start: int,
     batch_size: int | None,
     timeout_seconds: int,
+    diagnostic_phases: bool,
     verified_workload: VerifiedWorkload | None,
 ) -> tuple[Path, ...]:
     """Launch one runner process per retained observation."""
@@ -167,6 +177,8 @@ def _run_suite(
     if python_mode:
         if batch_size not in {1, 64, 1024, 65_536}:
             raise ValueError("Python suites require a frozen batch size")
+        if diagnostic_phases:
+            raise ValueError("diagnostic phases are available only for native runners")
     elif batch_size is not None:
         raise ValueError("batch_size is only valid for Python suites")
     if (
@@ -265,6 +277,7 @@ def _run_suite(
                 run_label,
                 batch_size,
                 timeout_seconds,
+                diagnostic_phases,
             )
         except KeyboardInterrupt:
             observation = _failed_observation(
@@ -423,6 +436,7 @@ def _run_once(
     run_label: str,
     batch_size: int | None,
     timeout_seconds: int,
+    diagnostic_phases: bool = False,
 ) -> Observation:
     common_arguments = [
         "--workload",
@@ -528,8 +542,13 @@ def _run_once(
             )
         if mode != "allocation":
             arguments.extend(("--mode", mode))
+        if diagnostic_phases:
+            arguments.extend(("--diagnostic-phases", "yes"))
     completed, process_failure = _run_bounded(arguments, timeout_seconds)
-    if completed is None:
+    phase: str | None = None
+    if completed is not None and diagnostic_phases:
+        completed, phase = _strip_diagnostic_phases(completed)
+    if process_failure is not None or completed is None:
         return _failed_observation(
             boundary,
             manifest,
@@ -543,7 +562,27 @@ def _run_once(
             position,
             run_label,
             batch_size,
-            process_failure or "runner could not be launched",
+            _process_failure_reason(
+                process_failure or "runner could not be launched",
+                completed,
+                phase,
+            ),
+        )
+    if completed.returncode < 0:
+        return _failed_observation(
+            boundary,
+            manifest,
+            manifest_document_digest,
+            suite_label,
+            environment,
+            environment_digest,
+            executable_digest,
+            runner.variant,
+            block,
+            position,
+            run_label,
+            batch_size,
+            _process_failure_reason("runner terminated by signal", completed, phase),
         )
     try:
         observation = parse_canonical_document(completed.stdout, observation_from_dict)
@@ -561,7 +600,7 @@ def _run_once(
             position,
             run_label,
             batch_size,
-            "runner produced invalid evidence",
+            _process_failure_reason("runner produced invalid evidence", completed, phase),
         )
     contradiction = (
         bool(completed.stderr)
@@ -572,9 +611,73 @@ def _run_once(
         observation = replace(
             observation,
             valid=False,
-            failure_reason="runner process status contradicts its evidence",
+            failure_reason=_process_failure_reason(
+                "runner process status contradicts its evidence",
+                completed,
+                phase,
+            ),
         )
     return observation
+
+
+def _strip_diagnostic_phases(capture: _ProcessCapture) -> tuple[_ProcessCapture, str | None]:
+    phases: list[str] = []
+    residual = bytearray()
+    for line in capture.stderr.splitlines(keepends=True):
+        token = line.rstrip(b"\r\n")
+        if token.startswith(_DIAGNOSTIC_PHASE_PREFIX):
+            raw_phase = token.removeprefix(_DIAGNOSTIC_PHASE_PREFIX)
+            try:
+                phase = raw_phase.decode("ascii")
+            except UnicodeDecodeError:
+                residual.extend(line)
+                continue
+            if phase and all(character.isalnum() or character in "-_" for character in phase):
+                phases.append(phase)
+                continue
+        residual.extend(line)
+    return replace(capture, stderr=bytes(residual)), phases[-1] if phases else None
+
+
+def _process_failure_reason(
+    reason: str,
+    capture: _ProcessCapture | None,
+    phase: str | None,
+) -> str:
+    details = [reason]
+    if phase is not None:
+        details.append(f"phase={phase}")
+    if capture is None:
+        details.append("status=unavailable")
+        return "; ".join(details)
+    if capture.returncode < 0:
+        try:
+            signal_name = signal.Signals(-capture.returncode).name
+        except ValueError:
+            signal_name = f"SIG{-capture.returncode}"
+        details.append(f"status=signal:{signal_name}")
+    else:
+        details.append(f"status=exit:{capture.returncode}")
+    details.extend(_captured_stream_details("stdout", capture.stdout))
+    details.extend(_captured_stream_details("stderr", capture.stderr))
+    return "; ".join(details)
+
+
+def _captured_stream_details(name: str, payload: bytes) -> tuple[str, ...]:
+    details = (
+        f"{name}_bytes={len(payload)}",
+        f"{name}_sha256={hashlib.sha256(payload).hexdigest()}",
+    )
+    if not payload:
+        return details
+    prefix = payload[:_DIAGNOSTIC_EXCERPT_BYTES]
+    encoded = base64.b64encode(prefix).decode("ascii")
+    truncated = "yes" if len(payload) > len(prefix) else "no"
+    return (
+        *details,
+        f"{name}_prefix_b64={encoded}",
+        f"{name}_truncated={truncated}",
+    )
 
 
 def _run_bounded(
@@ -648,18 +751,16 @@ def _run_bounded(
         thread.join(timeout=1)
     process.stdout.close()
     process.stderr.close()
-    if any(thread.is_alive() for thread in threads):
-        return None, "runner output could not be captured"
-    if failure is not None or exceeded.is_set():
-        return None, failure or "runner output could not be captured"
-    return (
-        _ProcessCapture(
-            returncode=process.returncode,
-            stdout=bytes(outputs[0]),
-            stderr=bytes(outputs[1]),
-        ),
-        None,
+    capture = _ProcessCapture(
+        returncode=process.returncode,
+        stdout=bytes(outputs[0]),
+        stderr=bytes(outputs[1]),
     )
+    if any(thread.is_alive() for thread in threads):
+        return capture, "runner output could not be captured"
+    if failure is not None or exceeded.is_set():
+        return capture, failure or "runner output could not be captured"
+    return capture, None
 
 
 def _failed_observation(

@@ -444,7 +444,9 @@ class MultiInstrumentEngine::Impl final {
     if (target == nullptr) {
       return reject(domain::RejectReason::unknown_instrument, order.order_id);
     }
-    if (!target->book.validate_invariants() || target->book.has_pending_preparation()) {
+    if ((core::detail::expensive_internal_invariant_checks_enabled() &&
+         !target->book.validate_invariants()) ||
+        target->book.has_pending_preparation()) {
       return {};
     }
     if (order.quantity > target->config.matching.max_order_quantity) {
@@ -471,7 +473,9 @@ class MultiInstrumentEngine::Impl final {
     if (target == nullptr) {
       return reject(domain::RejectReason::unknown_instrument, order.order_id);
     }
-    if (!target->book.validate_invariants() || target->book.has_pending_preparation()) {
+    if ((core::detail::expensive_internal_invariant_checks_enabled() &&
+         !target->book.validate_invariants()) ||
+        target->book.has_pending_preparation()) {
       return {};
     }
 
@@ -499,7 +503,9 @@ class MultiInstrumentEngine::Impl final {
     if (target == nullptr) {
       return reject(domain::RejectReason::unknown_instrument, order.old_order_id);
     }
-    if (!target->book.validate_invariants() || target->book.has_pending_preparation()) {
+    if ((core::detail::expensive_internal_invariant_checks_enabled() &&
+         !target->book.validate_invariants()) ||
+        target->book.has_pending_preparation()) {
       return {};
     }
     if (order.new_quantity > target->config.matching.max_order_quantity) {
@@ -526,7 +532,9 @@ class MultiInstrumentEngine::Impl final {
   }
 
   [[nodiscard]] bool valid_target(const BookEntry* target) const noexcept {
-    return target != nullptr && target->book.validate_invariants() &&
+    return target != nullptr &&
+           (!core::detail::expensive_internal_invariant_checks_enabled() ||
+            target->book.validate_invariants()) &&
            !target->book.has_pending_preparation();
   }
 
@@ -957,7 +965,9 @@ class core::PreparedMultiInstrumentCommand::Impl final {
     auto* const owner = owner_;
     owner_->preparation_active_ = false;
     owner_ = nullptr;
-    owner_invariants_after_release_ = owner->validate_invariants();
+    owner_invariants_after_release_ =
+        !core::detail::expensive_internal_invariant_checks_enabled() ||
+        owner->validate_invariants();
   }
 
   MultiInstrumentEngine::Impl* owner_{};

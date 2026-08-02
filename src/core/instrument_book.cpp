@@ -79,7 +79,8 @@ namespace {
 
 [[nodiscard]] InstrumentBookStatus validate_append_target(const PriceLevel& target,
                                                           const OrderNode& node) noexcept {
-  if (!target.validate_invariants()) {
+  if (detail::expensive_internal_invariant_checks_enabled() &&
+      !target.validate_invariants()) {
     return make_status(InstrumentBookError::book_invariant_violation);
   }
   if (target.price() != node.price()) {
@@ -111,7 +112,8 @@ namespace {
   if (target.price() != old_order.price() || old_order.price_level() != &target) {
     return validate_append_target(target, residual);
   }
-  if (!target.validate_invariants()) {
+  if (detail::expensive_internal_invariant_checks_enabled() &&
+      !target.validate_invariants()) {
     return make_status(InstrumentBookError::book_invariant_violation);
   }
   if (target.price() != residual.price()) {
@@ -281,7 +283,8 @@ RestOrderResult InstrumentBook::PreparedRest::commit() noexcept {
     };
   }
   if (owner_->pending_node_ != node_ || owner_->pending_level_ != staging_level_.get() ||
-      !owner_->validate_invariants()) {
+      (detail::expensive_internal_invariant_checks_enabled() &&
+       !owner_->validate_invariants())) {
     std::terminate();
   }
 
@@ -374,7 +377,7 @@ InstrumentBook::PreparedRest InstrumentBook::prepare_rest_impl(const OrderNodeSp
   if (!spec_status) {
     return PreparedRest{spec_status};
   }
-  if (!validate_invariants()) {
+  if (detail::expensive_internal_invariant_checks_enabled() && !validate_invariants()) {
     return PreparedRest{make_status(InstrumentBookError::book_invariant_violation)};
   }
   if (pending_node_ != nullptr || pending_level_ != nullptr) {
@@ -508,7 +511,7 @@ RestOrderResult InstrumentBook::rest(const OrderNodeSpec& spec) {
   if (!spec_status) {
     return {.node = nullptr, .status = spec_status};
   }
-  if (!validate_invariants()) {
+  if (detail::expensive_internal_invariant_checks_enabled() && !validate_invariants()) {
     return {
         .node = nullptr,
         .status = make_status(InstrumentBookError::book_invariant_violation),
@@ -553,7 +556,7 @@ const OrderNode* InstrumentBook::find(domain::OrderId order_id) const noexcept {
 }
 
 InstrumentBookStatus InstrumentBook::preflight_node(const OrderNode& node) const noexcept {
-  if (!validate_invariants()) {
+  if (detail::expensive_internal_invariant_checks_enabled() && !validate_invariants()) {
     return make_status(InstrumentBookError::book_invariant_violation);
   }
   if (!storage_.owns(node)) {
@@ -583,7 +586,8 @@ InstrumentBookStatus InstrumentBook::preflight_node(const OrderNode& node) const
   if (expected_level != level || level->price() != node.price()) {
     return make_status(InstrumentBookError::price_level_mismatch);
   }
-  if (!level->validate_invariants()) {
+  if (detail::expensive_internal_invariant_checks_enabled() &&
+      !level->validate_invariants()) {
     return make_status(InstrumentBookError::book_invariant_violation);
   }
 
@@ -668,7 +672,7 @@ RemoveOrderResult InstrumentBook::remove_prevalidated(OrderNode& node) noexcept 
 }
 
 RemoveOrderResult InstrumentBook::cancel(domain::OrderId order_id) noexcept {
-  if (!validate_invariants()) {
+  if (detail::expensive_internal_invariant_checks_enabled() && !validate_invariants()) {
     return {
         .order = {},
         .status = make_status(InstrumentBookError::book_invariant_violation),
@@ -699,7 +703,7 @@ PrevalidatedBatchStatus InstrumentBook::apply_prevalidated_batch(
     };
   };
 
-  if (!validate_invariants()) {
+  if (detail::expensive_internal_invariant_checks_enabled() && !validate_invariants()) {
     return fail(PrevalidatedBatchError::book_invariant_violation);
   }
 
@@ -821,7 +825,7 @@ PrevalidatedBatchStatus InstrumentBook::apply_prevalidated_batch(
   }
 
   // This is deliberately the only whole-book invariant check after mutation.
-  if (!validate_invariants()) {
+  if (detail::expensive_internal_invariant_checks_enabled() && !validate_invariants()) {
     std::terminate();
   }
   return {};
@@ -869,7 +873,7 @@ PrevalidatedBatchStatus InstrumentBook::apply_prevalidated_replace_batch(
     return {};
   };
 
-  if (!validate_invariants()) {
+  if (detail::expensive_internal_invariant_checks_enabled() && !validate_invariants()) {
     return fail(PrevalidatedBatchError::book_invariant_violation);
   }
 
@@ -994,7 +998,7 @@ PrevalidatedBatchStatus InstrumentBook::apply_prevalidated_replace_batch(
     static_cast<void>(commit_prepared_no_check(*prepared_rest));
   }
 
-  if (!validate_invariants()) {
+  if (detail::expensive_internal_invariant_checks_enabled() && !validate_invariants()) {
     std::terminate();
   }
   return {};

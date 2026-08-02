@@ -162,7 +162,8 @@ class BookSide final {
       if (level_->empty()) {
         return BookSideError::prepared_level_empty;
       }
-      if (!level_->validate_invariants()) {
+      if (detail::expensive_internal_invariant_checks_enabled() &&
+          !level_->validate_invariants()) {
         return BookSideError::level_invariant_violation;
       }
 
@@ -246,7 +247,8 @@ class BookSide final {
       if (level()->empty()) {
         return BookSideError::prepared_level_empty;
       }
-      if (!level()->validate_invariants()) {
+      if (detail::expensive_internal_invariant_checks_enabled() &&
+          !level()->validate_invariants()) {
         return BookSideError::level_invariant_violation;
       }
       if (owner_->levels_.contains(node_.key())) {
@@ -356,7 +358,9 @@ class BookSide final {
 
     if (const auto position = levels_.find(price); position != levels_.end()) {
       if (position->second == nullptr || position->second->price() != price ||
-          position->second->empty() || !position->second->validate_invariants()) {
+          position->second->empty() ||
+          (detail::expensive_internal_invariant_checks_enabled() &&
+           !position->second->validate_invariants())) {
         return PreparedLevel{nullptr, nullptr, false, BookSideError::level_invariant_violation};
       }
       return PreparedLevel{this, position->second.get(), false, BookSideError::none};
@@ -367,7 +371,9 @@ class BookSide final {
     const auto [position, inserted] = levels_.try_emplace(price, std::move(level));
     if (!inserted) {
       if (position->second == nullptr || position->second->price() != price ||
-          position->second->empty() || !position->second->validate_invariants()) {
+          position->second->empty() ||
+          (detail::expensive_internal_invariant_checks_enabled() &&
+           !position->second->validate_invariants())) {
         return PreparedLevel{nullptr, nullptr, false, BookSideError::level_invariant_violation};
       }
       return PreparedLevel{this, position->second.get(), false, BookSideError::none};
@@ -379,7 +385,8 @@ class BookSide final {
     if (price.value() <= 0) {
       return DetachedLevel{nullptr, {}, BookSideError::invalid_price};
     }
-    if (!validate_invariants()) {
+    if (detail::expensive_internal_invariant_checks_enabled() &&
+        !validate_invariants()) {
       return DetachedLevel{nullptr, {}, BookSideError::level_invariant_violation};
     }
 
@@ -404,7 +411,8 @@ class BookSide final {
     if (position->second.get() != &level) {
       return BookSideError::level_identity_mismatch;
     }
-    if (!level.validate_invariants()) {
+    if (detail::expensive_internal_invariant_checks_enabled() &&
+        !level.validate_invariants()) {
       return BookSideError::level_invariant_violation;
     }
     if (!level.empty()) {

@@ -151,20 +151,87 @@ def _manifest(tmp_path: Path) -> Path:
     )[0]
 
 
+def _run_once_with_capture(
+    monkeypatch: pytest.MonkeyPatch,
+    manifest_path: Path,
+    environment: EnvironmentManifest,
+    environment_digest: str,
+    capture: suite._ProcessCapture,
+    *,
+    process_failure: str | None = None,
+    diagnostic_phases: bool = False,
+) -> Observation:
+    from atlaslob.performance.workloads import verify_workload_manifest
+
+    manifest = verify_workload_manifest(manifest_path)
+    monkeypatch.setattr(
+        suite,
+        "_run_bounded",
+        lambda *_: (capture, process_failure),
+    )
+    return suite._run_once(
+        Runner(
+            manifest_path.parent / "runner", manifest_path.parent / "environment.json", "standalone"
+        ),
+        environment,
+        environment_digest,
+        environment.binary_sha256,
+        manifest,
+        file_sha256(manifest_path),
+        manifest_path.parent / manifest.stream_file,
+        "diagnostic01",
+        "throughput",
+        0,
+        0,
+        "diagnostic01-run",
+        None,
+        10,
+        diagnostic_phases,
+    )
+
+
 def test_bounded_process_capture_retains_timeout_and_output_bombs() -> None:
     completed, failure = suite._run_bounded(
-        [sys.executable, "-c", "import time; time.sleep(5)"],
+        [
+            sys.executable,
+            "-c",
+            "import sys,time; print(123, flush=True); "
+            "print(456, file=sys.stderr, flush=True); time.sleep(5)",
+        ],
         1,
     )
-    assert completed is None
+    assert completed is not None
     assert failure == "runner timed out"
+    assert completed.returncode < 0
+    assert completed.stdout == b"123\n"
+    assert completed.stderr == b"456\n"
 
     completed, failure = suite._run_bounded(
-        [sys.executable, "-c", "import sys; sys.stderr.buffer.write(b'x' * 70000)"],
+        [sys.executable, "-c", 'import sys; sys.stderr.buffer.write(b"x" * 70000)'],
         10,
     )
-    assert completed is None
+    assert completed is not None
     assert failure == "runner output exceeded evidence bounds"
+    assert completed.returncode <= 0
+    assert len(completed.stderr) <= 64 * 1024
+
+
+def test_bounded_process_capture_retains_signal_status() -> None:
+    completed, failure = suite._run_bounded(
+        [
+            sys.executable,
+            "-c",
+            "import os,signal; os.kill(os.getpid(), signal.SIGTERM)",
+        ],
+        10,
+    )
+    assert completed is not None
+    assert failure is None
+    assert completed.returncode == -15
+    reason = suite._process_failure_reason("runner terminated by signal", completed, None)
+    assert "status=signal:SIGTERM" in reason
+    assert "stdout_bytes=0" in reason
+    assert "stderr_bytes=0" in reason
 
 
 def test_runner_status_contradiction_is_retained_as_invalid(
@@ -212,7 +279,140 @@ def test_runner_status_contradiction_is_retained_as_invalid(
     )
 
     assert not result.valid
-    assert result.failure_reason == "runner process status contradicts its evidence"
+    assert result.failure_reason is not None
+    assert result.failure_reason.startswith("runner process status contradicts its evidence; ")
+    assert "status=exit:1" in result.failure_reason
+
+
+def test_partial_stdout_is_retained_but_never_accepted(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    manifest_path = _manifest(tmp_path)
+    environment = _environment()
+    environment_digest = document_sha256(environment_to_dict(environment))
+    partial = b'{"schema":"ATLAS_BENCH_OBSERVATION_V1"'
+    result = _run_once_with_capture(
+        monkeypatch,
+        manifest_path,
+        environment,
+        environment_digest,
+        suite._ProcessCapture(returncode=0, stdout=partial, stderr=b""),
+    )
+
+    assert not result.valid
+    assert result.failure_reason is not None
+    assert result.failure_reason.startswith("runner produced invalid evidence; ")
+    assert f"stdout_bytes={len(partial)}" in result.failure_reason
+    assert "stdout_prefix_b64=" in result.failure_reason
+
+
+def test_partial_stderr_invalidates_valid_stdout_and_is_retained(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    manifest_path = _manifest(tmp_path)
+    environment = _environment()
+    environment_digest = document_sha256(environment_to_dict(environment))
+    observation = _valid_observation(
+        manifest_path,
+        environment,
+        environment_digest,
+        suite_label="diagnostic01",
+        run_label="diagnostic01-run",
+        variant="standalone",
+        block=0,
+        position=0,
+    )
+    stderr = b"bounded diagnostic detail"
+    result = _run_once_with_capture(
+        monkeypatch,
+        manifest_path,
+        environment,
+        environment_digest,
+        suite._ProcessCapture(
+            returncode=0,
+            stdout=canonical_json_bytes(observation_to_dict(observation)),
+            stderr=stderr,
+        ),
+    )
+
+    assert not result.valid
+    assert result.failure_reason is not None
+    assert result.failure_reason.startswith("runner process status contradicts its evidence; ")
+    assert f"stderr_bytes={len(stderr)}" in result.failure_reason
+    assert "stderr_prefix_b64=" in result.failure_reason
+
+
+def test_timeout_retains_last_diagnostic_phase_without_accepting_partial_output(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    manifest_path = _manifest(tmp_path)
+    environment = _environment()
+    environment_digest = document_sha256(environment_to_dict(environment))
+    result = _run_once_with_capture(
+        monkeypatch,
+        manifest_path,
+        environment,
+        environment_digest,
+        suite._ProcessCapture(
+            returncode=-9,
+            stdout=b"partial",
+            stderr=(
+                b"ATLAS_DIAGNOSTIC_PHASE workload-parsed\n"
+                b"ATLAS_DIAGNOSTIC_PHASE measured-region-enter\n"
+                b"bounded native detail"
+            ),
+        ),
+        process_failure="runner timed out",
+        diagnostic_phases=True,
+    )
+
+    assert not result.valid
+    assert result.failure_reason is not None
+    assert result.failure_reason.startswith("runner timed out; phase=measured-region-enter; ")
+    assert "status=signal:SIGKILL" in result.failure_reason
+    assert "ATLAS_DIAGNOSTIC_PHASE" not in result.failure_reason
+    assert "stderr_bytes=21" in result.failure_reason
+
+
+def test_diagnostic_markers_do_not_change_successful_observation_bytes(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    manifest_path = _manifest(tmp_path)
+    environment = _environment()
+    environment_digest = document_sha256(environment_to_dict(environment))
+    expected = _valid_observation(
+        manifest_path,
+        environment,
+        environment_digest,
+        suite_label="diagnostic01",
+        run_label="diagnostic01-run",
+        variant="standalone",
+        block=0,
+        position=0,
+    )
+    canonical = canonical_json_bytes(observation_to_dict(expected))
+    result = _run_once_with_capture(
+        monkeypatch,
+        manifest_path,
+        environment,
+        environment_digest,
+        suite._ProcessCapture(
+            returncode=0,
+            stdout=canonical,
+            stderr=(
+                b"ATLAS_DIAGNOSTIC_PHASE workload-parsed\n"
+                b"ATLAS_DIAGNOSTIC_PHASE observation-ready\n"
+            ),
+        ),
+        diagnostic_phases=True,
+    )
+
+    assert result == expected
+    assert canonical_json_bytes(observation_to_dict(result)) == canonical
 
 
 def test_abba_block_start_schedule_and_no_overwrite(

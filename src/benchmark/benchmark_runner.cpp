@@ -94,6 +94,7 @@ struct CliOptions final {
   std::uint64_t expected_preload_engine_errors{};
   std::uint64_t expected_preload_active_orders{};
   ObservationMode mode{ObservationMode::throughput};
+  bool diagnostic_phases{};
 };
 
 struct ParseState final {
@@ -129,6 +130,7 @@ struct ParseState final {
   bool expected_rejected{};
   bool expected_engine_errors{};
   bool mode{};
+  bool diagnostic_phases{};
 };
 
 struct RegionStatistics final {
@@ -251,6 +253,14 @@ struct PrefixEvidence final {
 [[nodiscard]] constexpr bool is_setup_mode(ObservationMode mode) noexcept {
   return mode == ObservationMode::construction || mode == ObservationMode::preload ||
          mode == ObservationMode::setup_allocation;
+}
+
+void emit_diagnostic_phase(const CliOptions& options, std::string_view phase) {
+  if (!options.diagnostic_phases) {
+    return;
+  }
+  std::cerr << "ATLAS_DIAGNOSTIC_PHASE " << phase << '\n';
+  std::cerr.flush();
 }
 
 [[nodiscard]] std::optional<std::string_view> measurement_parameter(
@@ -439,6 +449,12 @@ struct PrefixEvidence final {
                      value)) {
         return std::nullopt;
       }
+    } else if (name == "--diagnostic-phases") {
+      if (seen.diagnostic_phases || value != "yes") {
+        return std::nullopt;
+      }
+      seen.diagnostic_phases = true;
+      options.diagnostic_phases = true;
     } else if (name == "--mode") {
       if (seen.mode) {
         return std::nullopt;
@@ -573,6 +589,7 @@ void print_usage(std::ostream& output, RunnerFlavor flavor) {
             " --expected-preload-event-digest <sha256>"
             " --expected-preload-state-digest <sha256>"
             " --expected-preload-active-orders <n>]";
+  output << " [--diagnostic-phases yes]";
   output << '\n';
 }
 
@@ -1001,7 +1018,9 @@ void populate_prefix_observation(BenchmarkObservation& observation,
     observation.rss_after_bytes = *rss_after;
   }
   if (peak_rss.has_value()) {
-    observation.peak_rss_bytes = *peak_rss;
+    observation.peak_rss_bytes =
+        std::max(*peak_rss,
+                 std::max(observation.rss_before_bytes, observation.rss_after_bytes));
   }
   return rss_after.has_value() && peak_rss.has_value();
 }
@@ -1190,7 +1209,9 @@ void populate_prefix_observation(BenchmarkObservation& observation,
     observation.rss_after_bytes = *rss_after;
   }
   if (peak_rss.has_value()) {
-    observation.peak_rss_bytes = *peak_rss;
+    observation.peak_rss_bytes =
+        std::max(*peak_rss,
+                 std::max(observation.rss_before_bytes, observation.rss_after_bytes));
   }
   if (!timed.valid) {
     return fail(observation, timed.failure_reason, benchmark_invalid_observation_exit_code);
@@ -1251,6 +1272,8 @@ void populate_prefix_observation(BenchmarkObservation& observation,
   if (*actual_binary_sha256 != options.binary_sha256) {
     return fail(observation, "binary_digest_mismatch", benchmark_invalid_observation_exit_code);
   }
+  emit_diagnostic_phase(options, "binary-verified");
+  emit_diagnostic_phase(options, "workload-parse-enter");
 
   std::uint64_t declared_total{};
   if (!checked_region_total(options, declared_total) ||
@@ -1283,6 +1306,7 @@ void populate_prefix_observation(BenchmarkObservation& observation,
   if (declared_total != static_cast<std::uint64_t>(workload.commands.size())) {
     return fail(observation, "command_region_mismatch", benchmark_invalid_observation_exit_code);
   }
+  emit_diagnostic_phase(options, "workload-parsed");
 
   observation.preload_commands = options.preload_count;
   observation.warmup_commands = options.warmup_count;
@@ -1303,6 +1327,7 @@ void populate_prefix_observation(BenchmarkObservation& observation,
     observation.latency_ns.reserve(static_cast<std::size_t>(possible_samples));
   }
 
+  emit_diagnostic_phase(options, "engine-create-enter");
   std::unique_ptr<MultiInstrumentEngine> engine;
   const auto rss_before = current_rss_bytes();
   if (!rss_before.has_value()) {
@@ -1315,22 +1340,28 @@ void populate_prefix_observation(BenchmarkObservation& observation,
   } catch (const std::invalid_argument&) {
     return fail(observation, "invalid_engine_config", benchmark_invalid_observation_exit_code);
   }
+  emit_diagnostic_phase(options, "engine-created");
+  emit_diagnostic_phase(options, "preload-enter");
 
   const auto preload = execute_untimed(*engine, workload.commands, 0U,
                                        static_cast<std::size_t>(options.preload_count));
   if (preload.engine_errors != 0U) {
     return fail(observation, "preload_engine_error", benchmark_invalid_observation_exit_code);
   }
+  emit_diagnostic_phase(options, "preload-complete");
+  emit_diagnostic_phase(options, "warmup-enter");
   const auto warmup_begin = static_cast<std::size_t>(options.preload_count);
   const auto warmup = execute_untimed(*engine, workload.commands, warmup_begin,
                                       static_cast<std::size_t>(options.warmup_count));
   if (warmup.engine_errors != 0U) {
     return fail(observation, "warmup_engine_error", benchmark_invalid_observation_exit_code);
   }
+  emit_diagnostic_phase(options, "warmup-complete");
 
   const auto measured_begin =
       static_cast<std::size_t>(options.preload_count + options.warmup_count);
   RegionStatistics measured;
+  emit_diagnostic_phase(options, "measured-region-enter");
   if (options.mode == ObservationMode::throughput) {
     measured = execute_throughput(*engine, workload.commands, measured_begin,
                                   static_cast<std::size_t>(options.measured_count),
@@ -1356,6 +1387,7 @@ void populate_prefix_observation(BenchmarkObservation& observation,
     observation.allocations = allocation_hooks.end();
     observation.elapsed_ns = 0U;
   }
+  emit_diagnostic_phase(options, "measured-region-exit");
 
   observation.commands = measured.commands;
   observation.engine_errors = measured.engine_errors;
@@ -1366,12 +1398,18 @@ void populate_prefix_observation(BenchmarkObservation& observation,
     observation.rss_after_bytes = *rss_after;
   }
   if (peak_rss.has_value()) {
-    observation.peak_rss_bytes = *peak_rss;
+    observation.peak_rss_bytes =
+        std::max(*peak_rss,
+                 std::max(observation.rss_before_bytes, observation.rss_after_bytes));
   }
+  emit_diagnostic_phase(options, "state-digest-enter");
   observation.final_digest = engine->state_digest().hex();
+  emit_diagnostic_phase(options, "state-digest-complete");
 
+  emit_diagnostic_phase(options, "validation-replay-enter");
   const auto validation = derive_validation_evidence(
       workload, measured_begin, static_cast<std::size_t>(options.measured_count));
+  emit_diagnostic_phase(options, "validation-replay-complete");
   if (is_sha256(validation.event_digest)) {
     observation.event_digest = validation.event_digest;
   }
@@ -1417,6 +1455,7 @@ void populate_prefix_observation(BenchmarkObservation& observation,
 
   observation.valid = true;
   observation.failure_reason.reset();
+  emit_diagnostic_phase(options, "observation-ready");
   return emit_observation(observation, benchmark_success_exit_code);
 }
 

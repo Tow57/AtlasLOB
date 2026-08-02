@@ -17,7 +17,7 @@ from atlaslob.performance.schemas import (
     measurement_parameters_for_boundary,
     write_canonical_document,
 )
-from atlaslob.performance.suite import Runner, _run_label
+from atlaslob.performance.suite import Runner, RunnerMode, _run_label
 from atlaslob.performance.workloads import (
     BenchmarkPlan,
     BenchmarkPlanPoint,
@@ -227,6 +227,27 @@ def test_study_plan_expands_to_frozen_51_shapes() -> None:
             for shape in python_shapes
         }
     ) == len(python_shapes)
+
+
+def test_core_boundaries_use_the_frozen_runner_family() -> None:
+    core = Runner(Path("core-runner"), Path("core-environment"), "standalone")
+    allocation = Runner(Path("allocation-runner"), Path("allocation-environment"), "standalone")
+    runners = campaign.CampaignRunners(core, allocation=allocation)
+
+    for boundary, mode, expected in (
+        ("core_throughput", "throughput", core),
+        ("core_allocation", "allocation", allocation),
+        ("core_setup_allocation", "setup-allocation", allocation),
+    ):
+        shape = campaign.CampaignShape(
+            point_id="study-w01",
+            tier="study",
+            workload_id="W01",
+            boundary=boundary,
+            mode=cast(RunnerMode, mode),
+            batch_size=None,
+        )
+        assert campaign._runner_for(shape, runners) is expected
 
 
 def test_campaign_is_round_robin_resumable_and_retains_invalid_attempt(

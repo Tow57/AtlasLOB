@@ -8,6 +8,15 @@
 
 namespace atlaslob::core {
 
+namespace detail {
+
+// Centralized in a compiled translation unit so the private build policy is
+// identical for inline and out-of-line core code. Explicit validate_invariants
+// calls remain deep regardless of this setting.
+[[nodiscard]] bool expensive_internal_invariant_checks_enabled() noexcept;
+
+}  // namespace detail
+
 enum class PriceLevelError : std::uint8_t {
   none = 0,
   invalid_level_price = 1,

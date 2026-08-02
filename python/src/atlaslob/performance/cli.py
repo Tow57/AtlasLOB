@@ -101,6 +101,7 @@ def parser() -> argparse.ArgumentParser:
     suite.add_argument("--block-start", type=_positive_u64, default=1)
     suite.add_argument("--batch-size", type=int, choices=(1, 64, 1024, 65_536))
     suite.add_argument("--timeout", type=_positive_u64, default=900)
+    suite.add_argument("--diagnostic-phases", action="store_true")
 
     campaign = commands.add_parser("run-campaign")
     campaign.add_argument("--plan", type=Path, required=True)
@@ -350,6 +351,7 @@ def _run_suite(options: argparse.Namespace) -> int:
         block_start=options.block_start,
         batch_size=options.batch_size,
         timeout_seconds=options.timeout,
+        diagnostic_phases=options.diagnostic_phases,
     )
     print(f"retained {len(paths)} observations")
     return 0

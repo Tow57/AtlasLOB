@@ -7,6 +7,14 @@
 
 namespace atlaslob::core {
 
+bool detail::expensive_internal_invariant_checks_enabled() noexcept {
+#if defined(ATLAS_ENABLE_INVARIANTS) && ATLAS_ENABLE_INVARIANTS
+  return true;
+#else
+  return false;
+#endif
+}
+
 namespace {
 
 [[nodiscard]] constexpr bool is_positive(domain::PriceTicks value) noexcept {
