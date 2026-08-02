@@ -6,6 +6,23 @@ The format is based on Keep a Changelog, and public releases will follow semanti
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-08-02
+
+### Release highlights
+
+- Added a deterministic C++20 price-time-priority matching engine with multi-instrument routing,
+  canonical workload and replay formats, persisted recovery, and native Python bindings with
+  object, column, and summary batch outputs.
+- Added exact state/event digests, independent Python semantic validation, invariant and failure
+  testing, allocation/memory measurement, and content-addressed reproducibility evidence.
+- Finalized and independently verified the 510-observation Phase 5 campaign: 51 shapes with 10
+  valid observations each and no invalid observations on the qualified Ryzen 7 9800X3D host.
+- Recorded median W04 C++ matching at 2,583,618.74 commands/s and 9,430,208.40 events/s, verified
+  ten-million-record replay at 334,744.21 records/s, and Python summary batch 1,024 at 932,256.78
+  commands/s. See `docs/benchmarks/phase5-results.md` for host context, units, and report fields.
+- Hardware performance counters were unavailable under `perf_event_paranoid=4`; security policy
+  was not weakened, and no hardware-counter or call-graph claim is made.
+
 ### Changed
 
 - Migrated the `atlaslob` distribution to scikit-build-core 1.0.3 and version 0.2.0 while keeping

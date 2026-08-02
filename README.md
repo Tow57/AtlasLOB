@@ -15,20 +15,13 @@ latency claims.
 
 ## Current status
 
-**Phases 0 through 4 are integrated on remote `main`. Phase 3 merged through PR #5, followed by
-the four sequential Phase 4 slices: router PR #7, command-log/replay PR #8, snapshot/recovery PR
-#6, and native-Python PR #9. PR #10 records the final integration evidence at `39c9592`. Its
-uncancelled `main` workflow passes the compiler, Release, sanitizer, decoder-fuzz, Python
-3.11-3.14, formatting, native-extension, source-distribution, and manylinux-wheel gates. Phase 4
-includes deterministic multi-instrument routing, write-ahead logging and replay, persisted
-snapshots and recovery, and the lazy native-only `atlaslob.Engine` API with strict owned batch
-outputs. Package version 0.2.0 builds and clean-smokes CPython 3.11-3.14 manylinux x86-64 wheels
-plus a PEP 517 source distribution. The Phase 5 benchmark contract and resumable baseline/profile
-campaign are implemented; the authoritative native-host study awaits the dedicated Ubuntu
-installation, and no performance or production-readiness claim is made.**
+**Version 0.2.0 combines the deterministic C++20 multi-instrument matching engine, canonical
+command-log replay and recovery, native Python bindings, and reproducible performance evidence.
+The official Phase 5 campaign is finalized and independently verified: 510 valid observations,
+no invalid observations, across 51 measurement shapes at the frozen release commit.**
 
-See the [Phase 4 evidence index](docs/evidence/phase4/README.md) for the current validation
-boundary.
+See the [verified Phase 5 results](docs/benchmarks/phase5-results.md) and the
+[Phase 4 evidence index](docs/evidence/phase4/README.md) for the measured and correctness boundaries.
 
 Phase 5's measurement boundaries and claim policy are in the
 [performance methodology](docs/performance-methodology.md). The
@@ -86,9 +79,57 @@ verified exploratory bundle. The
 | Resting book structure | Complete | `stress.InstrumentBookStress*` |
 | Matching and normalized command execution | Complete | Phase 2 |
 | Reproducible benchmark and evidence infrastructure | Complete | [ADR 0016](docs/decisions/0016-reproducible-performance-evidence.md), deterministic smoke fixtures and bundle verifier |
-| Resumable baseline and `perf` campaign | Implemented; awaiting native run | [Native-host runbook](docs/phase5-native-host-runbook.md) |
-| Native-host baseline, profiles, and experiments | Awaiting Ubuntu host | Phase 5 qualified-host gate |
+| Resumable baseline and `perf` campaign | Complete | [Verified Phase 5 results](docs/benchmarks/phase5-results.md) |
+| Native-host baseline and finalized reports | 510/510 valid observations | [Phase 5 results](docs/benchmarks/phase5-results.md) |
 | Versioned Linux gateway | Deferred | Phase 6 |
+
+## Technical overview
+
+AtlasLOB implements price-time-priority matching for limit and market orders across an immutable
+instrument catalog. Integer domain types, deterministic command sequencing, canonical state and
+event digests, and an independent Python reference model make semantic differences reproducible
+rather than anecdotal. Versioned ATLAS workloads and ATLSLG command logs support exact replay;
+allocation tracking exposes core and setup memory behavior. Native Python bindings provide owned
+object, typed-column, and summary batch interfaces.
+
+```mermaid
+flowchart LR
+  C[Commands] --> R[Multi-instrument router]
+  R --> B[Price-time order books]
+  B --> E[Normalized events]
+  B --> S[Canonical snapshots and digests]
+  C --> L[ATLSLG command log]
+  L --> P[Replay and recovery]
+  C --> O[Independent Python oracle]
+  E --> V[Deterministic parity evidence]
+  O --> V
+  S --> V
+```
+
+Tests cover domain validation, matching and cancellation invariants, atomic replacement,
+multi-instrument identity, byte-exact logs and snapshots, replay/recovery, cross-language parity,
+native bindings, allocation failure boundaries, fuzz decoding, and packaging.
+
+## Verified benchmark highlights
+
+These rates are medians of 10 valid observations for each shape on
+`ryzen-9800x3d-64g-ubuntu2404-a` (AMD Ryzen 7 9800X3D, Ubuntu 24.04.4 LTS, kernel
+7.0.0-28-generic, local NVMe ext4). Official execution was pinned to logical CPU 1 with its SMT
+sibling idle. The full campaign contains 510 valid observations across 51 shapes and was finalized
+and independently bundle-verified.
+
+| Result | Finalized value |
+| --- | ---: |
+| W04 C++ matching, 65,536 active orders | 2,583,618.74 commands/s; 9,430,208.40 events/s |
+| W04 command latency, 312,500 samples | 310 ns p50; 511 ns p99; 802 ns p99.9 |
+| Verified 10,000,000-record replay | 334,744.21 records/s; 1,171,604.75 events/s |
+| Python summary output, batch 1,024 | 932,256.78 commands/s; 3,402,737.26 events/s |
+| One-million-order preload | 1,456,462.28 commands/s; 2,958,441.92 events/s |
+
+See [Phase 5 benchmark results](docs/benchmarks/phase5-results.md) for methodology, units,
+allocation results, the complete Python batch table, report-field citations, and the profiling
+limitation. Release measurement paths avoid pathological invariant and digest work while retained
+inputs still undergo independent semantic validation and deterministic output checks.
 
 ## Quick start
 

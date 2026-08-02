@@ -1,0 +1,191 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="1400" height="2330" viewBox="0 0 1400 2330">
+<rect width="100%" height="100%" fill="#ffffff"/>
+<text x="20" y="30" font-family="sans-serif" font-size="18">AtlasLOB benchmark scaling evidence</text>
+<text x="20" y="50" font-family="sans-serif" font-size="12">Qualification: OFFICIAL</text>
+<text x="20" y="94" font-family="sans-serif" font-size="14">Core execution median commands per second</text>
+<text x="20" y="129" font-family="monospace" font-size="12">core_throughput/W04 [instrument_count=1, measured_start_active_order_count=1000, sweep_depth=0] /c442415b bin=d1156c71 invalid=0</text>
+<rect x="700" y="114" width="487" height="20" fill="#2457c5"/>
+<text x="1193" y="129" font-family="monospace" font-size="12">2695444.808861</text>
+<text x="20" y="163" font-family="monospace" font-size="12">core_throughput/W04 [instrument_count=1, measured_start_active_order_count=1000000, sweep_depth=0] /287788ea bin=d1156c71 invalid=0</text>
+<rect x="700" y="148" width="447" height="20" fill="#2457c5"/>
+<text x="1153" y="163" font-family="monospace" font-size="12">2476622.135066</text>
+<text x="20" y="197" font-family="monospace" font-size="12">core_throughput/W04 [instrument_count=1, measured_start_active_order_count=1000000, sweep_depth=0] /91344517 bin=d1156c71 invalid=0</text>
+<rect x="700" y="182" width="328" height="20" fill="#2457c5"/>
+<text x="1034" y="197" font-family="monospace" font-size="12">1815788.900842</text>
+<text x="20" y="231" font-family="monospace" font-size="12">core_throughput/W05 [instrument_count=1, measured_start_active_order_count=1000000, sweep_depth=64] /113291b1 bin=d1156c71 invalid=0</text>
+<rect x="700" y="216" width="236" height="20" fill="#2457c5"/>
+<text x="942" y="231" font-family="monospace" font-size="12">1306780.068649</text>
+<text x="20" y="265" font-family="monospace" font-size="12">core_throughput/W09 [instrument_count=1, measured_start_active_order_count=262144, sweep_depth=0] /fdc99dfb bin=d1156c71 invalid=0</text>
+<rect x="700" y="250" width="524" height="20" fill="#2457c5"/>
+<text x="1230" y="265" font-family="monospace" font-size="12">2901969.542188</text>
+<text x="20" y="299" font-family="monospace" font-size="12">core_throughput/W03 [instrument_count=1, measured_start_active_order_count=32768, sweep_depth=0] /c81c4b52 bin=d1156c71 invalid=0</text>
+<rect x="700" y="284" width="640" height="20" fill="#2457c5"/>
+<text x="1346" y="299" font-family="monospace" font-size="12">3543740.23915</text>
+<text x="20" y="333" font-family="monospace" font-size="12">core_throughput/W01 [instrument_count=1, measured_start_active_order_count=65536, sweep_depth=0] /4db764fc bin=d1156c71 invalid=0</text>
+<rect x="700" y="318" width="507" height="20" fill="#2457c5"/>
+<text x="1213" y="333" font-family="monospace" font-size="12">2809303.187497</text>
+<text x="20" y="367" font-family="monospace" font-size="12">core_throughput/W02 [instrument_count=1, measured_start_active_order_count=65536, sweep_depth=0] /b5061050 bin=d1156c71 invalid=0</text>
+<rect x="700" y="352" width="520" height="20" fill="#2457c5"/>
+<text x="1226" y="367" font-family="monospace" font-size="12">2880408.658755</text>
+<text x="20" y="401" font-family="monospace" font-size="12">core_throughput/W04 [instrument_count=1, measured_start_active_order_count=65536, sweep_depth=0] /8f53b0e5 bin=d1156c71 invalid=0</text>
+<rect x="700" y="386" width="467" height="20" fill="#2457c5"/>
+<text x="1173" y="401" font-family="monospace" font-size="12">2583618.739708</text>
+<text x="20" y="435" font-family="monospace" font-size="12">core_throughput/W06 [instrument_count=1, measured_start_active_order_count=65536, sweep_depth=0] /6b8ccede bin=d1156c71 invalid=0</text>
+<rect x="700" y="420" width="306" height="20" fill="#2457c5"/>
+<text x="1012" y="435" font-family="monospace" font-size="12">1696189.113055</text>
+<text x="20" y="469" font-family="monospace" font-size="12">core_throughput/W07 [instrument_count=1, measured_start_active_order_count=65536, sweep_depth=0] /ef45aa6b bin=d1156c71 invalid=0</text>
+<rect x="700" y="454" width="167" height="20" fill="#2457c5"/>
+<text x="873" y="469" font-family="monospace" font-size="12">924800.45475</text>
+<text x="20" y="503" font-family="monospace" font-size="12">core_throughput/W08 [instrument_count=1, measured_start_active_order_count=65536, sweep_depth=0] /75cec211 bin=d1156c71 invalid=0</text>
+<rect x="700" y="488" width="407" height="20" fill="#2457c5"/>
+<text x="1113" y="503" font-family="monospace" font-size="12">2251972.044126</text>
+<text x="20" y="537" font-family="monospace" font-size="12">core_throughput/W12 [instrument_count=1, measured_start_active_order_count=65536, sweep_depth=0] /12e84108 bin=d1156c71 invalid=0</text>
+<rect x="700" y="522" width="252" height="20" fill="#2457c5"/>
+<text x="958" y="537" font-family="monospace" font-size="12">1397772.39507</text>
+<text x="20" y="571" font-family="monospace" font-size="12">core_throughput/W05 [instrument_count=1, measured_start_active_order_count=65536, sweep_depth=1] /e0c8231e bin=d1156c71 invalid=0</text>
+<rect x="700" y="556" width="477" height="20" fill="#2457c5"/>
+<text x="1183" y="571" font-family="monospace" font-size="12">2642407.119191</text>
+<text x="20" y="605" font-family="monospace" font-size="12">core_throughput/W05 [instrument_count=1, measured_start_active_order_count=65536, sweep_depth=16] /d0842b02 bin=d1156c71 invalid=0</text>
+<rect x="700" y="590" width="310" height="20" fill="#2457c5"/>
+<text x="1016" y="605" font-family="monospace" font-size="12">1716829.653495</text>
+<text x="20" y="639" font-family="monospace" font-size="12">core_throughput/W05 [instrument_count=1, measured_start_active_order_count=65536, sweep_depth=32] /0da7e276 bin=d1156c71 invalid=0</text>
+<rect x="700" y="624" width="262" height="20" fill="#2457c5"/>
+<text x="968" y="639" font-family="monospace" font-size="12">1453070.317648</text>
+<text x="20" y="673" font-family="monospace" font-size="12">core_throughput/W05 [instrument_count=1, measured_start_active_order_count=65536, sweep_depth=64] /4a675bd9 bin=d1156c71 invalid=0</text>
+<rect x="700" y="658" width="240" height="20" fill="#2457c5"/>
+<text x="946" y="673" font-family="monospace" font-size="12">1327966.439237</text>
+<text x="20" y="707" font-family="monospace" font-size="12">core_throughput/W05 [instrument_count=1, measured_start_active_order_count=65536, sweep_depth=8] /b70502c6 bin=d1156c71 invalid=0</text>
+<rect x="700" y="692" width="333" height="20" fill="#2457c5"/>
+<text x="1039" y="707" font-family="monospace" font-size="12">1843692.574057</text>
+<text x="20" y="741" font-family="monospace" font-size="12">core_throughput/W09 [instrument_count=16, measured_start_active_order_count=262144, sweep_depth=0] /952185a8 bin=d1156c71 invalid=0</text>
+<rect x="700" y="726" width="450" height="20" fill="#2457c5"/>
+<text x="1156" y="741" font-family="monospace" font-size="12">2489214.822955</text>
+<text x="20" y="775" font-family="monospace" font-size="12">core_throughput/W09 [instrument_count=256, measured_start_active_order_count=262144, sweep_depth=0] /3b0c6803 bin=d1156c71 invalid=0</text>
+<rect x="700" y="760" width="420" height="20" fill="#2457c5"/>
+<text x="1126" y="775" font-family="monospace" font-size="12">2323460.095261</text>
+<text x="20" y="809" font-family="monospace" font-size="12">core_throughput/W09 [instrument_count=4096, measured_start_active_order_count=262144, sweep_depth=0] /9f69f410 bin=d1156c71 invalid=0</text>
+<rect x="700" y="794" width="396" height="20" fill="#2457c5"/>
+<text x="1102" y="809" font-family="monospace" font-size="12">2190234.039508</text>
+<text x="20" y="846" font-family="sans-serif" font-size="14">Replay median commands per second</text>
+<text x="20" y="881" font-family="monospace" font-size="12">replay_fast/W10 [cache_policy=warm_page_cache, instrument_count=1, measured_start_active_order_count=0, record_count=10000000, replay_mode=fast, sweep_depth=0, timed_input_sha256=b8d0959cd502077b19716b4a6c8cb3fc8a64c50248ef9cc531ef97a15bcd7252] /52f68908 bin=d1156c71 invalid=0</text>
+<rect x="700" y="866" width="638" height="20" fill="#2457c5"/>
+<text x="1344" y="881" font-family="monospace" font-size="12">333685.536272</text>
+<text x="20" y="915" font-family="monospace" font-size="12">replay_fast/W10 [cache_policy=warm_page_cache, instrument_count=1, measured_start_active_order_count=0, record_count=1000000, replay_mode=fast, sweep_depth=0, timed_input_sha256=d306cdff984b21ca419dc8525255b8bc9a1dfbe8f1ae94fe558377f478871285] /02bf3cb1 bin=d1156c71 invalid=0</text>
+<rect x="700" y="900" width="636" height="20" fill="#2457c5"/>
+<text x="1342" y="915" font-family="monospace" font-size="12">332855.10759</text>
+<text x="20" y="949" font-family="monospace" font-size="12">replay_verify/W10 [cache_policy=warm_page_cache, instrument_count=1, measured_start_active_order_count=0, record_count=10000000, replay_mode=verify, sweep_depth=0, timed_input_sha256=b8d0959cd502077b19716b4a6c8cb3fc8a64c50248ef9cc531ef97a15bcd7252] /52f68908 bin=d1156c71 invalid=0</text>
+<rect x="700" y="934" width="640" height="20" fill="#2457c5"/>
+<text x="1346" y="949" font-family="monospace" font-size="12">334744.213309</text>
+<text x="20" y="983" font-family="monospace" font-size="12">replay_verify/W10 [cache_policy=warm_page_cache, instrument_count=1, measured_start_active_order_count=0, record_count=1000000, replay_mode=verify, sweep_depth=0, timed_input_sha256=d306cdff984b21ca419dc8525255b8bc9a1dfbe8f1ae94fe558377f478871285] /02bf3cb1 bin=d1156c71 invalid=0</text>
+<rect x="700" y="968" width="638" height="20" fill="#2457c5"/>
+<text x="1344" y="983" font-family="monospace" font-size="12">333598.000624</text>
+<text x="20" y="1020" font-family="sans-serif" font-size="14">Preload median commands per second</text>
+<text x="20" y="1055" font-family="monospace" font-size="12">core_preload/W01 [instrument_count=1, measured_start_active_order_count=1000, sweep_depth=0] /80fc2ef5 bin=d1156c71 invalid=0</text>
+<rect x="700" y="1040" width="623" height="20" fill="#2457c5"/>
+<text x="1329" y="1055" font-family="monospace" font-size="12">1575353.325039</text>
+<text x="20" y="1089" font-family="monospace" font-size="12">core_preload/W01 [instrument_count=1, measured_start_active_order_count=1000000, sweep_depth=0] /80ad95dd bin=d1156c71 invalid=0</text>
+<rect x="700" y="1074" width="576" height="20" fill="#2457c5"/>
+<text x="1282" y="1089" font-family="monospace" font-size="12">1456462.280422</text>
+<text x="20" y="1123" font-family="monospace" font-size="12">core_preload/W01 [instrument_count=1, measured_start_active_order_count=65536, sweep_depth=0] /875df3d5 bin=d1156c71 invalid=0</text>
+<rect x="700" y="1108" width="640" height="20" fill="#2457c5"/>
+<text x="1346" y="1123" font-family="monospace" font-size="12">1617639.903509</text>
+<text x="20" y="1160" font-family="sans-serif" font-size="14">Median p50 service time in nanoseconds</text>
+<text x="20" y="1195" font-family="monospace" font-size="12">core_latency/W04 [instrument_count=1, measured_start_active_order_count=1000000, sweep_depth=0] /91344517 bin=d1156c71 invalid=0</text>
+<rect x="700" y="1180" width="560" height="20" fill="#2457c5"/>
+<text x="1266" y="1195" font-family="monospace" font-size="12">491</text>
+<text x="20" y="1229" font-family="monospace" font-size="12">core_latency/W05 [instrument_count=1, measured_start_active_order_count=1000000, sweep_depth=64] /113291b1 bin=d1156c71 invalid=0</text>
+<rect x="700" y="1214" width="640" height="20" fill="#2457c5"/>
+<text x="1346" y="1229" font-family="monospace" font-size="12">561</text>
+<text x="20" y="1263" font-family="monospace" font-size="12">core_latency/W04 [instrument_count=1, measured_start_active_order_count=65536, sweep_depth=0] /8f53b0e5 bin=d1156c71 invalid=0</text>
+<rect x="700" y="1248" width="354" height="20" fill="#2457c5"/>
+<text x="1060" y="1263" font-family="monospace" font-size="12">310</text>
+<text x="20" y="1297" font-family="monospace" font-size="12">core_latency/W05 [instrument_count=1, measured_start_active_order_count=65536, sweep_depth=64] /4a675bd9 bin=d1156c71 invalid=0</text>
+<rect x="700" y="1282" width="629" height="20" fill="#2457c5"/>
+<text x="1335" y="1297" font-family="monospace" font-size="12">551</text>
+<text x="20" y="1334" font-family="sans-serif" font-size="14">Median process RSS delta bytes per resting order</text>
+<text x="20" y="1369" font-family="monospace" font-size="12">core_latency/W04 [instrument_count=1, measured_start_active_order_count=1000000, sweep_depth=0] /91344517 bin=d1156c71 invalid=0</text>
+<rect x="700" y="1354" width="411" height="20" fill="#2457c5"/>
+<text x="1117" y="1369" font-family="monospace" font-size="12">281.481216</text>
+<text x="20" y="1403" font-family="monospace" font-size="12">core_latency/W05 [instrument_count=1, measured_start_active_order_count=1000000, sweep_depth=64] /113291b1 bin=d1156c71 invalid=0</text>
+<rect x="700" y="1388" width="411" height="20" fill="#2457c5"/>
+<text x="1117" y="1403" font-family="monospace" font-size="12">281.522176</text>
+<text x="20" y="1437" font-family="monospace" font-size="12">core_latency/W04 [instrument_count=1, measured_start_active_order_count=65536, sweep_depth=0] /8f53b0e5 bin=d1156c71 invalid=0</text>
+<rect x="700" y="1422" width="414" height="20" fill="#2457c5"/>
+<text x="1120" y="1437" font-family="monospace" font-size="12">283.21875</text>
+<text x="20" y="1471" font-family="monospace" font-size="12">core_latency/W05 [instrument_count=1, measured_start_active_order_count=65536, sweep_depth=64] /4a675bd9 bin=d1156c71 invalid=0</text>
+<rect x="700" y="1456" width="415" height="20" fill="#2457c5"/>
+<text x="1121" y="1471" font-family="monospace" font-size="12">284.25</text>
+<text x="20" y="1505" font-family="monospace" font-size="12">core_preload/W01 [instrument_count=1, measured_start_active_order_count=1000, sweep_depth=0] /80fc2ef5 bin=d1156c71 invalid=0</text>
+<rect x="700" y="1490" width="556" height="20" fill="#2457c5"/>
+<text x="1262" y="1505" font-family="monospace" font-size="12">380.928</text>
+<text x="20" y="1539" font-family="monospace" font-size="12">core_preload/W01 [instrument_count=1, measured_start_active_order_count=1000000, sweep_depth=0] /80ad95dd bin=d1156c71 invalid=0</text>
+<rect x="700" y="1524" width="409" height="20" fill="#2457c5"/>
+<text x="1115" y="1539" font-family="monospace" font-size="12">280.170496</text>
+<text x="20" y="1573" font-family="monospace" font-size="12">core_preload/W01 [instrument_count=1, measured_start_active_order_count=65536, sweep_depth=0] /875df3d5 bin=d1156c71 invalid=0</text>
+<rect x="700" y="1558" width="407" height="20" fill="#2457c5"/>
+<text x="1113" y="1573" font-family="monospace" font-size="12">278.90625</text>
+<text x="20" y="1607" font-family="monospace" font-size="12">core_throughput/W04 [instrument_count=1, measured_start_active_order_count=1000, sweep_depth=0] /c442415b bin=d1156c71 invalid=0</text>
+<rect x="700" y="1592" width="640" height="20" fill="#2457c5"/>
+<text x="1346" y="1607" font-family="monospace" font-size="12">438.272</text>
+<text x="20" y="1641" font-family="monospace" font-size="12">core_throughput/W04 [instrument_count=1, measured_start_active_order_count=1000000, sweep_depth=0] /287788ea bin=d1156c71 invalid=0</text>
+<rect x="700" y="1626" width="409" height="20" fill="#2457c5"/>
+<text x="1115" y="1641" font-family="monospace" font-size="12">280.195072</text>
+<text x="20" y="1675" font-family="monospace" font-size="12">core_throughput/W04 [instrument_count=1, measured_start_active_order_count=1000000, sweep_depth=0] /91344517 bin=d1156c71 invalid=0</text>
+<rect x="700" y="1660" width="409" height="20" fill="#2457c5"/>
+<text x="1115" y="1675" font-family="monospace" font-size="12">280.231936</text>
+<text x="20" y="1709" font-family="monospace" font-size="12">core_throughput/W05 [instrument_count=1, measured_start_active_order_count=1000000, sweep_depth=64] /113291b1 bin=d1156c71 invalid=0</text>
+<rect x="700" y="1694" width="409" height="20" fill="#2457c5"/>
+<text x="1115" y="1709" font-family="monospace" font-size="12">280.272896</text>
+<text x="20" y="1743" font-family="monospace" font-size="12">core_throughput/W09 [instrument_count=1, measured_start_active_order_count=262144, sweep_depth=0] /fdc99dfb bin=d1156c71 invalid=0</text>
+<rect x="700" y="1728" width="407" height="20" fill="#2457c5"/>
+<text x="1113" y="1743" font-family="monospace" font-size="12">278.992188</text>
+<text x="20" y="1777" font-family="monospace" font-size="12">core_throughput/W03 [instrument_count=1, measured_start_active_order_count=32768, sweep_depth=0] /c81c4b52 bin=d1156c71 invalid=0</text>
+<rect x="700" y="1762" width="591" height="20" fill="#2457c5"/>
+<text x="1297" y="1777" font-family="monospace" font-size="12">404.375</text>
+<text x="20" y="1811" font-family="monospace" font-size="12">core_throughput/W01 [instrument_count=1, measured_start_active_order_count=65536, sweep_depth=0] /4db764fc bin=d1156c71 invalid=0</text>
+<rect x="700" y="1796" width="409" height="20" fill="#2457c5"/>
+<text x="1115" y="1811" font-family="monospace" font-size="12">279.9375</text>
+<text x="20" y="1845" font-family="monospace" font-size="12">core_throughput/W02 [instrument_count=1, measured_start_active_order_count=65536, sweep_depth=0] /b5061050 bin=d1156c71 invalid=0</text>
+<rect x="700" y="1830" width="409" height="20" fill="#2457c5"/>
+<text x="1115" y="1845" font-family="monospace" font-size="12">279.8125</text>
+<text x="20" y="1879" font-family="monospace" font-size="12">core_throughput/W04 [instrument_count=1, measured_start_active_order_count=65536, sweep_depth=0] /8f53b0e5 bin=d1156c71 invalid=0</text>
+<rect x="700" y="1864" width="409" height="20" fill="#2457c5"/>
+<text x="1115" y="1879" font-family="monospace" font-size="12">279.875</text>
+<text x="20" y="1913" font-family="monospace" font-size="12">core_throughput/W06 [instrument_count=1, measured_start_active_order_count=65536, sweep_depth=0] /6b8ccede bin=d1156c71 invalid=0</text>
+<rect x="700" y="1898" width="572" height="20" fill="#2457c5"/>
+<text x="1278" y="1913" font-family="monospace" font-size="12">391.8125</text>
+<text x="20" y="1947" font-family="monospace" font-size="12">core_throughput/W07 [instrument_count=1, measured_start_active_order_count=65536, sweep_depth=0] /ef45aa6b bin=d1156c71 invalid=0</text>
+<rect x="700" y="1932" width="572" height="20" fill="#2457c5"/>
+<text x="1278" y="1947" font-family="monospace" font-size="12">391.8125</text>
+<text x="20" y="1981" font-family="monospace" font-size="12">core_throughput/W08 [instrument_count=1, measured_start_active_order_count=65536, sweep_depth=0] /75cec211 bin=d1156c71 invalid=0</text>
+<rect x="700" y="1966" width="572" height="20" fill="#2457c5"/>
+<text x="1278" y="1981" font-family="monospace" font-size="12">391.78125</text>
+<text x="20" y="2015" font-family="monospace" font-size="12">core_throughput/W12 [instrument_count=1, measured_start_active_order_count=65536, sweep_depth=0] /12e84108 bin=d1156c71 invalid=0</text>
+<rect x="700" y="2000" width="573" height="20" fill="#2457c5"/>
+<text x="1279" y="2015" font-family="monospace" font-size="12">392.375</text>
+<text x="20" y="2049" font-family="monospace" font-size="12">core_throughput/W05 [instrument_count=1, measured_start_active_order_count=65536, sweep_depth=1] /e0c8231e bin=d1156c71 invalid=0</text>
+<rect x="700" y="2034" width="409" height="20" fill="#2457c5"/>
+<text x="1115" y="2049" font-family="monospace" font-size="12">279.9375</text>
+<text x="20" y="2083" font-family="monospace" font-size="12">core_throughput/W05 [instrument_count=1, measured_start_active_order_count=65536, sweep_depth=16] /d0842b02 bin=d1156c71 invalid=0</text>
+<rect x="700" y="2068" width="409" height="20" fill="#2457c5"/>
+<text x="1115" y="2083" font-family="monospace" font-size="12">280</text>
+<text x="20" y="2117" font-family="monospace" font-size="12">core_throughput/W05 [instrument_count=1, measured_start_active_order_count=65536, sweep_depth=32] /0da7e276 bin=d1156c71 invalid=0</text>
+<rect x="700" y="2102" width="409" height="20" fill="#2457c5"/>
+<text x="1115" y="2117" font-family="monospace" font-size="12">280.1875</text>
+<text x="20" y="2151" font-family="monospace" font-size="12">core_throughput/W05 [instrument_count=1, measured_start_active_order_count=65536, sweep_depth=64] /4a675bd9 bin=d1156c71 invalid=0</text>
+<rect x="700" y="2136" width="410" height="20" fill="#2457c5"/>
+<text x="1116" y="2151" font-family="monospace" font-size="12">280.4375</text>
+<text x="20" y="2185" font-family="monospace" font-size="12">core_throughput/W05 [instrument_count=1, measured_start_active_order_count=65536, sweep_depth=8] /b70502c6 bin=d1156c71 invalid=0</text>
+<rect x="700" y="2170" width="409" height="20" fill="#2457c5"/>
+<text x="1115" y="2185" font-family="monospace" font-size="12">280</text>
+<text x="20" y="2219" font-family="monospace" font-size="12">core_throughput/W09 [instrument_count=16, measured_start_active_order_count=262144, sweep_depth=0] /952185a8 bin=d1156c71 invalid=0</text>
+<rect x="700" y="2204" width="422" height="20" fill="#2457c5"/>
+<text x="1128" y="2219" font-family="monospace" font-size="12">289.015625</text>
+<text x="20" y="2253" font-family="monospace" font-size="12">core_throughput/W09 [instrument_count=256, measured_start_active_order_count=262144, sweep_depth=0] /3b0c6803 bin=d1156c71 invalid=0</text>
+<rect x="700" y="2238" width="431" height="20" fill="#2457c5"/>
+<text x="1137" y="2253" font-family="monospace" font-size="12">294.890625</text>
+<text x="20" y="2287" font-family="monospace" font-size="12">core_throughput/W09 [instrument_count=4096, measured_start_active_order_count=262144, sweep_depth=0] /9f69f410 bin=d1156c71 invalid=0</text>
+<rect x="700" y="2272" width="477" height="20" fill="#2457c5"/>
+<text x="1183" y="2287" font-family="monospace" font-size="12">326.507812</text>
+</svg>
