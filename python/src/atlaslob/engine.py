@@ -64,7 +64,7 @@ except ImportError as exc:
         "this CPython version and platform; the reference model is not used as a fallback."
     ) from exc
 
-_BINDING_ABI = 1
+_BINDING_ABI = 2
 _native_binding_abi = getattr(_native, "BINDING_ABI", None)
 if _native_binding_abi != _BINDING_ABI:
     observed_abi = "<missing>" if _native_binding_abi is None else repr(_native_binding_abi)
@@ -220,6 +220,29 @@ class BatchResult:
     rejected_count: int
     terminal_error: EngineError | None
     final_state_digest: str
+    payload: BatchPayload
+
+
+@dataclass(frozen=True, slots=True)
+class _MeasurementBatchResult:
+    """Private batch result whose final digest is validated at a region boundary."""
+
+    submitted_count: int
+    processed_count: int
+    committed_count: int
+    rejected_count: int
+    terminal_error: EngineError | None
+    payload: BatchPayload
+
+
+@dataclass(frozen=True, slots=True)
+class _DecodedBatch:
+    record: Mapping[str, object]
+    submitted_count: int
+    processed_count: int
+    committed_count: int
+    rejected_count: int
+    terminal_error: EngineError | None
     payload: BatchPayload
 
 
@@ -534,13 +557,41 @@ class Engine:
         normalized = tuple(_normalize_command(command) for command in commands)
         return self._submit_normalized(normalized, cast(OutputMode, native_output))
 
+    def _submit_batch_for_measurement(
+        self,
+        commands: Iterable[Command],
+        *,
+        output: OutputMode = "objects",
+    ) -> _MeasurementBatchResult:
+        """Submit one logical batch without producing a redundant state digest."""
+
+        self._ensure_writable()
+        if self.logged:
+            raise RuntimeError("measurement batches require a live in-memory engine")
+        native_output = _literal("output", output, _OUTPUT_MODES)
+        normalized = tuple(_normalize_command(command) for command in commands)
+        record = self._submit_native(normalized, cast(OutputMode, native_output), measurement=True)
+        return _decode_measurement_batch_result(record, cast(OutputMode, native_output))
+
     def _submit_normalized(
         self,
         commands: tuple[_NativeRecord, ...],
         output: OutputMode,
     ) -> BatchResult:
+        record = self._submit_native(commands, output, measurement=False)
+        return _decode_batch_result(record, output)
+
+    def _submit_native(
+        self,
+        commands: tuple[_NativeRecord, ...],
+        output: OutputMode,
+        *,
+        measurement: bool,
+    ) -> object:
         try:
-            record = self._backend.submit_batch(list(commands), output)
+            if measurement:
+                return self._backend._submit_batch_for_measurement(list(commands), output)
+            return self._backend.submit_batch(list(commands), output)
         except (
             _native.NativePersistenceError,
             _native.NativeRecoveryError,
@@ -548,7 +599,7 @@ class Engine:
             _native.NativeReadOnlyError,
         ) as exc:
             _raise_mapped_native_error(exc, output=output)
-        return _decode_batch_result(record, output)
+            raise AssertionError("native error mapping unexpectedly returned") from exc
 
     def top(self, instrument_id: int) -> BookTop | None:
         native_instrument = _command_uint("instrument_id", instrument_id, U32_MAX)
@@ -770,7 +821,43 @@ def _literal(name: str, value: object, allowed: frozenset[str]) -> str:
 
 
 def _decode_batch_result(record: object, expected_output: OutputMode) -> BatchResult:
-    value = _record(record, "batch result")
+    decoded = _decode_batch_common(record, expected_output, measurement=False)
+    return BatchResult(
+        submitted_count=decoded.submitted_count,
+        processed_count=decoded.processed_count,
+        committed_count=decoded.committed_count,
+        rejected_count=decoded.rejected_count,
+        terminal_error=decoded.terminal_error,
+        final_state_digest=_decode_digest(
+            decoded.record.get("final_state_digest"), "final_state_digest"
+        ),
+        payload=decoded.payload,
+    )
+
+
+def _decode_measurement_batch_result(
+    record: object, expected_output: OutputMode
+) -> _MeasurementBatchResult:
+    decoded = _decode_batch_common(record, expected_output, measurement=True)
+    if "final_state_digest" in decoded.record:
+        raise RuntimeError("native measurement batch unexpectedly produced a state digest")
+    return _MeasurementBatchResult(
+        submitted_count=decoded.submitted_count,
+        processed_count=decoded.processed_count,
+        committed_count=decoded.committed_count,
+        rejected_count=decoded.rejected_count,
+        terminal_error=decoded.terminal_error,
+        payload=decoded.payload,
+    )
+
+
+def _decode_batch_common(
+    record: object,
+    expected_output: OutputMode,
+    *,
+    measurement: bool,
+) -> _DecodedBatch:
+    value = _record(record, "measurement batch result" if measurement else "batch result")
     actual_output = _string(value, "output")
     if actual_output != expected_output:
         raise RuntimeError(
@@ -790,22 +877,25 @@ def _decode_batch_result(record: object, expected_output: OutputMode) -> BatchRe
         if payload_raw is not None:
             raise RuntimeError("native summary batch unexpectedly materialized a payload")
         payload = SummaryBatch()
-    result = BatchResult(
-        submitted_count=_uint(value.get("submitted_count"), "submitted_count", U64_MAX),
-        processed_count=_uint(value.get("processed_count"), "processed_count", U64_MAX),
-        committed_count=_uint(value.get("committed_count"), "committed_count", U64_MAX),
-        rejected_count=_uint(value.get("rejected_count"), "rejected_count", U64_MAX),
+    submitted = _uint(value.get("submitted_count"), "submitted_count", U64_MAX)
+    processed = _uint(value.get("processed_count"), "processed_count", U64_MAX)
+    committed = _uint(value.get("committed_count"), "committed_count", U64_MAX)
+    rejected = _uint(value.get("rejected_count"), "rejected_count", U64_MAX)
+    if processed > submitted:
+        raise RuntimeError("native batch processed count exceeds submitted count")
+    if committed + rejected > processed:
+        raise RuntimeError("native batch outcome counts exceed processed count")
+    if isinstance(payload, ObjectBatch) and len(payload.results) != processed:
+        raise RuntimeError("native object payload length differs from processed count")
+    return _DecodedBatch(
+        record=value,
+        submitted_count=submitted,
+        processed_count=processed,
+        committed_count=committed,
+        rejected_count=rejected,
         terminal_error=terminal,
-        final_state_digest=_decode_digest(value.get("final_state_digest"), "final_state_digest"),
         payload=payload,
     )
-    if result.processed_count > result.submitted_count:
-        raise RuntimeError("native batch processed count exceeds submitted count")
-    if result.committed_count + result.rejected_count > result.processed_count:
-        raise RuntimeError("native batch outcome counts exceed processed count")
-    if isinstance(payload, ObjectBatch) and len(payload.results) != result.processed_count:
-        raise RuntimeError("native object payload length differs from processed count")
-    return result
 
 
 def _decode_engine_result(record: object) -> EngineResult:

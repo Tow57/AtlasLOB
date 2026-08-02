@@ -33,6 +33,26 @@ _IDENTIFIER = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,127}\Z")
 _U64_MAX = (1 << 64) - 1
 _MAX_CATALOG_ENTRIES = 4_096
 _MAX_COMMANDS = 100_000_000
+_DIAGNOSTIC_PHASE_PREFIX = b"ATLAS_DIAGNOSTIC_PHASE "
+_DIAGNOSTIC_PHASES = frozenset(
+    {
+        "workload-load-enter",
+        "workload-load-exit",
+        "preload-enter",
+        "preload-exit",
+        "warmup-enter",
+        "warmup-exit",
+        "measured-enter",
+        "measured-exit",
+        "evidence-enter",
+        "evidence-exit",
+        "validation-enter",
+        "validation-exit",
+        "serialization-enter",
+        "serialization-exit",
+        "worker-failed",
+    }
+)
 T = TypeVar("T")
 
 
@@ -377,6 +397,20 @@ def _peak_rss_bytes() -> int:
         return 0
 
 
+def _diagnostic_phase(enabled: bool, phase: str) -> None:
+    """Emit one bounded engineering-only marker outside measured execution."""
+
+    if not enabled:
+        return
+    if phase not in _DIAGNOSTIC_PHASES:
+        raise ValueError("unknown diagnostic phase")
+    timestamp = str(time.monotonic_ns()).encode("ascii")
+    sys.stderr.buffer.write(
+        _DIAGNOSTIC_PHASE_PREFIX + phase.encode("ascii") + b" " + timestamp + b"\n"
+    )
+    sys.stderr.buffer.flush()
+
+
 def _chunks(values: Sequence[T], size: int) -> Iterable[Sequence[T]]:
     for begin in range(0, len(values), size):
         yield values[begin : begin + size]
@@ -384,7 +418,7 @@ def _chunks(values: Sequence[T], size: int) -> Iterable[Sequence[T]]:
 
 def _submit_prefix(engine: Engine, commands: Sequence[Command], batch_size: int) -> None:
     for batch in _chunks(commands, batch_size):
-        result = engine.submit_batch(batch, output="summary")
+        result = engine._submit_batch_for_measurement(batch, output="summary")
         if result.terminal_error is not None or result.processed_count != len(batch):
             raise ValueError("prefix execution stopped with an engine error")
 
@@ -406,7 +440,7 @@ def _validate_results(
     committed = rejected = engine_errors = events = processed = 0
     event_hash = hashlib.sha256()
     for batch in _chunks(commands[measured_begin:], batch_size):
-        result = engine.submit_batch(batch, output="objects")
+        result = engine._submit_batch_for_measurement(batch, output="objects")
         if not isinstance(result.payload, ObjectBatch):
             raise RuntimeError("object batch returned the wrong payload type")
         committed += result.committed_count
@@ -493,6 +527,8 @@ def _observation(
 def _run_observation(options: argparse.Namespace) -> dict[str, object]:
     from atlaslob import Engine
 
+    diagnostic_phases = bool(getattr(options, "diagnostic_phases", False))
+
     for name in (
         "preload_count",
         "warmup_count",
@@ -511,7 +547,9 @@ def _run_observation(options: argparse.Namespace) -> dict[str, object]:
         "measured_start_active_order_count",
     )
     _unsigned(options.sweep_depth, "sweep_depth", 64)
+    _diagnostic_phase(diagnostic_phases, "workload-load-enter")
     config, commands = _parse_workload(options.workload, options.workload_sha256)
+    _diagnostic_phase(diagnostic_phases, "workload-load-exit")
     expected_total = options.preload_count + options.warmup_count + options.measured_count
     if expected_total > _MAX_COMMANDS or len(commands) != expected_total:
         raise ValueError("region counts do not cover the workload")
@@ -520,15 +558,24 @@ def _run_observation(options: argparse.Namespace) -> dict[str, object]:
         raise ValueError("instrument_count differs from the workload catalog")
     engine = Engine(catalog, max_total_active_orders=maximum_active)
     measured_begin = options.preload_count + options.warmup_count
-    _submit_prefix(engine, commands[:measured_begin], options.batch_size)
+    if diagnostic_phases:
+        _diagnostic_phase(True, "preload-enter")
+        _submit_prefix(engine, commands[: options.preload_count], options.batch_size)
+        _diagnostic_phase(True, "preload-exit")
+        _diagnostic_phase(True, "warmup-enter")
+        _submit_prefix(engine, commands[options.preload_count : measured_begin], options.batch_size)
+        _diagnostic_phase(True, "warmup-exit")
+    else:
+        _submit_prefix(engine, commands[:measured_begin], options.batch_size)
     measured_batches = tuple(
         tuple(batch) for batch in _chunks(commands[measured_begin:], options.batch_size)
     )
     rss_before = _rss_bytes()
+    _diagnostic_phase(diagnostic_phases, "measured-enter")
     start = time.perf_counter_ns()
     timed_committed = timed_rejected = timed_errors = timed_processed = 0
     for batch in measured_batches:
-        result = engine.submit_batch(batch, output=options.output_mode)
+        result = engine._submit_batch_for_measurement(batch, output=options.output_mode)
         timed_committed += result.committed_count
         timed_rejected += result.rejected_count
         timed_processed += result.processed_count
@@ -538,14 +585,17 @@ def _run_observation(options: argparse.Namespace) -> dict[str, object]:
             timed_errors += 1
             break
     elapsed = max(1, time.perf_counter_ns() - start)
+    _diagnostic_phase(diagnostic_phases, "measured-exit")
     rss_after = _rss_bytes()
     peak_rss = max(_peak_rss_bytes(), rss_before, rss_after)
+    _diagnostic_phase(diagnostic_phases, "evidence-enter")
     evidence = _validate_results(
         config,
         commands,
         measured_begin,
         options.batch_size,
     )
+    _diagnostic_phase(diagnostic_phases, "evidence-exit")
     expected = (
         options.measured_count,
         options.expected_events,
@@ -569,8 +619,10 @@ def _run_observation(options: argparse.Namespace) -> dict[str, object]:
         options.expected_engine_errors,
         options.expected_final_digest,
     )
+    _diagnostic_phase(diagnostic_phases, "validation-enter")
     if evidence != expected or timed_outcomes != expected_timed:
         raise ValueError("Python batch execution differs from frozen workload evidence")
+    _diagnostic_phase(diagnostic_phases, "validation-exit")
     return _observation(
         options,
         elapsed_ns=elapsed,
@@ -635,11 +687,13 @@ def _parser() -> argparse.ArgumentParser:
     run.add_argument("--sweep-depth", required=True)
     run.add_argument("--batch-size", type=int, choices=(1, 64, 1024, 65_536), required=True)
     run.add_argument("--output-mode", choices=("objects", "columns", "summary"), required=True)
+    run.add_argument("--diagnostic-phases", action="store_true")
     return parser
 
 
 def main(arguments: list[str] | None = None) -> int:
     options = _parser().parse_args(arguments)
+    diagnostic_phases = bool(getattr(options, "diagnostic_phases", False))
     try:
         if options.command == "identity":
             value = _identity(options.wheel, options.include_private_path)
@@ -648,6 +702,7 @@ def main(arguments: list[str] | None = None) -> int:
     except Exception:
         if options.command != "run":
             return 1
+        _diagnostic_phase(diagnostic_phases, "worker-failed")
         value = _observation(
             options,
             elapsed_ns=0,
@@ -658,9 +713,15 @@ def main(arguments: list[str] | None = None) -> int:
             valid=False,
             failure_reason="Python target-wheel worker failed validation",
         )
-        sys.stdout.buffer.write(_canonical_json(value))
+        _diagnostic_phase(diagnostic_phases, "serialization-enter")
+        payload = _canonical_json(value)
+        _diagnostic_phase(diagnostic_phases, "serialization-exit")
+        sys.stdout.buffer.write(payload)
         return 1
-    sys.stdout.buffer.write(_canonical_json(value))
+    _diagnostic_phase(diagnostic_phases, "serialization-enter")
+    payload = _canonical_json(value)
+    _diagnostic_phase(diagnostic_phases, "serialization-exit")
+    sys.stdout.buffer.write(payload)
     return 0
 
 

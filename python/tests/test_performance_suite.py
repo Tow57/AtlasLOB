@@ -361,7 +361,7 @@ def test_timeout_retains_last_diagnostic_phase_without_accepting_partial_output(
             stdout=b"partial",
             stderr=(
                 b"ATLAS_DIAGNOSTIC_PHASE workload-parsed\n"
-                b"ATLAS_DIAGNOSTIC_PHASE measured-region-enter\n"
+                b"ATLAS_DIAGNOSTIC_PHASE measured-region-enter 123456\n"
                 b"bounded native detail"
             ),
         ),
@@ -743,3 +743,120 @@ def test_fixture_manifest_digest_matches_canonical_document(tmp_path: Path) -> N
 
     manifest = verify_workload_manifest(manifest_path)
     assert file_sha256(manifest_path) == document_sha256(workload_to_dict(manifest))
+
+
+def test_python_timeout_diagnostics_are_opt_in_and_passed_only_to_worker(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    manifest_path = _manifest(tmp_path)
+    from atlaslob.performance.workloads import verify_workload_manifest
+
+    manifest = verify_workload_manifest(manifest_path)
+    environment = replace(
+        _environment(),
+        runtime_kind="cpython",
+        benchmark_build=False,
+        python_implementation="CPython",
+        python_version="3.12.3",
+        python_cache_tag="cpython-312",
+        atlaslob_version="0.2.0",
+        interpreter_sha256="1" * 64,
+        wheel_sha256="2" * 64,
+        package_sha256="3" * 64,
+        wrapper_sha256="4" * 64,
+        harness_sha256="5" * 64,
+        host_context_sha256="",
+    )
+    environment_digest = document_sha256(environment_to_dict(environment))
+    invocations: list[list[str]] = []
+
+    def bounded(arguments: list[str], _timeout: int) -> tuple[suite._ProcessCapture, str]:
+        invocations.append(arguments)
+        return (
+            suite._ProcessCapture(
+                returncode=-9,
+                stdout=b"",
+                stderr=b"ATLAS_DIAGNOSTIC_PHASE measured-enter 123456\n",
+            ),
+            "runner timed out",
+        )
+
+    monkeypatch.setattr(suite, "_run_bounded", bounded)
+    runner = Runner(
+        tmp_path / "python",
+        tmp_path / "environment.json",
+        "standalone",
+        wheel=tmp_path / "atlaslob.whl",
+        worker=tmp_path / "worker.py",
+    )
+
+    result = suite._run_once(
+        runner,
+        environment,
+        environment_digest,
+        environment.binary_sha256,
+        manifest,
+        file_sha256(manifest_path),
+        manifest_path.parent / manifest.stream_file,
+        "diagnostic01",
+        "python-columns",
+        0,
+        0,
+        "diagnostic01-python-run",
+        1,
+        10,
+        True,
+    )
+
+    assert invocations and invocations[0][-1] == "--diagnostic-phases"
+    assert not result.valid
+    assert result.failure_reason is not None
+    assert result.failure_reason.startswith("runner timed out; phase=measured-enter; ")
+
+
+def test_diagnostic_phases_reject_official_environments_before_runner_launch(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    manifest_path = _manifest(tmp_path)
+    official = replace(
+        _environment(),
+        classification="official",
+        limitations=(),
+        host_context_sha256="",
+    )
+    launches = 0
+
+    monkeypatch.setattr(
+        suite,
+        "_prepare_runner",
+        lambda *_: (official.binary_sha256, official, "f" * 64),
+    )
+
+    def bounded(*_: object) -> tuple[suite._ProcessCapture | None, str | None]:
+        nonlocal launches
+        launches += 1
+        return None, "unexpected launch"
+
+    monkeypatch.setattr(suite, "_run_bounded", bounded)
+    with pytest.raises(ValueError, match="exploratory environments"):
+        suite.run_suite(
+            manifest_path,
+            tmp_path / "observations",
+            baseline=Runner(
+                tmp_path / "python",
+                tmp_path / "environment.json",
+                "standalone",
+                wheel=tmp_path / "atlaslob.whl",
+                worker=tmp_path / "worker.py",
+            ),
+            suite_label="diagnostic01",
+            mode="python-columns",
+            observations=1,
+            batch_size=1,
+            diagnostic_phases=True,
+        )
+
+    assert launches == 0
+    assert not (tmp_path / "observations").exists()

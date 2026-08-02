@@ -224,6 +224,13 @@ result.
 Summary mode counts outcomes and computes the final digest without materializing individual event
 objects or event columns.
 
+The Phase 5 batch worker uses an ABI-versioned private measurement entry point on live in-memory
+engines. It preserves exact input conversion, logical batch boundaries, execution, outcome counts,
+and mode-specific payload materialization, but omits the otherwise mandatory full-state digest from
+each transient batch result. The worker independently computes and checks the timed engine digest
+and the semantic-evidence engine digest at their region boundaries. Public `submit_batch` behavior,
+including its per-call `final_state_digest`, is unchanged; logged engines reject the private path.
+
 ### GIL, locking, and ownership
 
 The binding uses this lock order:

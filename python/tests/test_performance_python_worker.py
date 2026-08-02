@@ -10,7 +10,7 @@ import types
 import zipfile
 from collections.abc import Callable, Iterable, MutableMapping, Sequence
 from pathlib import Path
-from typing import cast
+from typing import TypedDict, cast
 
 import atlaslob
 import pytest
@@ -157,7 +157,21 @@ def test_worker_prepares_chunks_before_timing_and_destroys_results_before_stop(
     final_digest = "f" * 64
     event_digest = hashlib.sha256(b"").hexdigest()
     commands = (object(), object())
-    state = {"prepared": False, "destroyed": 0, "clock_calls": 0}
+
+    class State(TypedDict):
+        prepared: bool
+        destroyed: int
+        clock_calls: int
+        batch_lengths: list[int]
+        outputs: list[str]
+
+    state: State = {
+        "prepared": False,
+        "destroyed": 0,
+        "clock_calls": 0,
+        "batch_lengths": [],
+        "outputs": [],
+    }
 
     class BatchResult:
         committed_count = 1
@@ -178,15 +192,18 @@ def test_worker_prepares_chunks_before_timing_and_destroys_results_before_stop(
             tuple(catalog)
             assert max_total_active_orders == 10
 
-        def submit_batch(
+        def _submit_batch_for_measurement(
             self,
             batch: Sequence[object],
             *,
             output: str,
         ) -> BatchResult:
-            assert len(batch) == 1
-            assert output == "summary"
+            state["batch_lengths"].append(len(batch))
+            state["outputs"].append(output)
             return BatchResult()
+
+        def submit_batch(self, *_: object, **__: object) -> BatchResult:
+            raise AssertionError("worker must use the measurement-only batch path")
 
         def state_digest(self) -> str:
             return final_digest
@@ -249,8 +266,35 @@ def test_worker_prepares_chunks_before_timing_and_destroys_results_before_stop(
 
     assert observation["valid"] is True
     assert observation["elapsed_ns"] == "100"
-    assert state == {"prepared": True, "destroyed": 2, "clock_calls": 2}
+    assert state == {
+        "prepared": True,
+        "destroyed": 2,
+        "clock_calls": 2,
+        "batch_lengths": [1, 1],
+        "outputs": ["summary", "summary"],
+    }
 
     options.instrument_count = "2"
     with pytest.raises(ValueError, match="workload catalog"):
         run_observation(options)
+
+
+def test_worker_diagnostic_markers_are_bounded_and_disabled_by_default(
+    capfd: pytest.CaptureFixture[str],
+) -> None:
+    worker = _load_worker()
+    diagnostic_phase = cast(Callable[[bool, str], None], worker._diagnostic_phase)
+
+    diagnostic_phase(False, "measured-enter")
+    assert capfd.readouterr() == ("", "")
+
+    diagnostic_phase(True, "measured-enter")
+    captured = capfd.readouterr()
+    assert captured.out == ""
+    prefix = "ATLAS_DIAGNOSTIC_PHASE measured-enter "
+    assert captured.err.startswith(prefix)
+    assert captured.err.removeprefix(prefix).strip().isdigit()
+    assert len(captured.err.encode("ascii")) < 128
+
+    with pytest.raises(ValueError, match="unknown diagnostic phase"):
+        diagnostic_phase(True, "not-a-real-phase")

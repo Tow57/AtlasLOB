@@ -32,7 +32,7 @@ namespace py = pybind11;
 namespace atlaslob::python {
 namespace {
 
-inline constexpr std::uint32_t binding_abi{1U};
+inline constexpr std::uint32_t binding_abi{2U};
 
 PyObject* native_persistence_error = nullptr;
 PyObject* native_recovery_error = nullptr;
@@ -538,7 +538,8 @@ class NativeEngine final {
   }
 
   [[nodiscard]] BatchExecution submit_batch(std::span<const domain::Command> commands,
-                                            OutputMode output) {
+                                            OutputMode output,
+                                            bool include_final_state_digest = true) {
     std::lock_guard lock{mutex_};
     if (read_only()) {
       throw std::logic_error{"read-only recovered engine cannot submit commands"};
@@ -564,7 +565,9 @@ class NativeEngine final {
       if (logged_ != nullptr) {
         auto submitted = logged_->submit(command);
         if (!submitted) {
-          batch.final_state_digest = observer().state_digest();
+          if (include_final_state_digest) {
+            batch.final_state_digest = observer().state_digest();
+          }
           return {
               .batch = {},
               .persistence_failure =
@@ -601,7 +604,9 @@ class NativeEngine final {
       }
     }
 
-    batch.final_state_digest = observer().state_digest();
+    if (include_final_state_digest) {
+      batch.final_state_digest = observer().state_digest();
+    }
     return {
         .batch = std::move(batch),
         .persistence_failure = std::nullopt,
@@ -1071,7 +1076,8 @@ void append_event_columns(py::dict& columns, const domain::Event& event) {
   return columns;
 }
 
-[[nodiscard]] py::dict batch_to_python(const BatchNative& batch) {
+[[nodiscard]] py::dict batch_to_python(const BatchNative& batch,
+                                       bool include_final_state_digest = true) {
   py::object payload;
   if (batch.output == OutputMode::objects) {
     py::list results;
@@ -1093,7 +1099,9 @@ void append_event_columns(py::dict& columns, const domain::Event& event) {
   output["terminal_error"] = batch.terminal_error == EngineError::none
                                  ? py::object{py::none{}}
                                  : integer_object(static_cast<std::uint8_t>(batch.terminal_error));
-  output["final_state_digest"] = py::str{batch.final_state_digest.hex()};
+  if (include_final_state_digest) {
+    output["final_state_digest"] = py::str{batch.final_state_digest.hex()};
+  }
   output["output"] = py::str{to_string(batch.output)};
   output["payload"] = std::move(payload);
   return output;
@@ -1432,6 +1440,36 @@ void append_event_columns(py::dict& columns, const domain::Event& event) {
   return details;
 }
 
+[[nodiscard]] py::dict submit_batch_to_python(
+    const std::shared_ptr<NativeEngine>& self, py::handle commands_value,
+    py::handle output_value, bool include_final_state_digest) {
+  if (self->read_only()) {
+    raise_native_error(
+        native_read_only_error,
+        "read-only valid-prefix recovery cannot submit; repair the torn tail with "
+        "'atlas_inspect repair-tail <input> <new-output>' and strictly recover the new log",
+        read_only_failure_details());
+  }
+  if (!include_final_state_digest && self->logged()) {
+    throw std::logic_error{"measurement batches require a live in-memory engine"};
+  }
+  auto commands = convert_commands(commands_value);
+  const auto output = parse_output_mode(output_value);
+  auto executed = [&]() {
+    py::gil_scoped_release release;
+    return self->submit_batch(commands, output, include_final_state_digest);
+  }();
+  if (executed.persistence_failure.has_value()) {
+    auto& failure = *executed.persistence_failure;
+    auto prefix = batch_to_python(failure.prefix);
+    raise_native_error(
+        native_persistence_error,
+        "command log write failed; this logged session may require recovery",
+        log_failure_details(failure.error, failure.session_poisoned, std::move(prefix)));
+  }
+  return batch_to_python(executed.batch, include_final_state_digest);
+}
+
 [[nodiscard]] PyObject* define_exception(py::module_& module, const char* short_name,
                                          PyObject* base = PyExc_RuntimeError) {
   const auto qualified_name = std::string{"atlaslob._native_engine."} + std::string{short_name};
@@ -1595,29 +1633,14 @@ PYBIND11_MODULE(_native_engine, module) {
           "submit_batch",
           [](const std::shared_ptr<NativeEngine>& self, py::handle commands_value,
              py::handle output_value) {
-            if (self->read_only()) {
-              raise_native_error(
-                  native_read_only_error,
-                  "read-only valid-prefix recovery cannot submit; repair the torn tail with "
-                  "'atlas_inspect repair-tail <input> <new-output>' and strictly recover the "
-                  "new log",
-                  read_only_failure_details());
-            }
-            auto commands = convert_commands(commands_value);
-            const auto output = parse_output_mode(output_value);
-            auto executed = [&]() {
-              py::gil_scoped_release release;
-              return self->submit_batch(commands, output);
-            }();
-            if (executed.persistence_failure.has_value()) {
-              auto& failure = *executed.persistence_failure;
-              auto prefix = batch_to_python(failure.prefix);
-              raise_native_error(
-                  native_persistence_error,
-                  "command log write failed; this logged session may require recovery",
-                  log_failure_details(failure.error, failure.session_poisoned, std::move(prefix)));
-            }
-            return batch_to_python(executed.batch);
+            return submit_batch_to_python(self, commands_value, output_value, true);
+          },
+          py::arg("commands"), py::arg("output") = "objects")
+      .def(
+          "_submit_batch_for_measurement",
+          [](const std::shared_ptr<NativeEngine>& self, py::handle commands_value,
+             py::handle output_value) {
+            return submit_batch_to_python(self, commands_value, output_value, false);
           },
           py::arg("commands"), py::arg("output") = "objects")
       .def(

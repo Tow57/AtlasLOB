@@ -177,8 +177,6 @@ def _run_suite(
     if python_mode:
         if batch_size not in {1, 64, 1024, 65_536}:
             raise ValueError("Python suites require a frozen batch size")
-        if diagnostic_phases:
-            raise ValueError("diagnostic phases are available only for native runners")
     elif batch_size is not None:
         raise ValueError("batch_size is only valid for Python suites")
     if (
@@ -228,6 +226,11 @@ def _run_suite(
             raise ValueError("baseline and candidate host/build contexts differ")
         if prepared["baseline"][0] == prepared["candidate"][0]:
             raise ValueError("baseline and candidate binaries must differ")
+    if diagnostic_phases and any(
+        environment.classification == "official"
+        for _digest, environment, _document_digest in prepared.values()
+    ):
+        raise ValueError("diagnostic phases require exploratory environments")
 
     schedule: list[tuple[int, int, Runner]] = []
     if candidate is None:
@@ -504,6 +507,8 @@ def _run_once(
             "--output-mode",
             mode.removeprefix("python-"),
         ]
+        if diagnostic_phases:
+            arguments.append("--diagnostic-phases")
     else:
         arguments = [*runner.command_prefix, str(runner.executable), *common_arguments]
         for name, value in measurement_parameters_for_boundary(manifest, boundary):
@@ -627,12 +632,18 @@ def _strip_diagnostic_phases(capture: _ProcessCapture) -> tuple[_ProcessCapture,
         token = line.rstrip(b"\r\n")
         if token.startswith(_DIAGNOSTIC_PHASE_PREFIX):
             raw_phase = token.removeprefix(_DIAGNOSTIC_PHASE_PREFIX)
+            parts = raw_phase.split(b" ", 1)
             try:
-                phase = raw_phase.decode("ascii")
+                phase = parts[0].decode("ascii")
             except UnicodeDecodeError:
                 residual.extend(line)
                 continue
-            if phase and all(character.isalnum() or character in "-_" for character in phase):
+            timestamp_valid = len(parts) == 1 or bool(parts[1]) and parts[1].isdigit()
+            if (
+                timestamp_valid
+                and phase
+                and all(character.isalnum() or character in "-_" for character in phase)
+            ):
                 phases.append(phase)
                 continue
         residual.extend(line)

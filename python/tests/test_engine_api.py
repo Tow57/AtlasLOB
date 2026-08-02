@@ -415,6 +415,15 @@ class _FakeNativeEngine:
             "payload": payload,
         }
 
+    def _submit_batch_for_measurement(
+        self,
+        commands: list[dict[str, object]],
+        output: str,
+    ) -> dict[str, object]:
+        result = self.submit_batch(commands, output)
+        result.pop("final_state_digest")
+        return result
+
     def top(self, instrument_id: int) -> dict[str, object] | None:
         if instrument_id != 7:
             return None
@@ -484,7 +493,7 @@ def _install_fake_module(monkeypatch: pytest.MonkeyPatch) -> ModuleType:
     module = ModuleType("atlaslob._native_engine")
     module.__dict__.update(
         {
-            "BINDING_ABI": 1,
+            "BINDING_ABI": 2,
             "SEMANTICS_VERSION": 6,
             "NativePersistenceError": _FakePersistenceError,
             "NativeRecoveryError": _FakeRecoveryError,
