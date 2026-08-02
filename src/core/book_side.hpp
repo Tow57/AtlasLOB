@@ -162,8 +162,7 @@ class BookSide final {
       if (level_->empty()) {
         return BookSideError::prepared_level_empty;
       }
-      if (detail::expensive_internal_invariant_checks_enabled() &&
-          !level_->validate_invariants()) {
+      if (detail::expensive_internal_invariant_checks_enabled() && !level_->validate_invariants()) {
         return BookSideError::level_invariant_violation;
       }
 
@@ -385,8 +384,7 @@ class BookSide final {
     if (price.value() <= 0) {
       return DetachedLevel{nullptr, {}, BookSideError::invalid_price};
     }
-    if (detail::expensive_internal_invariant_checks_enabled() &&
-        !validate_invariants()) {
+    if (detail::expensive_internal_invariant_checks_enabled() && !validate_invariants()) {
       return DetachedLevel{nullptr, {}, BookSideError::level_invariant_violation};
     }
 
@@ -411,8 +409,7 @@ class BookSide final {
     if (position->second.get() != &level) {
       return BookSideError::level_identity_mismatch;
     }
-    if (detail::expensive_internal_invariant_checks_enabled() &&
-        !level.validate_invariants()) {
+    if (detail::expensive_internal_invariant_checks_enabled() && !level.validate_invariants()) {
       return BookSideError::level_invariant_violation;
     }
     if (!level.empty()) {

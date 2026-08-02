@@ -358,8 +358,7 @@ ExecutionProjectionResult project_new_top_of_book(
   if (!domain::is_valid(aggressor_side)) {
     return fail(ExecutionProjectionError::invalid_side);
   }
-  if (detail::expensive_internal_invariant_checks_enabled() &&
-      !book.validate_invariants()) {
+  if (detail::expensive_internal_invariant_checks_enabled() && !book.validate_invariants()) {
     return fail(ExecutionProjectionError::book_invariant_violation);
   }
   if (!valid_plan_shape(plan)) {
@@ -396,8 +395,7 @@ ExecutionProjectionResult project_cancel_top_of_book(
   if (!domain::is_valid(target.side)) {
     return fail(ExecutionProjectionError::invalid_side);
   }
-  if (detail::expensive_internal_invariant_checks_enabled() &&
-      !book.validate_invariants()) {
+  if (detail::expensive_internal_invariant_checks_enabled() && !book.validate_invariants()) {
     return fail(ExecutionProjectionError::book_invariant_violation);
   }
   if (!matches_cancel_target(book, target)) {
@@ -421,8 +419,7 @@ ExecutionProjectionResult project_replace_top_of_book(
   if (!domain::is_valid(old_target.side) || !domain::is_valid(replacement_order.side)) {
     return fail(ExecutionProjectionError::invalid_side);
   }
-  if (detail::expensive_internal_invariant_checks_enabled() &&
-      !book.validate_invariants()) {
+  if (detail::expensive_internal_invariant_checks_enabled() && !book.validate_invariants()) {
     return fail(ExecutionProjectionError::book_invariant_violation);
   }
   if (!matches_cancel_target(book, old_target)) {

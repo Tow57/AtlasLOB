@@ -7,7 +7,7 @@ build-backend = "scikit_build_core.build"
 
 [project]
 name = "atlaslob"
-version = "0.2.0"
+version = "0.2.1"
 description = "Deterministic AtlasLOB matching engine and independent Python correctness oracle"
 readme = "README.md"
 requires-python = ">=3.11,<3.15"

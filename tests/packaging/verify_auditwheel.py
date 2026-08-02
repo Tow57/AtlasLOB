@@ -87,7 +87,7 @@ def main() -> int:
     parser.add_argument("wheel_directory", type=Path)
     arguments = parser.parse_args()
 
-    wheels = sorted(arguments.wheel_directory.glob("atlaslob-0.2.0-*.whl"))
+    wheels = sorted(arguments.wheel_directory.glob("atlaslob-0.2.1-*.whl"))
     if not wheels:
         raise AssertionError("no AtlasLOB wheels were found for auditwheel inspection")
     for wheel in wheels:

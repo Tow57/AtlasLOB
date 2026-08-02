@@ -1440,9 +1440,9 @@ void append_event_columns(py::dict& columns, const domain::Event& event) {
   return details;
 }
 
-[[nodiscard]] py::dict submit_batch_to_python(
-    const std::shared_ptr<NativeEngine>& self, py::handle commands_value,
-    py::handle output_value, bool include_final_state_digest) {
+[[nodiscard]] py::dict submit_batch_to_python(const std::shared_ptr<NativeEngine>& self,
+                                              py::handle commands_value, py::handle output_value,
+                                              bool include_final_state_digest) {
   if (self->read_only()) {
     raise_native_error(
         native_read_only_error,

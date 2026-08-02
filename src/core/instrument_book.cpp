@@ -79,8 +79,7 @@ namespace {
 
 [[nodiscard]] InstrumentBookStatus validate_append_target(const PriceLevel& target,
                                                           const OrderNode& node) noexcept {
-  if (detail::expensive_internal_invariant_checks_enabled() &&
-      !target.validate_invariants()) {
+  if (detail::expensive_internal_invariant_checks_enabled() && !target.validate_invariants()) {
     return make_status(InstrumentBookError::book_invariant_violation);
   }
   if (target.price() != node.price()) {
@@ -112,8 +111,7 @@ namespace {
   if (target.price() != old_order.price() || old_order.price_level() != &target) {
     return validate_append_target(target, residual);
   }
-  if (detail::expensive_internal_invariant_checks_enabled() &&
-      !target.validate_invariants()) {
+  if (detail::expensive_internal_invariant_checks_enabled() && !target.validate_invariants()) {
     return make_status(InstrumentBookError::book_invariant_violation);
   }
   if (target.price() != residual.price()) {
@@ -283,8 +281,7 @@ RestOrderResult InstrumentBook::PreparedRest::commit() noexcept {
     };
   }
   if (owner_->pending_node_ != node_ || owner_->pending_level_ != staging_level_.get() ||
-      (detail::expensive_internal_invariant_checks_enabled() &&
-       !owner_->validate_invariants())) {
+      (detail::expensive_internal_invariant_checks_enabled() && !owner_->validate_invariants())) {
     std::terminate();
   }
 
@@ -586,8 +583,7 @@ InstrumentBookStatus InstrumentBook::preflight_node(const OrderNode& node) const
   if (expected_level != level || level->price() != node.price()) {
     return make_status(InstrumentBookError::price_level_mismatch);
   }
-  if (detail::expensive_internal_invariant_checks_enabled() &&
-      !level->validate_invariants()) {
+  if (detail::expensive_internal_invariant_checks_enabled() && !level->validate_invariants()) {
     return make_status(InstrumentBookError::book_invariant_violation);
   }
 

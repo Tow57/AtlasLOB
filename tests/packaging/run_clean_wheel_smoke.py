@@ -24,7 +24,7 @@ def _arguments() -> argparse.Namespace:
 
 
 def _wheel_for(wheel_directory: Path, interpreter: str) -> Path:
-    matches = sorted(wheel_directory.glob(f"atlaslob-0.2.0-{interpreter}-{interpreter}-*.whl"))
+    matches = sorted(wheel_directory.glob(f"atlaslob-0.2.1-{interpreter}-{interpreter}-*.whl"))
     if len(matches) != 1:
         raise AssertionError(
             f"expected one {interpreter} wheel, found {[path.name for path in matches]!r}"

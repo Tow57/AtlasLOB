@@ -76,8 +76,8 @@ def _verify_one(wheel: Path, interpreter: str) -> None:
             raise AssertionError(f"{filename}: contains development/build artifacts {forbidden!r}")
 
         metadata = archive.read(_metadata_entry(names)).decode("utf-8")
-        if "Version: 0.2.0\n" not in metadata:
-            raise AssertionError(f"{filename}: package version is not 0.2.0")
+        if "Version: 0.2.1\n" not in metadata:
+            raise AssertionError(f"{filename}: package version is not 0.2.1")
         if "Requires-Python: <3.15,>=3.11\n" not in metadata:
             raise AssertionError(f"{filename}: unexpected Requires-Python metadata")
         if "License-Expression: MIT\n" not in metadata:
@@ -98,7 +98,7 @@ def main() -> int:
     parser.add_argument("wheel_directory", type=Path)
     arguments = parser.parse_args()
 
-    wheels = sorted(arguments.wheel_directory.glob("atlaslob-0.2.0-*.whl"))
+    wheels = sorted(arguments.wheel_directory.glob("atlaslob-0.2.1-*.whl"))
     if len(wheels) != len(EXPECTED_INTERPRETERS):
         raise AssertionError(
             f"expected four AtlasLOB wheels, found {[path.name for path in wheels]!r}"

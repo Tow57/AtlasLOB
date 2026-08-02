@@ -510,7 +510,7 @@ jobs:
       - name: Compare installed CPython 3.12 wheel with ATLAS_DIFF_V2
         run: |
           shopt -s nullglob
-          cp312_wheels=(wheelhouse/atlaslob-0.2.0-cp312-cp312-*.whl)
+          cp312_wheels=(wheelhouse/atlaslob-0.2.1-cp312-cp312-*.whl)
           if (( ${#cp312_wheels[@]} != 1 )); then
             printf 'expected exactly one CPython 3.12 wheel, found %s\n' \
               "${cp312_wheels[*]:-<none>}" >&2
@@ -529,7 +529,7 @@ jobs:
       - name: Retain native wheels
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: atlaslob-0.2.0-manylinux-x86-64-wheels
+          name: atlaslob-0.2.1-manylinux-x86-64-wheels
           path: wheelhouse/atlaslob-*.whl
           if-no-files-found: error
           retention-days: 14
@@ -604,7 +604,7 @@ jobs:
           "$RUNNER_TEMP/atlas-sdist-smoke/bin/python" -m pip install \
             --disable-pip-version-check \
             --no-deps \
-            dist/atlaslob-0.2.0.tar.gz
+            dist/atlaslob-0.2.1.tar.gz
           "$RUNNER_TEMP/atlas-sdist-smoke/bin/python" \
             tests/packaging/wheel_smoke.py
           "$RUNNER_TEMP/atlas-sdist-smoke/bin/python" -m pip check
@@ -612,8 +612,8 @@ jobs:
       - name: Retain source distribution
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: atlaslob-0.2.0-sdist
-          path: dist/atlaslob-0.2.0.tar.gz
+          name: atlaslob-0.2.1-sdist
+          path: dist/atlaslob-0.2.1.tar.gz
           if-no-files-found: error
           retention-days: 14
 

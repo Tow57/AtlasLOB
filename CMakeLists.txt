@@ -2,7 +2,7 @@ cmake_minimum_required(VERSION 3.25)
 
 project(
   AtlasLOB
-  VERSION 0.2.0
+  VERSION 0.2.1
   DESCRIPTION "Deterministic C++20 limit order book and matching engine"
   LANGUAGES CXX
 )
@@ -113,7 +113,7 @@ set(
   src/core/top_of_book.hpp
 )
 
-function(atlas_configure_core target_name)
+function(atlas_configure_core target_name invariants_enabled)
   target_sources(
     ${target_name}
     PRIVATE ${ATLAS_CORE_SOURCES}
@@ -135,14 +135,14 @@ function(atlas_configure_core target_name)
   target_compile_features(${target_name} PUBLIC cxx_std_20)
   target_compile_definitions(
     ${target_name}
-    PRIVATE ATLAS_ENABLE_INVARIANTS=$<BOOL:${ATLAS_ENABLE_INVARIANTS}>
+    PRIVATE ATLAS_ENABLE_INVARIANTS=$<BOOL:${invariants_enabled}>
   )
   set_target_properties(${target_name} PROPERTIES CXX_EXTENSIONS OFF)
   atlas_set_project_warnings(${target_name})
   atlas_enable_sanitizers(${target_name})
 endfunction()
 
-atlas_configure_core(atlas_core)
+atlas_configure_core(atlas_core "${ATLAS_ENABLE_INVARIANTS}")
 
 set(
   ATLAS_PERSISTENCE_PRIVATE_SOURCES
@@ -705,7 +705,9 @@ if(BUILD_TESTING)
   endforeach()
 
   add_library(atlas_core_testable)
-  atlas_configure_core(atlas_core_testable)
+  # Core unit tests inject corrupt internal state and must exercise the
+  # invariant-failure paths even when production Release invariants are off.
+  atlas_configure_core(atlas_core_testable ON)
   target_compile_definitions(atlas_core_testable PUBLIC ATLAS_ENABLE_TEST_ACCESS=1)
 
   file(

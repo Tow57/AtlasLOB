@@ -6,6 +6,16 @@ The format is based on Keep a Changelog, and public releases will follow semanti
 
 ## [Unreleased]
 
+## [0.2.1] - 2026-08-02
+
+### Fixed
+
+- Kept the test-only core invariant-enabled in Release configurations so corruption-injection
+  tests verify invariant failures while production Release targets remain invariant-disabled.
+- Aligned packaging smoke validation with the intentionally released native binding ABI 2.
+- Restored clang-format 18.1.8 compliance.
+- No production matching semantics or finalized Phase 5 benchmark results changed.
+
 ## [0.2.0] - 2026-08-02
 
 ### Release highlights

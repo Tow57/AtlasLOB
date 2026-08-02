@@ -51,8 +51,7 @@ StateValidationResult validate_state(const domain::NewOrder& order, const Instru
   if (!policy.valid()) {
     return invalid_policy();
   }
-  if (detail::expensive_internal_invariant_checks_enabled() &&
-      !book.validate_invariants()) {
+  if (detail::expensive_internal_invariant_checks_enabled() && !book.validate_invariants()) {
     return book_invariant_violation();
   }
   const auto pure_validation = domain::validate(order);
@@ -80,8 +79,7 @@ StateValidationResult validate_state(const domain::CancelOrder& order, const Ins
   if (!policy.valid()) {
     return invalid_policy();
   }
-  if (detail::expensive_internal_invariant_checks_enabled() &&
-      !book.validate_invariants()) {
+  if (detail::expensive_internal_invariant_checks_enabled() && !book.validate_invariants()) {
     return book_invariant_violation();
   }
   const auto pure_validation = domain::validate(order);
@@ -110,8 +108,7 @@ StateValidationResult validate_state(const domain::ReplaceOrder& order, const In
   if (!policy.valid()) {
     return invalid_policy();
   }
-  if (detail::expensive_internal_invariant_checks_enabled() &&
-      !book.validate_invariants()) {
+  if (detail::expensive_internal_invariant_checks_enabled() && !book.validate_invariants()) {
     return book_invariant_violation();
   }
   const auto pure_validation = domain::validate(order);

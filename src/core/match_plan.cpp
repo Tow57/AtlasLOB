@@ -108,8 +108,7 @@ MatchPlanResult plan_matches(const domain::NewOrder& order, const InstrumentBook
         .validation_reason = domain::RejectReason::unknown_instrument,
     };
   }
-  if (detail::expensive_internal_invariant_checks_enabled() &&
-      !book.validate_invariants()) {
+  if (detail::expensive_internal_invariant_checks_enabled() && !book.validate_invariants()) {
     return {
         .plan = {},
         .error = MatchPlanError::book_invariant_violation,

@@ -13,7 +13,7 @@ def main() -> int:
     parser.add_argument("distribution_directory", type=Path)
     arguments = parser.parse_args()
 
-    archives = sorted(arguments.distribution_directory.glob("atlaslob-0.2.0.tar.gz"))
+    archives = sorted(arguments.distribution_directory.glob("atlaslob-0.2.1.tar.gz"))
     if len(archives) != 1:
         raise AssertionError(f"expected one AtlasLOB sdist, found {archives!r}")
 
@@ -21,9 +21,9 @@ def main() -> int:
         names = {PurePosixPath(name) for name in archive.getnames()}
 
     roots = {name.parts[0] for name in names if name.parts}
-    if roots != {"atlaslob-0.2.0"}:
+    if roots != {"atlaslob-0.2.1"}:
         raise AssertionError(f"unexpected sdist roots: {sorted(roots)!r}")
-    root = PurePosixPath("atlaslob-0.2.0")
+    root = PurePosixPath("atlaslob-0.2.1")
 
     required = {
         root / "CMakeLists.txt",

@@ -3,8 +3,8 @@
 #include <gtest/gtest.h>
 
 #include <algorithm>
-#include <charconv>
 #include <array>
+#include <charconv>
 #include <cstdint>
 #include <filesystem>
 #include <fstream>
@@ -249,12 +249,12 @@ void replace_option(std::vector<std::string>& arguments, std::string_view option
   }
   testing::internal::CaptureStdout();
   testing::internal::CaptureStderr();
-  const auto exit_code = run_benchmark_cli(
-      static_cast<int>(pointers.size()), pointers.data(), RunnerFlavor::allocation,
-      AllocationHooks{
-          .begin = &begin_fake_allocation_tracking,
-          .end = &end_fake_allocation_tracking,
-      });
+  const auto exit_code = run_benchmark_cli(static_cast<int>(pointers.size()), pointers.data(),
+                                           RunnerFlavor::allocation,
+                                           AllocationHooks{
+                                               .begin = &begin_fake_allocation_tracking,
+                                               .end = &end_fake_allocation_tracking,
+                                           });
   auto error = testing::internal::GetCapturedStderr();
   auto output = testing::internal::GetCapturedStdout();
   return CliInvocation{exit_code, std::move(output), std::move(error)};
@@ -277,8 +277,8 @@ void replace_option(std::vector<std::string>& arguments, std::string_view option
              : 1U + static_cast<std::size_t>(std::count(values.begin(), values.end(), ','));
 }
 
-[[nodiscard]] std::optional<std::uint64_t> quoted_decimal_field(
-    std::string_view document, std::string_view name) noexcept {
+[[nodiscard]] std::optional<std::uint64_t> quoted_decimal_field(std::string_view document,
+                                                                std::string_view name) noexcept {
   const auto prefix = std::string{"\""} + std::string{name} + "\":\"";
   const auto begin = document.find(prefix);
   if (begin == std::string_view::npos) {
@@ -310,10 +310,10 @@ void replace_option(std::vector<std::string>& arguments, std::string_view option
 }
 
 [[nodiscard]] std::string w01_churn_workload(std::size_t active_orders,
-                                              std::size_t post_preload_commands) {
+                                             std::size_t post_preload_commands) {
   std::ostringstream output;
-  output << "ATLAS_DIFF_V2 " << active_orders * 2U << " 1 "
-         << active_orders + post_preload_commands << " 0\n"
+  output << "ATLAS_DIFF_V2 " << active_orders * 2U << " 1 " << active_orders + post_preload_commands
+         << " 0\n"
          << "I 1 1000000 1 " << active_orders * 2U << "\n";
   std::vector<std::uint64_t> order_ids(active_orders);
   for (std::size_t index = 0U; index < active_orders; ++index) {
@@ -323,8 +323,7 @@ void replace_option(std::vector<std::string>& arguments, std::string_view option
     const auto level = index % 64U;
     const auto price = side == 1U ? 10'000U - level : 20'000U + level;
     order_ids[index] = order_id;
-    output << "N " << client_id << ' ' << order_id << " 1 " << side
-           << " 1 1 1 " << price << " 1\n";
+    output << "N " << client_id << ' ' << order_id << " 1 " << side << " 1 1 1 " << price << " 1\n";
   }
   auto next_order_id = active_orders + 1U;
   for (std::size_t command = 0U; command < post_preload_commands; command += 2U) {
@@ -334,8 +333,8 @@ void replace_option(std::vector<std::string>& arguments, std::string_view option
     const auto level = slot % 64U;
     const auto price = side == 1U ? 10'000U - level : 20'000U + level;
     output << "C " << client_id << ' ' << order_ids[slot] << " 1\n";
-    output << "N " << client_id << ' ' << next_order_id << " 1 " << side
-           << " 1 1 1 " << price << " 1\n";
+    output << "N " << client_id << ' ' << next_order_id << " 1 " << side << " 1 1 1 " << price
+           << " 1\n";
     order_ids[slot] = next_order_id;
     ++next_order_id;
   }
@@ -1344,13 +1343,12 @@ TEST(BenchmarkRunnerCliTest, AllocationFlavorProducesValidUntimedObservation) {
     }
     testing::internal::CaptureStdout();
     testing::internal::CaptureStderr();
-    const auto exit_code = run_benchmark_cli(
-        static_cast<int>(argument_pointers.size()), argument_pointers.data(),
-        RunnerFlavor::allocation,
-        AllocationHooks{
-            .begin = &begin_fake_allocation_tracking,
-            .end = &end_fake_allocation_tracking,
-        });
+    const auto exit_code = run_benchmark_cli(static_cast<int>(argument_pointers.size()),
+                                             argument_pointers.data(), RunnerFlavor::allocation,
+                                             AllocationHooks{
+                                                 .begin = &begin_fake_allocation_tracking,
+                                                 .end = &end_fake_allocation_tracking,
+                                             });
     auto error = testing::internal::GetCapturedStderr();
     auto output = testing::internal::GetCapturedStdout();
     return CliInvocation{exit_code, std::move(output), std::move(error)};
@@ -1368,15 +1366,12 @@ TEST(BenchmarkRunnerCliTest, AllocationFlavorProducesValidUntimedObservation) {
 
   EXPECT_EQ(diagnostic.exit_code, benchmark_success_exit_code);
   EXPECT_EQ(diagnostic.output.find("ATLAS_DIAGNOSTIC_PHASE"), std::string::npos);
-  EXPECT_NE(ordinary.output.find("\"allocation_count\":\"2\""),
-            std::string::npos);
+  EXPECT_NE(ordinary.output.find("\"allocation_count\":\"2\""), std::string::npos);
   EXPECT_EQ(allocation_begin_calls, 2U);
   EXPECT_EQ(allocation_end_calls, 2U);
-  EXPECT_NE(diagnostic.output.find("\"boundary\":\"core_allocation\""),
-            std::string::npos);
+  EXPECT_NE(diagnostic.output.find("\"boundary\":\"core_allocation\""), std::string::npos);
   EXPECT_NE(diagnostic.output.find("\"elapsed_ns\":\"0\""), std::string::npos);
-  EXPECT_NE(diagnostic.output.find("\"allocation_count\":\"2\""),
-            std::string::npos);
+  EXPECT_NE(diagnostic.output.find("\"allocation_count\":\"2\""), std::string::npos);
   EXPECT_NE(diagnostic.output.find("\"valid\":true"), std::string::npos);
   const auto rss_before = quoted_decimal_field(diagnostic.output, "rss_before_bytes");
   const auto rss_after = quoted_decimal_field(diagnostic.output, "rss_after_bytes");
@@ -1387,15 +1382,13 @@ TEST(BenchmarkRunnerCliTest, AllocationFlavorProducesValidUntimedObservation) {
   EXPECT_GE(*peak_rss, std::max(*rss_before, *rss_after));
   const auto measured_enter =
       diagnostic.error.find("ATLAS_DIAGNOSTIC_PHASE measured-region-enter\n");
-  const auto measured_exit =
-      diagnostic.error.find("ATLAS_DIAGNOSTIC_PHASE measured-region-exit\n");
+  const auto measured_exit = diagnostic.error.find("ATLAS_DIAGNOSTIC_PHASE measured-region-exit\n");
   EXPECT_NE(measured_enter, std::string::npos);
   EXPECT_NE(measured_exit, std::string::npos);
   EXPECT_LT(measured_enter, measured_exit);
   EXPECT_NE(diagnostic.error.find("ATLAS_DIAGNOSTIC_PHASE validation-replay-enter\n"),
             std::string::npos);
-  EXPECT_NE(diagnostic.error.find("ATLAS_DIAGNOSTIC_PHASE observation-ready\n"),
-            std::string::npos);
+  EXPECT_NE(diagnostic.error.find("ATLAS_DIAGNOSTIC_PHASE observation-ready\n"), std::string::npos);
 
   std::error_code cleanup_error;
   std::filesystem::remove(workload_path, cleanup_error);
@@ -1417,8 +1410,8 @@ TEST(BenchmarkRunnerCliTest, AllocationFlavorExecutesRepresentativeW01Churn) {
   ASSERT_EQ(arguments.back(), "throughput");
   arguments.resize(arguments.size() - 2U);
   replace_option(arguments, "--measurement-parameter", "sweep_depth=0");
-  const auto measured_active = std::find(arguments.begin(), arguments.end(),
-                                         "measured_start_active_order_count=0");
+  const auto measured_active =
+      std::find(arguments.begin(), arguments.end(), "measured_start_active_order_count=0");
   ASSERT_NE(measured_active, arguments.end());
   *measured_active = "measured_start_active_order_count=64";
 
@@ -1430,18 +1423,13 @@ TEST(BenchmarkRunnerCliTest, AllocationFlavorExecutesRepresentativeW01Churn) {
   EXPECT_TRUE(invocation.error.empty());
   EXPECT_EQ(allocation_begin_calls, 1U);
   EXPECT_EQ(allocation_end_calls, 1U);
-  EXPECT_NE(invocation.output.find("\"boundary\":\"core_allocation\""),
-            std::string::npos);
+  EXPECT_NE(invocation.output.find("\"boundary\":\"core_allocation\""), std::string::npos);
   EXPECT_NE(invocation.output.find("\"commands\":\"128\""), std::string::npos);
-  EXPECT_NE(invocation.output.find("\"allocation_count\":\"2\""),
-            std::string::npos);
-  EXPECT_NE(invocation.output.find("\"deallocation_count\":\"1\""),
-            std::string::npos);
-  EXPECT_NE(invocation.output.find("\"allocated_bytes\":\"64\""),
-            std::string::npos);
+  EXPECT_NE(invocation.output.find("\"allocation_count\":\"2\""), std::string::npos);
+  EXPECT_NE(invocation.output.find("\"deallocation_count\":\"1\""), std::string::npos);
+  EXPECT_NE(invocation.output.find("\"allocated_bytes\":\"64\""), std::string::npos);
   EXPECT_NE(invocation.output.find("\"live_bytes\":\"32\""), std::string::npos);
-  EXPECT_NE(invocation.output.find("\"peak_live_bytes\":\"64\""),
-            std::string::npos);
+  EXPECT_NE(invocation.output.find("\"peak_live_bytes\":\"64\""), std::string::npos);
   EXPECT_NE(invocation.output.find("\"valid\":true"), std::string::npos);
 
   std::error_code cleanup_error;

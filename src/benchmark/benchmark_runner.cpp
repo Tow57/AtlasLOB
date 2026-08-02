@@ -1019,8 +1019,7 @@ void populate_prefix_observation(BenchmarkObservation& observation,
   }
   if (peak_rss.has_value()) {
     observation.peak_rss_bytes =
-        std::max(*peak_rss,
-                 std::max(observation.rss_before_bytes, observation.rss_after_bytes));
+        std::max(*peak_rss, std::max(observation.rss_before_bytes, observation.rss_after_bytes));
   }
   return rss_after.has_value() && peak_rss.has_value();
 }
@@ -1210,8 +1209,7 @@ void populate_prefix_observation(BenchmarkObservation& observation,
   }
   if (peak_rss.has_value()) {
     observation.peak_rss_bytes =
-        std::max(*peak_rss,
-                 std::max(observation.rss_before_bytes, observation.rss_after_bytes));
+        std::max(*peak_rss, std::max(observation.rss_before_bytes, observation.rss_after_bytes));
   }
   if (!timed.valid) {
     return fail(observation, timed.failure_reason, benchmark_invalid_observation_exit_code);
@@ -1399,8 +1397,7 @@ void populate_prefix_observation(BenchmarkObservation& observation,
   }
   if (peak_rss.has_value()) {
     observation.peak_rss_bytes =
-        std::max(*peak_rss,
-                 std::max(observation.rss_before_bytes, observation.rss_after_bytes));
+        std::max(*peak_rss, std::max(observation.rss_before_bytes, observation.rss_after_bytes));
   }
   emit_diagnostic_phase(options, "state-digest-enter");
   observation.final_digest = engine->state_digest().hex();

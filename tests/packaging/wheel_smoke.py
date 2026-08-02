@@ -633,7 +633,7 @@ with tempfile.TemporaryDirectory(prefix="atlaslob-exception-lifetime-") as tempo
 
 
 def _verify_installation() -> None:
-    _require(version("atlaslob") == "0.2.0", "unexpected installed AtlasLOB version")
+    _require(version("atlaslob") == "0.2.1", "unexpected installed AtlasLOB version")
     _require(ATLASLOB_SEMANTICS_VERSION == 6, "unexpected AtlasLOB semantics version")
     native_engine = import_module("atlaslob._native_engine")
     _require(native_engine.__file__ is not None, "native extension has no import path")
@@ -642,7 +642,7 @@ def _verify_installation() -> None:
         extension_path.suffix in {".pyd", ".so"},
         f"native extension was not loaded: {extension_path}",
     )
-    _require(native_backend.BINDING_ABI == 1, "unexpected private binding ABI")
+    _require(native_backend.BINDING_ABI == 2, "unexpected private binding ABI")
 
 
 def _pip_check() -> None:
