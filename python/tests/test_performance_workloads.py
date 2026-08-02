@@ -44,6 +44,7 @@ from atlaslob.performance.workloads import (
     materialize_workload,
     preflight_benchmark_plan,
     verify_workload_manifest,
+    verify_workload_manifest_boundary_checked,
 )
 from atlaslob.reference import ReferenceEngine
 from atlaslob.router import ReferenceRouter
@@ -1189,6 +1190,48 @@ def test_stream_verification_rejects_records_over_1024_bytes(tmp_path: Path) -> 
     (tmp_path / manifest.stream_file).write_bytes(b"x" * 1_024 + b"\n")
     with pytest.raises(ValueError, match="1024-byte"):
         verify_workload_manifest(path)
+
+
+@pytest.mark.parametrize("workload_id", ("W04", "W05", "W06", "W07", "W08", "W09", "W10"))
+def test_eager_and_boundary_checked_verification_agree_for_representative_workloads(
+    workload_id: str,
+) -> None:
+    manifest_path = next(
+        (REPOSITORY / "benchmarks" / "fixtures" / "v1").glob(f"{workload_id.lower()}-*.json")
+    )
+
+    assert verify_workload_manifest(manifest_path) == (
+        verify_workload_manifest_boundary_checked(manifest_path)
+    )
+
+
+def test_eager_and_boundary_checked_verification_agree_across_ci_smoke_plan() -> None:
+    plan = load_benchmark_plan(REPOSITORY / "benchmarks" / "plans" / "ci-smoke-v1.json")
+    manifests = tuple(sorted((REPOSITORY / "benchmarks" / "fixtures" / "v1").glob("*.json")))
+
+    eager = {path.name: verify_workload_manifest(path) for path in manifests}
+    scalable = {path.name: verify_workload_manifest_boundary_checked(path) for path in manifests}
+
+    assert len(eager) == len({_point.workload_id for _point in plan.points})
+    assert scalable == eager
+
+
+def test_named_boundary_checked_verifier_performs_full_boundary_checks(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    path = next((REPOSITORY / "benchmarks" / "fixtures" / "v1").glob("w04-*.json"))
+    calls = 0
+    original = ReferenceRouter.assert_invariants
+
+    def counted(router: ReferenceRouter) -> None:
+        nonlocal calls
+        calls += 1
+        original(router)
+
+    monkeypatch.setattr(ReferenceRouter, "assert_invariants", counted)
+    verify_workload_manifest_boundary_checked(path)
+
+    assert calls == 5
 
 
 def test_checked_plans_and_fixture_manifests_are_canonical() -> None:

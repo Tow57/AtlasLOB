@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import os
+from collections.abc import Callable
 from dataclasses import replace
 from pathlib import Path
+from typing import NoReturn, cast
 
 import pytest
 from atlaslob.performance import bundle
@@ -14,6 +16,7 @@ from atlaslob.performance.analysis import (
 from atlaslob.performance.schemas import (
     EnvironmentManifest,
     Observation,
+    WorkloadManifest,
     document_sha256,
     environment_to_dict,
     file_sha256,
@@ -21,7 +24,10 @@ from atlaslob.performance.schemas import (
     workload_to_dict,
     write_canonical_document,
 )
-from atlaslob.performance.workloads import materialize_workload
+from atlaslob.performance.workloads import (
+    materialize_workload,
+    verify_campaign_workload,
+)
 
 
 def _environment(binary: str = "a" * 64) -> EnvironmentManifest:
@@ -172,6 +178,44 @@ def test_bundle_inventory_and_exact_source_closure(tmp_path: Path) -> None:
     bundle.write_inventory(tmp_path)
     with pytest.raises(ValueError, match="every environment"):
         bundle.verify_bundle(tmp_path)
+
+
+def test_public_bundle_verification_rebuilds_boundary_checked_trust_once(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    _create_bundle(tmp_path)
+    calls = 0
+    original = cast(
+        Callable[[Path], WorkloadManifest],
+        vars(bundle)["verify_workload_manifest_boundary_checked"],
+    )
+
+    def counted(path: Path) -> WorkloadManifest:
+        nonlocal calls
+        calls += 1
+        return original(path)
+
+    monkeypatch.setattr(bundle, "verify_workload_manifest_boundary_checked", counted)
+    summary = bundle.verify_bundle(tmp_path)
+
+    assert summary.workloads == 1
+    assert calls == 1
+
+
+def test_within_operation_bundle_verification_reuses_supplied_capability(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    _create_bundle(tmp_path)
+    manifest_path = next(tmp_path.glob("w04-*.json"))
+    workload = verify_campaign_workload(manifest_path)
+
+    def forbidden(_path: Path) -> NoReturn:
+        raise AssertionError("semantic replay must be reused within finalization")
+
+    monkeypatch.setattr(bundle, "verify_workload_manifest_boundary_checked", forbidden)
+    summary = bundle.verify_bundle_with_verified_workloads(tmp_path, (workload,))
+
+    assert summary.workloads == 1
 
 
 def test_bundle_rejects_orphan_and_nonregenerating_renderings(tmp_path: Path) -> None:

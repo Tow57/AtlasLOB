@@ -176,6 +176,19 @@ class BenchmarkPlanPoint:
 
 
 @dataclass(frozen=True, slots=True)
+class VerifiedWorkload:
+    """Immutable proof that exact workload bytes passed semantic verification."""
+
+    manifest_path: Path
+    manifest_sha256: str
+    manifest: WorkloadManifest
+    stream_path: Path
+    stream_sha256: str
+    timed_input_path: Path | None
+    timed_input_sha256: str | None
+
+
+@dataclass(frozen=True, slots=True)
 class BenchmarkPlan:
     plan_id: str
     points: tuple[BenchmarkPlanPoint, ...]
@@ -1103,6 +1116,73 @@ def verify_workload_manifest(
     ):
         raise ValueError("workload manifest evidence does not reproduce")
     return manifest
+
+
+def verify_workload_manifest_boundary_checked(path: Path) -> WorkloadManifest:
+    """Deeply reproduce a workload with full checks at semantic boundaries."""
+
+    return verify_workload_manifest(path, eager_invariant_checks=False)
+
+
+def verify_campaign_workload(path: Path) -> VerifiedWorkload:
+    """Deeply verify exact workload bytes for reuse within one campaign process."""
+
+    manifest = verify_workload_manifest_boundary_checked(path)
+    return _verified_workload_from_manifest(path, manifest)
+
+
+def revalidate_verified_workload(workload: VerifiedWorkload) -> None:
+    """Cheaply prove that a verified capability still names the same bytes."""
+
+    manifest_path = workload.manifest_path
+    if not manifest_path.is_absolute() or manifest_path.resolve(strict=True) != manifest_path:
+        raise ValueError("verified workload manifest path is no longer exact")
+    expected_stream = manifest_path.parent / workload.manifest.stream_file
+    if workload.stream_path != expected_stream:
+        raise ValueError("verified workload stream path differs from its manifest")
+    if workload.stream_sha256 != workload.manifest.stream_sha256:
+        raise ValueError("verified workload stream digest differs from its manifest")
+    timed_name = workload.manifest.timed_input_file
+    expected_timed = None if timed_name is None else manifest_path.parent / timed_name
+    if workload.timed_input_path != expected_timed:
+        raise ValueError("verified workload timed-input path differs from its manifest")
+    if workload.timed_input_sha256 != workload.manifest.timed_input_sha256:
+        raise ValueError("verified workload timed-input digest differs from its manifest")
+    if file_sha256(manifest_path) != workload.manifest_sha256:
+        raise ValueError("verified workload manifest bytes changed")
+    if file_sha256(workload.stream_path) != workload.stream_sha256:
+        raise ValueError("verified workload stream bytes changed")
+    if workload.timed_input_path is not None:
+        if file_sha256(workload.timed_input_path) != workload.timed_input_sha256:
+            raise ValueError("verified workload timed-input bytes changed")
+
+
+def _verified_workload_from_manifest(
+    path: Path,
+    manifest: WorkloadManifest,
+) -> VerifiedWorkload:
+    """Bind byte identity to a manifest already returned by a deep verifier."""
+
+    manifest_path = path.resolve(strict=True)
+    if read_canonical_document(manifest_path, workload_from_dict) != manifest:
+        raise ValueError("workload manifest changed after semantic verification")
+    stream_path = manifest_path.parent / manifest.stream_file
+    timed_input_path = (
+        None
+        if manifest.timed_input_file is None
+        else manifest_path.parent / manifest.timed_input_file
+    )
+    workload = VerifiedWorkload(
+        manifest_path=manifest_path,
+        manifest_sha256=file_sha256(manifest_path),
+        manifest=manifest,
+        stream_path=stream_path,
+        stream_sha256=file_sha256(stream_path),
+        timed_input_path=timed_input_path,
+        timed_input_sha256=(None if timed_input_path is None else file_sha256(timed_input_path)),
+    )
+    revalidate_verified_workload(workload)
+    return workload
 
 
 def _customize_spec(workload_id: str, spec: WorkloadSpec) -> WorkloadSpec:

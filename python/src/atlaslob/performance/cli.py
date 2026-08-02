@@ -17,6 +17,7 @@ from atlaslob.performance.campaign import (
     CampaignRunners,
     finalize_campaign,
     run_campaign,
+    run_ordered_campaign,
 )
 from atlaslob.performance.environment import (
     capture_environment,
@@ -119,6 +120,8 @@ def parser() -> argparse.ArgumentParser:
     filters = campaign.add_mutually_exclusive_group()
     filters.add_argument("--point", action="append", default=[])
     filters.add_argument("--tier", action="append", default=[])
+    filters.add_argument("--ordered-tiers", action="store_true")
+    campaign.add_argument("--checkpoint-directory", type=Path)
     campaign.add_argument("--resume", action="store_true")
 
     finalize = commands.add_parser("finalize-campaign")
@@ -366,40 +369,67 @@ def _run_campaign(options: argparse.Namespace) -> int:
         item is None for item in python_inputs
     ):
         raise ValueError("Python campaign inputs must be supplied together")
-    summary = run_campaign(
-        options.plan,
-        options.bundle,
-        runners=CampaignRunners(
-            core=Runner(options.runner, options.environment, "standalone"),
-            allocation=(
-                None
-                if options.allocation_runner is None
-                else Runner(
-                    options.allocation_runner,
-                    options.allocation_environment,
-                    "standalone",
-                )
-            ),
-            python=(
-                None
-                if options.python_runner is None
-                else Runner(
-                    options.python_runner,
-                    options.python_environment,
-                    "standalone",
-                    wheel=options.wheel,
-                    worker=options.python_worker,
-                )
-            ),
+    runners = CampaignRunners(
+        core=Runner(options.runner, options.environment, "standalone"),
+        allocation=(
+            None
+            if options.allocation_runner is None
+            else Runner(
+                options.allocation_runner,
+                options.allocation_environment,
+                "standalone",
+            )
         ),
-        suite_label=options.suite_label,
-        valid_observations=options.valid_observations,
-        max_attempts=options.max_attempts,
-        timeout_seconds=options.timeout,
-        point_ids=options.point,
-        tiers=options.tier,
-        resume=options.resume,
+        python=(
+            None
+            if options.python_runner is None
+            else Runner(
+                options.python_runner,
+                options.python_environment,
+                "standalone",
+                wheel=options.wheel,
+                worker=options.python_worker,
+            )
+        ),
     )
+    if options.ordered_tiers:
+        if options.checkpoint_directory is None:
+            raise ValueError("ordered campaign requires --checkpoint-directory")
+        ordered = run_ordered_campaign(
+            options.plan,
+            options.bundle,
+            options.checkpoint_directory,
+            runners=runners,
+            suite_label=options.suite_label,
+            valid_observations=options.valid_observations,
+            max_attempts=options.max_attempts,
+            timeout_seconds=options.timeout,
+            resume=options.resume,
+        )
+        for tier in ordered.tiers:
+            print(
+                f"tier={tier.tier} shapes={tier.campaign.shapes} "
+                f"attempts={tier.campaign.attempts} valid={tier.campaign.valid} "
+                f"invalid={tier.campaign.invalid} elapsed={tier.elapsed_seconds:.3f}s "
+                f"checkpoint={tier.checkpoint_path} "
+                f"checkpoint_sha256={tier.checkpoint_sha256}"
+            )
+        summary = ordered.campaign
+    else:
+        if options.checkpoint_directory is not None:
+            raise ValueError("--checkpoint-directory requires --ordered-tiers")
+        summary = run_campaign(
+            options.plan,
+            options.bundle,
+            runners=runners,
+            suite_label=options.suite_label,
+            valid_observations=options.valid_observations,
+            max_attempts=options.max_attempts,
+            timeout_seconds=options.timeout,
+            point_ids=options.point,
+            tiers=options.tier,
+            resume=options.resume,
+        )
     print(
         f"campaign shapes={summary.shapes} attempts={summary.attempts} "
         f"valid={summary.valid} invalid={summary.invalid}"

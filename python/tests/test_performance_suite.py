@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import shutil
 import sys
 from dataclasses import replace
 from pathlib import Path
@@ -21,7 +22,11 @@ from atlaslob.performance.schemas import (
     workload_to_dict,
 )
 from atlaslob.performance.suite import Runner
-from atlaslob.performance.workloads import materialize_workload
+from atlaslob.performance.workloads import (
+    VerifiedWorkload,
+    materialize_workload,
+    verify_campaign_workload,
+)
 
 
 def _environment(binary: str = "a" * 64) -> EnvironmentManifest:
@@ -393,6 +398,143 @@ def test_direct_suite_rejects_incompatible_boundary_workload_pair(
             mode="replay-fast",
             observations=1,
         )
+
+
+def test_direct_suite_still_invokes_eager_semantic_verification(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    manifest_path = _manifest(tmp_path)
+
+    def eager_called(_path: Path) -> None:
+        raise ValueError("eager verifier called")
+
+    monkeypatch.setattr(suite, "verify_workload_manifest", eager_called)
+    output = tmp_path / "direct"
+    with pytest.raises(ValueError, match="eager verifier called"):
+        suite.run_suite(
+            manifest_path,
+            output,
+            baseline=Runner(Path("runner"), Path("environment"), "standalone"),
+            suite_label="directverify01",
+            observations=1,
+        )
+    assert not output.exists()
+
+
+def _run_verified_without_process(
+    monkeypatch: pytest.MonkeyPatch,
+    workload: VerifiedWorkload,
+    output: Path,
+) -> tuple[Path, ...]:
+    environment = _environment()
+    environment_digest = document_sha256(environment_to_dict(environment))
+    monkeypatch.setattr(
+        suite,
+        "_prepare_runner",
+        lambda *_: (environment.binary_sha256, environment, environment_digest),
+    )
+
+    def run_once(*arguments: object) -> Observation:
+        return _valid_observation(
+            workload.manifest_path,
+            environment,
+            environment_digest,
+            suite_label="verified01",
+            run_label=cast(str, arguments[11]),
+            variant="standalone",
+            block=0,
+            position=0,
+        )
+
+    monkeypatch.setattr(suite, "_run_once", run_once)
+    return suite.run_verified_suite(
+        workload,
+        output,
+        baseline=Runner(Path("runner"), Path("environment"), "standalone"),
+        suite_label="verified01",
+        observations=1,
+    )
+
+
+def test_verified_suite_does_not_repeat_semantic_replay(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    workload = verify_campaign_workload(_manifest(tmp_path))
+
+    def forbidden(_path: Path) -> None:
+        raise AssertionError("semantic verifier must not run for a capability")
+
+    monkeypatch.setattr(suite, "verify_workload_manifest", forbidden)
+    paths = _run_verified_without_process(monkeypatch, workload, tmp_path / "verified-output")
+
+    assert len(paths) == 1
+
+
+@pytest.mark.parametrize("target", ("manifest", "stream"))
+def test_verified_suite_rejects_same_size_byte_mutation_before_output_or_runner(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, target: str
+) -> None:
+    workload = verify_campaign_workload(_manifest(tmp_path))
+    path = workload.manifest_path if target == "manifest" else workload.stream_path
+    payload = bytearray(path.read_bytes())
+    payload[-2] ^= 1
+    path.write_bytes(payload)
+    called = False
+
+    def prepare(*_arguments: object) -> tuple[str, EnvironmentManifest, str]:
+        nonlocal called
+        called = True
+        raise AssertionError("runner preparation must not start")
+
+    monkeypatch.setattr(suite, "_prepare_runner", prepare)
+    output = tmp_path / f"mutated-{target}"
+    with pytest.raises(ValueError, match=f"{target} bytes changed"):
+        suite.run_verified_suite(
+            workload,
+            output,
+            baseline=Runner(Path("runner"), Path("environment"), "standalone"),
+            suite_label="mutation01",
+            observations=1,
+        )
+
+    assert path.stat().st_size == len(payload)
+    assert not called
+    assert not output.exists()
+
+
+def test_verified_suite_rejects_w10_timed_input_mutation_before_output_or_runner(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    source = Path(__file__).resolve().parents[2] / "benchmarks" / "fixtures" / "v1"
+    directory = tmp_path / "w10"
+    directory.mkdir()
+    for path in source.glob("w10-*"):
+        shutil.copy2(path, directory / path.name)
+    workload = verify_campaign_workload(next(directory.glob("w10-*.json")))
+    assert workload.timed_input_path is not None
+    payload = bytearray(workload.timed_input_path.read_bytes())
+    payload[-1] ^= 1
+    workload.timed_input_path.write_bytes(payload)
+    called = False
+
+    def prepare(*_arguments: object) -> tuple[str, EnvironmentManifest, str]:
+        nonlocal called
+        called = True
+        raise AssertionError("runner preparation must not start")
+
+    monkeypatch.setattr(suite, "_prepare_runner", prepare)
+    output = tmp_path / "mutated-timed-input"
+    with pytest.raises(ValueError, match="timed-input bytes changed"):
+        suite.run_verified_suite(
+            workload,
+            output,
+            baseline=Runner(Path("runner"), Path("environment"), "standalone"),
+            suite_label="mutation02",
+            observations=1,
+        )
+
+    assert not called
+    assert not output.exists()
 
 
 def test_fixture_manifest_digest_matches_canonical_document(tmp_path: Path) -> None:

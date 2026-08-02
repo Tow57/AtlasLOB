@@ -131,6 +131,40 @@ def test_campaign_filters_are_mutually_exclusive() -> None:
         )
 
 
+def test_ordered_campaign_is_mutually_exclusive_and_requires_checkpoint_directory(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    common = (
+        "run-campaign",
+        "--plan",
+        "plan.json",
+        "--bundle",
+        "bundle",
+        "--runner",
+        "runner",
+        "--environment",
+        "environment.json",
+        "--suite-label",
+        "campaign01",
+    )
+    with pytest.raises(SystemExit):
+        cli.parser().parse_args((*common, "--ordered-tiers", "--tier", "study"))
+
+    called = False
+
+    def fail_if_called(*_arguments: object, **_keywords: object) -> object:
+        nonlocal called
+        called = True
+        return object()
+
+    monkeypatch.setattr(cli, "run_ordered_campaign", fail_if_called)
+    status = cli.main([*common, "--ordered-tiers"])
+
+    assert status == 1
+    assert not called
+    assert "requires --checkpoint-directory" in capsys.readouterr().err
+
+
 def test_campaign_rejects_partial_runner_families(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],

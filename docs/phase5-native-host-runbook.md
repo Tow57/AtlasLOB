@@ -251,31 +251,27 @@ campaign_args=(
 )
 ```
 
-Run tiers in this order:
+Run the frozen tier sequence through one long-lived controller:
 
 ```sh
-(
-  set -euo pipefail
-  mkdir -p out/phase5-baseline/checkpoints
-  for tier in study memory replay python headline; do
-    taskset -c "$ATLAS_PHASE5_CPU" \
-      .venv-phase5/bin/python -m atlaslob.performance run-campaign \
-      "${campaign_args[@]}" --tier "$tier" --resume
-
-    checkpoint="out/phase5-baseline/checkpoints/after-$tier.sha256"
-    find "$bundle" -type f -print0 |
-      sort -z |
-      xargs -0 sha256sum >"$checkpoint"
-    sha256sum --check "$checkpoint"
-  done
-)
+mkdir -p out/phase5-baseline/checkpoints
+systemd-inhibit \
+  --what=idle:sleep \
+  --who=AtlasLOB \
+  --why="Phase 5 official ordered campaign" \
+  taskset -c "$ATLAS_PHASE5_CPU" \
+  .venv-phase5/bin/python -m atlaslob.performance run-campaign \
+  "${campaign_args[@]}" \
+  --ordered-tiers \
+  --checkpoint-directory out/phase5-baseline/checkpoints \
+  --resume
 ```
 
-The driver runs attempts round-robin within each tier. It stops after retaining the first invalid
+The controller boundary-checks every unique manifest once, publishes the verified catalog only after all inputs pass, and retains that in-memory catalog for `study -> memory -> replay -> python -> headline`. Before every attempt it re-hashes the exact manifest, ATLAS stream, and W10 timed input when present. It runs attempts round-robin within each tier. It stops after retaining the first invalid
 attempt. Diagnose the cause, keep the attempt, and use the same command with `--resume`; the next
 attempt receives a new directory. Never delete a timeout or invalid observation.
 
-Each successful tier writes and immediately verifies a deterministic file-level checkpoint outside
+The controller never advances after a tier or checkpoint failure. Each successful tier writes and immediately verifies a deterministic file-level checkpoint outside
 the bundle. Preserve those checkpoint files with the final archive; later tiers add evidence but do
 not rewrite an earlier attempt.
 

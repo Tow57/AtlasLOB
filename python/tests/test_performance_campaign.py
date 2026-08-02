@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 import shutil
+from collections.abc import Callable
 from dataclasses import replace
 from pathlib import Path
+from typing import cast
 
 import pytest
-from atlaslob.performance import campaign
-from atlaslob.performance.bundle import BundleSummary, verify_bundle
+from atlaslob.performance import analysis, campaign
+from atlaslob.performance.bundle import BundleSummary
 from atlaslob.performance.schemas import (
     EnvironmentManifest,
     Observation,
@@ -19,6 +21,7 @@ from atlaslob.performance.suite import Runner, _run_label
 from atlaslob.performance.workloads import (
     BenchmarkPlan,
     BenchmarkPlanPoint,
+    VerifiedWorkload,
     benchmark_plan_to_dict,
     load_benchmark_plan,
     materialize_benchmark_plan,
@@ -241,10 +244,11 @@ def test_campaign_is_round_robin_resumable_and_retains_invalid_attempt(
     )
 
     def fake_run_suite(
-        manifest_path: Path,
+        workload: VerifiedWorkload,
         output: Path,
         **kwargs: object,
     ) -> tuple[Path, ...]:
+        manifest_path = workload.manifest_path
         nonlocal invalid_first
         schedule.append(manifest_path.name)
         output.mkdir(parents=True)
@@ -260,7 +264,7 @@ def test_campaign_is_round_robin_resumable_and_retains_invalid_attempt(
         write_canonical_document(path, value)
         return (path,)
 
-    monkeypatch.setattr(campaign, "run_suite", fake_run_suite)
+    monkeypatch.setattr(campaign, "run_verified_suite", fake_run_suite)
     runners = campaign.CampaignRunners(
         Runner(Path("atlas_bench_runner"), bundle / "environments" / "core.json", "standalone")
     )
@@ -328,10 +332,11 @@ def test_finalize_campaign_requires_coverage_and_verifies_bundle(
     )
 
     def fake_run_suite(
-        manifest_path: Path,
+        workload: VerifiedWorkload,
         output: Path,
         **kwargs: object,
     ) -> tuple[Path, ...]:
+        manifest_path = workload.manifest_path
         output.mkdir(parents=True)
         value = _observation(
             manifest_path,
@@ -343,7 +348,7 @@ def test_finalize_campaign_requires_coverage_and_verifies_bundle(
         write_canonical_document(path, value)
         return (path,)
 
-    monkeypatch.setattr(campaign, "run_suite", fake_run_suite)
+    monkeypatch.setattr(campaign, "run_verified_suite", fake_run_suite)
     runners = campaign.CampaignRunners(
         Runner(Path("atlas_bench_runner"), bundle / "environments" / "core.json", "standalone")
     )
@@ -355,6 +360,24 @@ def test_finalize_campaign_requires_coverage_and_verifies_bundle(
         valid_observations=1,
         max_attempts=1,
     )
+    catalog_calls = 0
+    original_catalog_builder = campaign.build_verified_workload_catalog
+
+    def counted_catalog(
+        selected_plan: Path, workload_directory: Path
+    ) -> campaign.VerifiedWorkloadCatalog:
+        nonlocal catalog_calls
+        catalog_calls += 1
+        return original_catalog_builder(selected_plan, workload_directory)
+
+    monkeypatch.setattr(campaign, "build_verified_workload_catalog", counted_catalog)
+    monkeypatch.setattr(
+        analysis,
+        "verify_workload_manifest",
+        lambda *_: (_ for _ in ()).throw(
+            AssertionError("finalization must reuse its verified catalog")
+        ),
+    )
     summary = campaign.finalize_campaign(
         plan_path,
         bundle,
@@ -362,6 +385,7 @@ def test_finalize_campaign_requires_coverage_and_verifies_bundle(
         allow_exploratory=True,
     )
 
+    assert catalog_calls == 1
     assert summary.workloads == 2
     assert summary.environments == 1
     assert summary.observations == 2
@@ -388,10 +412,11 @@ def test_campaign_rejects_copied_attempt_before_resuming(
     )
 
     def fake_run_suite(
-        manifest_path: Path,
+        workload: VerifiedWorkload,
         output: Path,
         **kwargs: object,
     ) -> tuple[Path, ...]:
+        manifest_path = workload.manifest_path
         output.mkdir(parents=True)
         path = output / "observation-00001.json"
         write_canonical_document(
@@ -405,7 +430,7 @@ def test_campaign_rejects_copied_attempt_before_resuming(
         )
         return (path,)
 
-    monkeypatch.setattr(campaign, "run_suite", fake_run_suite)
+    monkeypatch.setattr(campaign, "run_verified_suite", fake_run_suite)
     runners = campaign.CampaignRunners(
         Runner(Path("atlas_bench_runner"), bundle / "environments" / "core.json", "standalone")
     )
@@ -436,7 +461,7 @@ def test_campaign_rejects_copied_attempt_before_resuming(
         called = True
         return ()
 
-    monkeypatch.setattr(campaign, "run_suite", fail_if_called)
+    monkeypatch.setattr(campaign, "run_verified_suite", fail_if_called)
     with pytest.raises(ValueError, match="stale or noncanonical run label"):
         campaign.run_campaign(
             plan_path,
@@ -462,10 +487,11 @@ def test_finalize_campaign_is_retryable_after_verification_failure(
     )
 
     def fake_run_suite(
-        manifest_path: Path,
+        workload: VerifiedWorkload,
         output: Path,
         **kwargs: object,
     ) -> tuple[Path, ...]:
+        manifest_path = workload.manifest_path
         output.mkdir(parents=True)
         path = output / "observation-00001.json"
         write_canonical_document(
@@ -479,7 +505,7 @@ def test_finalize_campaign_is_retryable_after_verification_failure(
         )
         return (path,)
 
-    monkeypatch.setattr(campaign, "run_suite", fake_run_suite)
+    monkeypatch.setattr(campaign, "run_verified_suite", fake_run_suite)
     campaign.run_campaign(
         plan_path,
         bundle,
@@ -493,14 +519,19 @@ def test_finalize_campaign_is_retryable_after_verification_failure(
 
     calls = 0
 
-    def fail_once(directory: Path) -> BundleSummary:
+    original_verify = cast(
+        Callable[[Path, tuple[VerifiedWorkload, ...]], BundleSummary],
+        vars(campaign)["verify_bundle_with_verified_workloads"],
+    )
+
+    def fail_once(directory: Path, workloads: tuple[VerifiedWorkload, ...]) -> BundleSummary:
         nonlocal calls
         calls += 1
         if calls == 1:
             raise ValueError("injected post-publication verification failure")
-        return verify_bundle(directory)
+        return original_verify(directory, workloads)
 
-    monkeypatch.setattr(campaign, "verify_bundle", fail_once)
+    monkeypatch.setattr(campaign, "verify_bundle_with_verified_workloads", fail_once)
     with pytest.raises(ValueError, match="injected post-publication"):
         campaign.finalize_campaign(
             plan_path,
@@ -533,10 +564,11 @@ def test_finalize_campaign_rejects_duplicate_environments_without_derived_output
     )
 
     def fake_run_suite(
-        manifest_path: Path,
+        workload: VerifiedWorkload,
         output: Path,
         **kwargs: object,
     ) -> tuple[Path, ...]:
+        manifest_path = workload.manifest_path
         output.mkdir(parents=True)
         path = output / "observation-00001.json"
         write_canonical_document(
@@ -550,7 +582,7 @@ def test_finalize_campaign_rejects_duplicate_environments_without_derived_output
         )
         return (path,)
 
-    monkeypatch.setattr(campaign, "run_suite", fake_run_suite)
+    monkeypatch.setattr(campaign, "run_verified_suite", fake_run_suite)
     campaign.run_campaign(
         plan_path,
         bundle,
@@ -617,7 +649,7 @@ def test_campaign_rejects_stale_unselected_evidence_before_running(
         called = True
         return ()
 
-    monkeypatch.setattr(campaign, "run_suite", fail_if_called)
+    monkeypatch.setattr(campaign, "run_verified_suite", fail_if_called)
     with pytest.raises(ValueError, match="runner or suite identity"):
         campaign.run_campaign(
             plan_path,
@@ -657,10 +689,11 @@ def test_finalize_campaign_rejects_missing_and_exploratory_evidence(
     )
 
     def fake_run_suite(
-        manifest_path: Path,
+        workload: VerifiedWorkload,
         output: Path,
         **kwargs: object,
     ) -> tuple[Path, ...]:
+        manifest_path = workload.manifest_path
         output.mkdir(parents=True)
         path = output / "observation-00001.json"
         write_canonical_document(
@@ -674,7 +707,7 @@ def test_finalize_campaign_rejects_missing_and_exploratory_evidence(
         )
         return (path,)
 
-    monkeypatch.setattr(campaign, "run_suite", fake_run_suite)
+    monkeypatch.setattr(campaign, "run_verified_suite", fake_run_suite)
     campaign.run_campaign(
         plan_path,
         bundle,
@@ -697,9 +730,192 @@ def test_finalize_campaign_rejects_missing_and_exploratory_evidence(
         )
 
 
+def test_catalog_semantically_verifies_each_unique_manifest_exactly_once(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    plan_path, bundle, _environment_value, _environment_digest = _prepare_bundle(tmp_path)
+    calls: list[Path] = []
+    original = cast(
+        Callable[[Path], VerifiedWorkload],
+        vars(campaign)["verify_campaign_workload"],
+    )
+
+    def counted(path: Path) -> VerifiedWorkload:
+        calls.append(path)
+        return original(path)
+
+    monkeypatch.setattr(campaign, "verify_campaign_workload", counted)
+    catalog = campaign.build_verified_workload_catalog(plan_path, bundle / "workloads")
+
+    assert len(catalog) == 2
+    assert calls == sorted((bundle / "workloads").glob("*.json"))
+
+
+def test_boundaries_and_python_batches_share_one_verified_capability(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    point = BenchmarkPlanPoint(
+        "shared-w04",
+        "smoke",
+        "W04",
+        4,
+        20,
+        20,
+        40,
+        20,
+        1,
+        16,
+        ("core_throughput", "python_objects"),
+        (1, 64, 1_024, 65_536),
+        ("objects",),
+    )
+    plan = BenchmarkPlan("shared-capability", (point,))
+    plan_path = tmp_path / "plan.json"
+    plan_path.write_bytes(canonical_json_bytes(benchmark_plan_to_dict(plan)))
+    workload_directory = tmp_path / "workloads"
+    materialize_benchmark_plan(plan, workload_directory)
+    calls = 0
+    original = cast(
+        Callable[[Path], VerifiedWorkload],
+        vars(campaign)["verify_campaign_workload"],
+    )
+
+    def counted(path: Path) -> VerifiedWorkload:
+        nonlocal calls
+        calls += 1
+        return original(path)
+
+    monkeypatch.setattr(campaign, "verify_campaign_workload", counted)
+    catalog = campaign.build_verified_workload_catalog(plan_path, workload_directory)
+    capabilities = {
+        id(catalog[campaign._point_shape_key(point)]) for _shape in campaign.expand_campaign(plan)
+    }
+
+    assert calls == 1
+    assert len(catalog) == 1
+    assert len(capabilities) == 1
+
+
+def test_interrupted_catalog_construction_publishes_no_catalog(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    plan_path, bundle, _environment_value, _environment_digest = _prepare_bundle(tmp_path)
+    original = cast(
+        Callable[[Path], VerifiedWorkload],
+        vars(campaign)["verify_campaign_workload"],
+    )
+    calls = 0
+    published: campaign.VerifiedWorkloadCatalog | None = None
+
+    def interrupted(path: Path) -> VerifiedWorkload:
+        nonlocal calls
+        calls += 1
+        if calls == 2:
+            raise KeyboardInterrupt
+        return original(path)
+
+    monkeypatch.setattr(campaign, "verify_campaign_workload", interrupted)
+    with pytest.raises(KeyboardInterrupt):
+        published = campaign.build_verified_workload_catalog(plan_path, bundle / "workloads")
+
+    assert published is None
+
+
+def test_reused_catalog_rejects_capability_plan_and_shape_mismatches(
+    tmp_path: Path,
+) -> None:
+    plan_path, bundle, _environment_value, _environment_digest = _prepare_bundle(tmp_path)
+    catalog = campaign.build_verified_workload_catalog(plan_path, bundle / "workloads")
+    key, workload = catalog.entries[0]
+    wrong_path = replace(workload, stream_path=tmp_path / workload.stream_path.name)
+    wrong_path_catalog = replace(catalog, entries=((key, wrong_path), *catalog.entries[1:]))
+    with pytest.raises(ValueError, match="stream path"):
+        campaign._require_current_catalog(wrong_path_catalog, plan_path, bundle / "workloads")
+
+    wrong_plan_catalog = replace(catalog, plan_sha256="0" * 64)
+    with pytest.raises(ValueError, match="campaign plan"):
+        campaign._require_current_catalog(wrong_plan_catalog, plan_path, bundle / "workloads")
+
+    wrong_key = ("W12", *key[1:])
+    wrong_shape_catalog = replace(catalog, entries=((wrong_key, workload), *catalog.entries[1:]))
+    with pytest.raises(ValueError, match="exactly cover"):
+        campaign._require_current_catalog(wrong_shape_catalog, plan_path, bundle / "workloads")
+
+
+def test_ordered_controller_enforces_frozen_tier_order_and_checkpoints(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    plan_path, bundle, _environment_value, _environment_digest = _prepare_bundle(tmp_path)
+    tiers: list[str] = []
+
+    def run(*_arguments: object, **keywords: object) -> campaign.CampaignSummary:
+        selected = keywords["tiers"]
+        assert isinstance(selected, tuple)
+        tiers.append(selected[0])
+        return campaign.CampaignSummary(1, 1, 1, 0)
+
+    monkeypatch.setattr(campaign, "run_campaign", run)
+    checkpoints = tmp_path / "checkpoints"
+    result = campaign.run_ordered_campaign(
+        plan_path,
+        bundle,
+        checkpoints,
+        runners=campaign.CampaignRunners(Runner(Path("runner"), Path("environment"), "standalone")),
+        suite_label="ordered01",
+        valid_observations=1,
+        max_attempts=1,
+        resume=True,
+    )
+
+    assert tuple(tiers) == campaign.OFFICIAL_TIER_ORDER
+    assert tuple(item.tier for item in result.tiers) == campaign.OFFICIAL_TIER_ORDER
+    for tier in campaign.OFFICIAL_TIER_ORDER:
+        checkpoint = checkpoints / f"after-{tier}.sha256"
+        assert checkpoint.is_file()
+        campaign.verify_campaign_checkpoint(bundle, checkpoint)
+
+
+def test_ordered_controller_never_advances_after_checkpoint_failure(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    plan_path, bundle, _environment_value, _environment_digest = _prepare_bundle(tmp_path)
+    tiers: list[str] = []
+
+    def run(*_arguments: object, **keywords: object) -> campaign.CampaignSummary:
+        selected = keywords["tiers"]
+        assert isinstance(selected, tuple)
+        tiers.append(selected[0])
+        return campaign.CampaignSummary(1, 1, 1, 0)
+
+    monkeypatch.setattr(campaign, "run_campaign", run)
+    monkeypatch.setattr(
+        campaign,
+        "create_campaign_checkpoint",
+        lambda *_: (_ for _ in ()).throw(ValueError("checkpoint failed")),
+    )
+    with pytest.raises(ValueError, match="checkpoint failed"):
+        campaign.run_ordered_campaign(
+            plan_path,
+            bundle,
+            tmp_path / "checkpoints",
+            runners=campaign.CampaignRunners(
+                Runner(Path("runner"), Path("environment"), "standalone")
+            ),
+            suite_label="ordered01",
+            valid_observations=1,
+            max_attempts=1,
+            resume=True,
+        )
+
+    assert tiers == ["study"]
+
+
 def test_native_host_runbook_fails_closed_and_archives_checkpoints() -> None:
     runbook = (REPOSITORY / "docs" / "phase5-native-host-runbook.md").read_text(encoding="utf-8")
 
     assert 'test -f "$1"' in runbook
-    assert "(\n  set -euo pipefail\n  mkdir -p out/phase5-baseline/checkpoints" in runbook
+    assert "--ordered-tiers" in runbook
+    assert "--checkpoint-directory out/phase5-baseline/checkpoints" in runbook
+    assert "study -> memory -> replay -> python -> headline" in runbook
+    assert "systemd-inhibit" in runbook
     assert "-C out/phase5-baseline bundle profiles checkpoints" in runbook

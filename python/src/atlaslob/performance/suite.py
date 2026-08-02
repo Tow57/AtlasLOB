@@ -28,7 +28,12 @@ from atlaslob.performance.schemas import (
     workload_measurement_parameters,
     write_canonical_document,
 )
-from atlaslob.performance.workloads import verify_workload_manifest
+from atlaslob.performance.workloads import (
+    VerifiedWorkload,
+    _verified_workload_from_manifest,
+    revalidate_verified_workload,
+    verify_workload_manifest,
+)
 
 RunnerMode = Literal[
     "throughput",
@@ -93,11 +98,68 @@ def run_suite(
     batch_size: int | None = None,
     timeout_seconds: int = 900,
 ) -> tuple[Path, ...]:
-    """Launch one runner process per retained observation.
+    """Deeply verify an untrusted manifest path, then launch its suite."""
 
-    A single runner produces standalone observations.  Two runners produce
-    ``A-B-B-A`` blocks, where ``observations`` is the number of blocks.
-    """
+    return _run_suite(
+        manifest_path,
+        output_directory,
+        baseline=baseline,
+        candidate=candidate,
+        suite_label=suite_label,
+        mode=mode,
+        observations=observations,
+        block_start=block_start,
+        batch_size=batch_size,
+        timeout_seconds=timeout_seconds,
+        verified_workload=None,
+    )
+
+
+def run_verified_suite(
+    workload: VerifiedWorkload,
+    output_directory: Path,
+    *,
+    baseline: Runner,
+    candidate: Runner | None = None,
+    suite_label: str,
+    mode: RunnerMode = "throughput",
+    observations: int | None = None,
+    block_start: int = 1,
+    batch_size: int | None = None,
+    timeout_seconds: int = 900,
+) -> tuple[Path, ...]:
+    """Revalidate a verified capability byte-for-byte, then launch its suite."""
+
+    return _run_suite(
+        workload.manifest_path,
+        output_directory,
+        baseline=baseline,
+        candidate=candidate,
+        suite_label=suite_label,
+        mode=mode,
+        observations=observations,
+        block_start=block_start,
+        batch_size=batch_size,
+        timeout_seconds=timeout_seconds,
+        verified_workload=workload,
+    )
+
+
+def _run_suite(
+    manifest_path: Path,
+    output_directory: Path,
+    *,
+    baseline: Runner,
+    candidate: Runner | None,
+    suite_label: str,
+    mode: RunnerMode,
+    observations: int | None,
+    block_start: int,
+    batch_size: int | None,
+    timeout_seconds: int,
+    verified_workload: VerifiedWorkload | None,
+) -> tuple[Path, ...]:
+    """Launch one runner process per retained observation."""
 
     if mode not in _BOUNDARY_BY_MODE:
         raise ValueError("unsupported runner mode")
@@ -128,14 +190,22 @@ def run_suite(
     if candidate is not None and candidate.variant != "candidate":
         raise ValueError("candidate runner has the wrong variant")
 
-    manifest = verify_workload_manifest(manifest_path)
+    if verified_workload is None:
+        manifest = verify_workload_manifest(manifest_path)
+        verified_workload = _verified_workload_from_manifest(manifest_path, manifest)
+    else:
+        revalidate_verified_workload(verified_workload)
+        if manifest_path.resolve(strict=True) != verified_workload.manifest_path:
+            raise ValueError("verified workload capability/path mismatch")
+        manifest = verified_workload.manifest
+    manifest_path = verified_workload.manifest_path
     boundary = _BOUNDARY_BY_MODE[mode]
     measurement_parameters_for_boundary(
         manifest,
         boundary,
         batch_size=batch_size,
     )
-    manifest_document_digest = file_sha256(manifest_path)
+    manifest_document_digest = verified_workload.manifest_sha256
     prepared: dict[RunnerVariant, tuple[str, EnvironmentManifest, str]] = {
         baseline.variant: _prepare_runner(baseline, mode),
     }
@@ -187,7 +257,7 @@ def run_suite(
                 executable_digest,
                 manifest,
                 manifest_document_digest,
-                manifest_path.parent / manifest.stream_file,
+                verified_workload.stream_path,
                 suite_label,
                 mode,
                 block,

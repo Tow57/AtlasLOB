@@ -29,7 +29,11 @@ from atlaslob.performance.schemas import (
     report_to_dict,
     validate_observation_against_workload,
 )
-from atlaslob.performance.workloads import verify_workload_manifest
+from atlaslob.performance.workloads import (
+    VerifiedWorkload,
+    revalidate_verified_workload,
+    verify_workload_manifest_boundary_checked,
+)
 
 INVENTORY_SCHEMA = "ATLAS_BENCH_BUNDLE_V1"
 _INVENTORY_MAX_BYTES = 16 * 1024 * 1024
@@ -67,6 +71,22 @@ def write_inventory(directory: Path) -> Path:
 
 
 def verify_bundle(directory: Path) -> BundleSummary:
+    """Independently rebuild scalable semantic trust for a bundle."""
+
+    return _verify_bundle(directory, ())
+
+
+def verify_bundle_with_verified_workloads(
+    directory: Path, workloads: tuple[VerifiedWorkload, ...]
+) -> BundleSummary:
+    """Reuse capabilities built inside the current independent operation."""
+
+    return _verify_bundle(directory, workloads)
+
+
+def _verify_bundle(
+    directory: Path, verified_workloads: tuple[VerifiedWorkload, ...]
+) -> BundleSummary:
     if not directory.is_dir():
         raise ValueError("bundle path is not a directory")
     _reject_symlinks(directory)
@@ -75,6 +95,9 @@ def verify_bundle(directory: Path) -> BundleSummary:
     if not json_paths:
         raise ValueError("bundle contains no evidence documents")
 
+    supplied_workloads = {workload.manifest_path: workload for workload in verified_workloads}
+    if len(supplied_workloads) != len(verified_workloads):
+        raise ValueError("bundle received duplicate verified workload capabilities")
     workloads: dict[str, tuple[Path, WorkloadManifest]] = {}
     environments: dict[str, EnvironmentManifest] = {}
     observations: dict[str, Observation] = {}
@@ -87,7 +110,14 @@ def verify_bundle(directory: Path) -> BundleSummary:
             raise ValueError("bundle contains duplicate evidence documents")
         seen_documents.add(digest)
         if isinstance(value, WorkloadManifest):
-            verified = verify_workload_manifest(path)
+            capability = supplied_workloads.pop(path.resolve(), None)
+            if capability is None:
+                verified = verify_workload_manifest_boundary_checked(path)
+            else:
+                revalidate_verified_workload(capability)
+                if capability.manifest != value:
+                    raise ValueError("verified workload capability differs from bundle document")
+                verified = capability.manifest
             if verified.stream_sha256 in workloads:
                 raise ValueError("bundle contains duplicate workload stream evidence")
             workloads[verified.stream_sha256] = (path, verified)
@@ -99,6 +129,8 @@ def verify_bundle(directory: Path) -> BundleSummary:
             reports.append((path, value))
         else:  # pragma: no cover - exhaustive schema decoder
             raise AssertionError("unknown performance evidence value")
+    if supplied_workloads:
+        raise ValueError("verified workload capability is absent from the bundle")
     if not workloads or not environments or not observations or not reports:
         raise ValueError("bundle requires workload, environment, observation, and report evidence")
 

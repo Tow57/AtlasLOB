@@ -4,18 +4,23 @@ from __future__ import annotations
 
 import shutil
 import tempfile
+import time
 from collections import defaultdict
-from collections.abc import Sequence
+from collections.abc import Iterator, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Final, Literal
 
 from atlaslob.performance.analysis import (
-    analyze_paths,
+    analyze_observations,
     render_report_markdown,
     render_report_svg,
 )
-from atlaslob.performance.bundle import BundleSummary, verify_bundle, write_inventory
+from atlaslob.performance.bundle import (
+    BundleSummary,
+    verify_bundle_with_verified_workloads,
+    write_inventory,
+)
 from atlaslob.performance.schemas import (
     EnvironmentManifest,
     Observation,
@@ -27,12 +32,20 @@ from atlaslob.performance.schemas import (
     validate_observation_against_workload,
     write_canonical_document,
 )
-from atlaslob.performance.suite import Runner, RunnerMode, _prepare_runner, _run_label, run_suite
+from atlaslob.performance.suite import (
+    Runner,
+    RunnerMode,
+    _prepare_runner,
+    _run_label,
+    run_verified_suite,
+)
 from atlaslob.performance.workloads import (
     BenchmarkPlan,
     BenchmarkPlanPoint,
+    VerifiedWorkload,
     load_benchmark_plan,
-    verify_workload_manifest,
+    revalidate_verified_workload,
+    verify_campaign_workload,
 )
 
 _MODE_BY_BOUNDARY: Final[dict[str, RunnerMode]] = {
@@ -53,6 +66,7 @@ _PYTHON_BATCH_SIZES: Final = (1, 64, 1_024, 65_536)
 _ATTEMPT_SLOTS_PER_BATCH: Final = 10_000
 _ATTEMPT_PREFIX: Final = "attempt-"
 _OBSERVATION_NAME: Final = "observation-00001.json"
+OFFICIAL_TIER_ORDER: Final = ("study", "memory", "replay", "python", "headline")
 _PHYSICAL_HOST_FIELDS: Final = (
     "os",
     "kernel",
@@ -117,6 +131,55 @@ class CampaignSummary:
     invalid: int
 
 
+@dataclass(frozen=True, slots=True)
+class OrderedTierSummary:
+    tier: str
+    campaign: CampaignSummary
+    elapsed_seconds: float
+    checkpoint_path: Path
+    checkpoint_sha256: str
+
+
+@dataclass(frozen=True, slots=True)
+class OrderedCampaignSummary:
+    tiers: tuple[OrderedTierSummary, ...]
+
+    @property
+    def campaign(self) -> CampaignSummary:
+        return CampaignSummary(
+            shapes=sum(item.campaign.shapes for item in self.tiers),
+            attempts=sum(item.campaign.attempts for item in self.tiers),
+            valid=sum(item.campaign.valid for item in self.tiers),
+            invalid=sum(item.campaign.invalid for item in self.tiers),
+        )
+
+
+ShapeKey = tuple[object, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class VerifiedWorkloadCatalog(Mapping[ShapeKey, VerifiedWorkload]):
+    """Immutable exact-plan mapping of shapes to verified workload bytes."""
+
+    plan_path: Path
+    plan_sha256: str
+    plan: BenchmarkPlan
+    workload_directory: Path
+    entries: tuple[tuple[ShapeKey, VerifiedWorkload], ...]
+
+    def __getitem__(self, key: ShapeKey) -> VerifiedWorkload:
+        for candidate, workload in self.entries:
+            if candidate == key:
+                return workload
+        raise KeyError(key)
+
+    def __iter__(self) -> Iterator[ShapeKey]:
+        return (key for key, _ in self.entries)
+
+    def __len__(self) -> int:
+        return len(self.entries)
+
+
 def expand_campaign(
     plan: BenchmarkPlan,
     *,
@@ -175,6 +238,7 @@ def run_campaign(
     point_ids: Sequence[str] = (),
     tiers: Sequence[str] = (),
     resume: bool = False,
+    _catalog: VerifiedWorkloadCatalog | None = None,
 ) -> CampaignSummary:
     """Run a standalone campaign round-robin, retaining every attempt."""
 
@@ -183,10 +247,14 @@ def run_campaign(
     if isinstance(max_attempts, bool) or not valid_observations <= max_attempts <= 10_000:
         raise ValueError("max_attempts must be between the valid target and 10000")
 
-    plan = load_benchmark_plan(plan_path)
+    catalog = (
+        build_verified_workload_catalog(plan_path, bundle_directory / "workloads")
+        if _catalog is None
+        else _require_current_catalog(_catalog, plan_path, bundle_directory / "workloads")
+    )
+    plan = catalog.plan
     all_shapes = expand_campaign(plan)
     selected_shapes = expand_campaign(plan, point_ids=point_ids, tiers=tiers)
-    manifests = _load_plan_manifests(plan, bundle_directory / "workloads")
     existing_shapes = _existing_campaign_shapes(bundle_directory, all_shapes)
     relevant_shapes = tuple(dict.fromkeys((*selected_shapes, *existing_shapes)))
     prepared = _preflight_runners(relevant_shapes, runners)
@@ -201,7 +269,7 @@ def run_campaign(
             shape,
             bundle_directory,
             plan,
-            manifests,
+            catalog,
             prepared,
             suite_label,
             seen_document_digests,
@@ -230,11 +298,12 @@ def run_campaign(
                 )
             attempt = len(existing) + 1
             point = _point_by_id(plan, shape.point_id)
-            manifest_path, _ = manifests[_point_shape_key(point)]
+            workload = catalog[_point_shape_key(point)]
+            manifest_path = workload.manifest_path
             runner = _runner_for(shape, runners)
             output = _shape_directory(bundle_directory, shape) / (f"{_ATTEMPT_PREFIX}{attempt:05d}")
-            paths = run_suite(
-                manifest_path,
+            paths = run_verified_suite(
+                workload,
                 output,
                 baseline=runner,
                 suite_label=suite_label,
@@ -250,7 +319,7 @@ def run_campaign(
                 paths[0],
                 shape,
                 manifest_path,
-                manifests[_point_shape_key(point)][1],
+                workload.manifest,
                 prepared[shape.role],
                 suite_label,
                 attempt,
@@ -272,6 +341,112 @@ def run_campaign(
     return _summarize(states, selected_shapes)
 
 
+def run_ordered_campaign(
+    plan_path: Path,
+    bundle_directory: Path,
+    checkpoint_directory: Path,
+    *,
+    runners: CampaignRunners,
+    suite_label: str,
+    valid_observations: int = 10,
+    max_attempts: int = 20,
+    timeout_seconds: int = 900,
+    resume: bool = False,
+) -> OrderedCampaignSummary:
+    """Run the five official tiers in frozen order with one verified catalog."""
+
+    catalog = build_verified_workload_catalog(plan_path, bundle_directory / "workloads")
+    results: list[OrderedTierSummary] = []
+    for tier in OFFICIAL_TIER_ORDER:
+        if results:
+            verify_campaign_checkpoint(bundle_directory, results[-1].checkpoint_path)
+        started = time.monotonic()
+        summary = run_campaign(
+            plan_path,
+            bundle_directory,
+            runners=runners,
+            suite_label=suite_label,
+            valid_observations=valid_observations,
+            max_attempts=max_attempts,
+            timeout_seconds=timeout_seconds,
+            tiers=(tier,),
+            resume=resume,
+            _catalog=catalog,
+        )
+        checkpoint_path = checkpoint_directory / f"after-{tier}.sha256"
+        create_campaign_checkpoint(bundle_directory, checkpoint_path)
+        results.append(
+            OrderedTierSummary(
+                tier=tier,
+                campaign=summary,
+                elapsed_seconds=time.monotonic() - started,
+                checkpoint_path=checkpoint_path.resolve(),
+                checkpoint_sha256=file_sha256(checkpoint_path),
+            )
+        )
+    for result in results:
+        verify_campaign_checkpoint(bundle_directory, result.checkpoint_path)
+    return OrderedCampaignSummary(tuple(results))
+
+
+def create_campaign_checkpoint(bundle_directory: Path, checkpoint_path: Path) -> None:
+    """Write and immediately verify a deterministic SHA-256 bundle checkpoint."""
+
+    bundle = bundle_directory.resolve(strict=True)
+    files: list[Path] = []
+    for path in bundle.rglob("*"):
+        if path.is_symlink():
+            raise ValueError("campaign bundle checkpoint does not permit symlinks")
+        if path.is_file():
+            files.append(path.resolve(strict=True))
+    files.sort(key=lambda path: path.as_posix())
+    checkpoint_path.parent.mkdir(parents=True, exist_ok=True)
+    temporary_name: str | None = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            mode="w",
+            encoding="ascii",
+            newline="\n",
+            prefix=f".{checkpoint_path.name}.",
+            dir=checkpoint_path.parent,
+            delete=False,
+        ) as output:
+            temporary_name = output.name
+            for path in files:
+                output.write(f"{file_sha256(path)}  {path}\n")
+        Path(temporary_name).replace(checkpoint_path)
+        temporary_name = None
+        verify_campaign_checkpoint(bundle, checkpoint_path)
+    finally:
+        if temporary_name is not None:
+            Path(temporary_name).unlink(missing_ok=True)
+
+
+def verify_campaign_checkpoint(bundle_directory: Path, checkpoint_path: Path) -> None:
+    """Recheck every exact file named by a deterministic campaign checkpoint."""
+
+    bundle = bundle_directory.resolve(strict=True)
+    lines = checkpoint_path.read_text(encoding="ascii").splitlines()
+    paths: list[Path] = []
+    for line in lines:
+        try:
+            expected, raw_path = line.split("  ", 1)
+        except ValueError as exc:
+            raise ValueError("campaign checkpoint has invalid sha256sum syntax") from exc
+        path = Path(raw_path)
+        try:
+            path.relative_to(bundle)
+        except ValueError as exc:
+            raise ValueError("campaign checkpoint path escapes its bundle") from exc
+        if len(expected) != 64 or any(char not in "0123456789abcdef" for char in expected):
+            raise ValueError("campaign checkpoint contains an invalid SHA-256")
+        if file_sha256(path) != expected:
+            raise ValueError(f"campaign checkpoint digest mismatch: {path}")
+        paths.append(path)
+    if paths != sorted(set(paths), key=lambda path: path.as_posix()):
+        raise ValueError("campaign checkpoint paths are not unique and sorted")
+
+
 def finalize_campaign(
     plan_path: Path,
     bundle_directory: Path,
@@ -291,10 +466,10 @@ def finalize_campaign(
     if reports_directory.exists() and any(reports_directory.iterdir()):
         raise ValueError("campaign report directory must be empty")
 
-    plan = load_benchmark_plan(plan_path)
+    catalog = build_verified_workload_catalog(plan_path, bundle_directory / "workloads")
+    plan = catalog.plan
     shapes = expand_campaign(plan)
     _require_exact_shape_directories(bundle_directory, shapes)
-    manifests = _load_plan_manifests(plan, bundle_directory / "workloads")
     environments = _load_environments(bundle_directory / "environments")
     environment_by_digest = {
         file_sha256(path): (path, environment) for path, environment in environments
@@ -308,7 +483,9 @@ def finalize_campaign(
 
     for shape in shapes:
         point = _point_by_id(plan, shape.point_id)
-        manifest_path, manifest = manifests[_point_shape_key(point)]
+        workload = catalog[_point_shape_key(point)]
+        manifest_path = workload.manifest_path
+        manifest = workload.manifest
         attempts = _load_shape_attempts_without_runner(
             shape,
             bundle_directory,
@@ -350,7 +527,7 @@ def finalize_campaign(
             staging_directory,
             observations_by_context,
             roles_by_context,
-            manifests,
+            catalog,
             environment_by_digest,
         )
         if reports_preexisted:
@@ -358,7 +535,7 @@ def finalize_campaign(
         staging_directory.replace(reports_directory)
         reports_published = True
         write_inventory(bundle_directory)
-        return verify_bundle(bundle_directory)
+        return verify_bundle_with_verified_workloads(bundle_directory, tuple(catalog.values()))
     except BaseException:
         (bundle_directory / "inventory.json").unlink(missing_ok=True)
         if reports_published and reports_directory.exists():
@@ -376,7 +553,7 @@ def _render_campaign_reports(
     reports_directory: Path,
     observations_by_context: dict[str, list[Path]],
     roles_by_context: dict[str, set[str]],
-    manifests: dict[tuple[object, ...], tuple[Path, WorkloadManifest]],
+    catalog: VerifiedWorkloadCatalog,
     environment_by_digest: dict[str, tuple[Path, EnvironmentManifest]],
 ) -> None:
     used_report_names: set[str] = set()
@@ -392,26 +569,23 @@ def _render_campaign_reports(
         )
         workload_digests = {item.workload_manifest_sha256 for item in observation_values}
         environment_digests = {item.environment_sha256 for item in observation_values}
-        workload_paths = tuple(
-            sorted(
-                (path for path, _ in manifests.values() if file_sha256(path) in workload_digests),
-                key=lambda path: path.name,
-            )
+        workloads = tuple(
+            (workload.manifest_sha256, workload.manifest)
+            for workload in sorted(catalog.values(), key=lambda item: item.manifest_path.name)
+            if workload.manifest_sha256 in workload_digests
         )
-        environment_paths = tuple(
-            sorted(
-                (
-                    path
-                    for digest, (path, _) in environment_by_digest.items()
-                    if digest in environment_digests
-                ),
-                key=lambda path: path.name,
+        environments = tuple(
+            (digest, environment)
+            for digest, (_path, environment) in sorted(
+                environment_by_digest.items(), key=lambda item: item[1][0].name
             )
+            if digest in environment_digests
         )
-        report = analyze_paths(
-            observation_paths,
-            workload_paths=workload_paths,
-            environment_paths=environment_paths,
+        report = analyze_observations(
+            observation_values,
+            workloads=workloads,
+            environments=environments,
+            source_digests=tuple(file_sha256(path) for path in observation_paths),
         )
         role_name = "-".join(sorted(roles_by_context[context]))
         report_name = role_name
@@ -432,23 +606,77 @@ def _render_campaign_reports(
         )
 
 
-def _load_plan_manifests(
-    plan: BenchmarkPlan,
+def build_verified_workload_catalog(
+    plan_path: Path,
     directory: Path,
-) -> dict[tuple[object, ...], tuple[Path, WorkloadManifest]]:
+) -> VerifiedWorkloadCatalog:
+    """Publish an immutable catalog only after every exact plan input verifies."""
+
+    resolved_plan_path = plan_path.resolve(strict=True)
+    plan_sha256 = file_sha256(resolved_plan_path)
+    plan = load_benchmark_plan(resolved_plan_path)
     if not directory.is_dir():
         raise ValueError("campaign workload directory does not exist")
+    resolved_directory = directory.resolve(strict=True)
     expected = {_point_shape_key(point) for point in plan.points}
-    result: dict[tuple[object, ...], tuple[Path, WorkloadManifest]] = {}
-    for path in sorted(directory.glob("*.json")):
-        manifest = verify_workload_manifest(path)
-        key = _manifest_shape_key(manifest)
-        if key in result:
+    entries: list[tuple[ShapeKey, VerifiedWorkload]] = []
+    seen: set[ShapeKey] = set()
+    for path in sorted(resolved_directory.glob("*.json")):
+        workload = verify_campaign_workload(path)
+        key = _manifest_shape_key(workload.manifest)
+        if key in seen:
             raise ValueError("campaign contains duplicate workload manifests")
-        result[key] = (path, manifest)
-    if set(result) != expected:
+        seen.add(key)
+        entries.append((key, workload))
+    if seen != expected:
         raise ValueError("campaign workload manifests do not exactly cover its plan")
-    return result
+    if (
+        file_sha256(resolved_plan_path) != plan_sha256
+        or load_benchmark_plan(resolved_plan_path) != plan
+    ):
+        raise ValueError("campaign plan changed during workload verification")
+    return VerifiedWorkloadCatalog(
+        plan_path=resolved_plan_path,
+        plan_sha256=plan_sha256,
+        plan=plan,
+        workload_directory=resolved_directory,
+        entries=tuple(entries),
+    )
+
+
+def _require_current_catalog(
+    catalog: VerifiedWorkloadCatalog,
+    plan_path: Path,
+    directory: Path,
+) -> VerifiedWorkloadCatalog:
+    resolved_plan_path = plan_path.resolve(strict=True)
+    resolved_directory = directory.resolve(strict=True)
+    if (
+        catalog.plan_path != resolved_plan_path
+        or catalog.workload_directory != resolved_directory
+        or file_sha256(resolved_plan_path) != catalog.plan_sha256
+        or load_benchmark_plan(resolved_plan_path) != catalog.plan
+    ):
+        raise ValueError("verified workload catalog does not match the campaign plan")
+    expected_paths = {workload.manifest_path for _, workload in catalog.entries}
+    current_paths = tuple(sorted(resolved_directory.glob("*.json")))
+    if (
+        any(path.is_symlink() for path in current_paths)
+        or {path.resolve(strict=True) for path in current_paths} != expected_paths
+    ):
+        raise ValueError("verified workload catalog paths no longer exactly cover the directory")
+    expected = {_point_shape_key(point) for point in catalog.plan.points}
+    actual = {key for key, _ in catalog.entries}
+    if len(actual) != len(catalog.entries) or actual != expected:
+        raise ValueError("verified workload catalog does not exactly cover the campaign plan")
+    for key, workload in catalog.entries:
+        if (
+            key != _manifest_shape_key(workload.manifest)
+            or workload.manifest_path.parent != resolved_directory
+        ):
+            raise ValueError("verified workload catalog contains a shape or path mismatch")
+        revalidate_verified_workload(workload)
+    return catalog
 
 
 def _point_shape_key(point: BenchmarkPlanPoint) -> tuple[object, ...]:
@@ -561,14 +789,16 @@ def _load_shape_attempts(
     shape: CampaignShape,
     bundle_directory: Path,
     plan: BenchmarkPlan,
-    manifests: dict[tuple[object, ...], tuple[Path, WorkloadManifest]],
+    catalog: VerifiedWorkloadCatalog,
     prepared: dict[str, tuple[str, EnvironmentManifest, str]],
     suite_label: str,
     seen_document_digests: set[str],
     seen_run_labels: set[str],
 ) -> list[Observation]:
     point = _point_by_id(plan, shape.point_id)
-    manifest_path, manifest = manifests[_point_shape_key(point)]
+    workload = catalog[_point_shape_key(point)]
+    manifest_path = workload.manifest_path
+    manifest = workload.manifest
     directory = _shape_directory(bundle_directory, shape)
     if not directory.exists():
         return []
