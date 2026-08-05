@@ -15,7 +15,7 @@ latency claims.
 
 ## Current status
 
-**Version 0.2.0 combines the deterministic C++20 multi-instrument matching engine, canonical
+**Version 0.2.1 combines the deterministic C++20 multi-instrument matching engine, canonical
 command-log replay and recovery, native Python bindings, and reproducible performance evidence.
 The official Phase 5 campaign is finalized and independently verified: 510 valid observations,
 no invalid observations, across 51 measurement shapes at the frozen release commit.**
