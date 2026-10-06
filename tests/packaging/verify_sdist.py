@@ -29,6 +29,9 @@ def main() -> int:
         root / "CMakeLists.txt",
         root / "LICENSE",
         root / "README.md",
+        root / "CHANGELOG.md",
+        root / "docs" / "ui.md",
+        root / "docs" / "ui-design.md",
         root / "THIRD_PARTY_NOTICES.md",
         root / "pyproject.toml",
         root / "cmake" / "AtlasSanitizers.cmake",
@@ -44,6 +47,8 @@ def main() -> int:
         root / "python" / "src" / "atlaslob" / "performance" / "__main__.py",
         root / "python" / "src" / "atlaslob" / "performance" / "schemas.py",
         root / "python" / "src" / "atlaslob" / "py.typed",
+        root / "python" / "src" / "atlaslob" / "ui" / "static" / "index.html",
+        root / "ui" / "package-lock.json",
     }
     missing = sorted(str(name) for name in required - names)
     if missing:
@@ -57,6 +62,8 @@ def main() -> int:
         or name.suffix in {".pyc", ".pyo"}
         or "tests" in name.parts
         or "corpus" in name.parts
+        or "node_modules" in name.parts
+        or ("ui" in name.parts and name.suffix == ".map")
     )
     if forbidden:
         raise AssertionError(f"sdist contains excluded development artifacts: {forbidden!r}")

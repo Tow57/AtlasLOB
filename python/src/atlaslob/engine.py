@@ -64,7 +64,7 @@ except ImportError as exc:
         "this CPython version and platform; the reference model is not used as a fallback."
     ) from exc
 
-_BINDING_ABI = 2
+_BINDING_ABI = 3
 _native_binding_abi = getattr(_native, "BINDING_ABI", None)
 if _native_binding_abi != _BINDING_ABI:
     observed_abi = "<missing>" if _native_binding_abi is None else repr(_native_binding_abi)
@@ -425,7 +425,7 @@ class ReadOnlyRecoveryError(RuntimeError):
 class Engine:
     """Native deterministic multi-instrument matching engine."""
 
-    __slots__ = ("_backend", "_recovery_report")
+    __slots__ = ("_backend", "_recovery_report", "_recovered_trades")
 
     def __init__(
         self,
@@ -445,6 +445,7 @@ class Engine:
         ) as exc:
             _raise_mapped_native_error(exc)
         self._recovery_report = _decode_optional_recovery_report(self._backend.recovery_report)
+        self._recovered_trades: tuple[TradeEvent, ...] | None = None
 
     @classmethod
     def create_logged(
@@ -482,9 +483,29 @@ class Engine:
         mode: ReplayMode = "verify",
         tail_policy: TailPolicy = "strict",
         durability: Durability = "sync_each_record",
+        collect_trades: bool = False,
+        max_recovered_trades: int = 10_000,
     ) -> Engine:
+        """Strictly recover state, optionally retaining the verified execution history.
+
+        Trade collection is available only for strict, verified, log-only recovery.
+        Exceeding the positive collection bound raises RecoveryError; no engine or
+        partial history is published. Existing logs and report schemas are unchanged.
+        """
         if snapshot_path is not None and snapshot_dir is not None:
             raise TypeError("snapshot_path and snapshot_dir are mutually exclusive")
+        if type(collect_trades) is not bool:
+            raise TypeError("collect_trades must be a bool")
+        native_trade_limit = _config_uint(
+            "max_recovered_trades", max_recovered_trades, U64_MAX, nonzero=True
+        )
+        if collect_trades and (
+            mode != "verify"
+            or tail_policy != "strict"
+            or snapshot_path is not None
+            or snapshot_dir is not None
+        ):
+            raise ValueError("trade collection requires strict verified log-only recovery")
         native_log_path = _normalize_path("log_path", log_path)
         native_snapshot_path = (
             None if snapshot_path is None else _normalize_path("snapshot_path", snapshot_path)
@@ -503,6 +524,8 @@ class Engine:
                 native_mode,
                 native_tail_policy,
                 native_durability,
+                collect_trades,
+                native_trade_limit,
             )
         except (
             _native.NativePersistenceError,
@@ -518,6 +541,7 @@ class Engine:
         instance = cls.__new__(cls)
         instance._backend = backend
         instance._recovery_report = _decode_optional_recovery_report(backend.recovery_report)
+        instance._recovered_trades = _decode_recovered_trades(backend.recovered_trades)
         return instance
 
     @property
@@ -535,6 +559,15 @@ class Engine:
     @property
     def recovery_report(self) -> RecoveryReport | ReplayReport | None:
         return self._recovery_report
+
+    @property
+    def recovered_trades(self) -> tuple[TradeEvent, ...] | None:
+        """Owned immutable history of the recovered prefix, or None if not collected.
+
+        Later submissions never append to this tuple. With collection enabled, a
+        successfully recovered prefix containing no trades has an empty tuple.
+        """
+        return self._recovered_trades
 
     def submit(self, command: Command) -> EngineResult:
         self._ensure_writable()
@@ -921,6 +954,23 @@ def _decode_engine_result(record: object) -> EngineResult:
     ):
         raise RuntimeError("native result instrument ID disagrees with events")
     return result
+
+
+def _decode_recovered_trades(record: object) -> tuple[TradeEvent, ...] | None:
+    if record is None:
+        return None
+    trades: list[TradeEvent] = []
+    previous = (0, 0)
+    for item in _sequence(record, "recovered_trades"):
+        event = _decode_event(item)
+        if not isinstance(event, TradeEvent):
+            raise RuntimeError("native recovered_trades contains a non-trade event")
+        position = (event.header.command_sequence, event.header.event_index)
+        if position <= previous:
+            raise RuntimeError("native recovered_trades is not in strict execution order")
+        previous = position
+        trades.append(event)
+    return tuple(trades)
 
 
 def _decode_event(record: object) -> Event:

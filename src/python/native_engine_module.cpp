@@ -12,6 +12,7 @@
 #include <stdexcept>
 #include <string>
 #include <string_view>
+#include <system_error>
 #include <type_traits>
 #include <utility>
 #include <variant>
@@ -32,7 +33,7 @@ namespace py = pybind11;
 namespace atlaslob::python {
 namespace {
 
-inline constexpr std::uint32_t binding_abi{2U};
+inline constexpr std::uint32_t binding_abi{3U};
 
 PyObject* native_persistence_error = nullptr;
 PyObject* native_recovery_error = nullptr;
@@ -428,6 +429,11 @@ class NativeEngine final {
     if (snapshot_path.has_value() && snapshot_directory.has_value()) {
       throw std::invalid_argument{"snapshot_path and snapshot_directory are mutually exclusive"};
     }
+    if (replay_options.collect_trades &&
+        (!replay_options.valid() || snapshot_path.has_value() || snapshot_directory.has_value())) {
+      throw std::invalid_argument{
+          "trade collection requires strict verified log-only recovery and a positive limit"};
+    }
 
     if (snapshot_path.has_value()) {
       auto attached = persistence::LoggedEngine::recover_from_snapshot(
@@ -498,7 +504,8 @@ class NativeEngine final {
       auto report = attached.report;
       return {
           .engine = std::shared_ptr<NativeEngine>{new NativeEngine{
-              Backend::logged, nullptr, std::move(attached.engine), std::move(report)}},
+              Backend::logged, nullptr, std::move(attached.engine), std::move(report),
+              std::move(attached.recovered_trades)}},
           .failure = std::nullopt,
       };
     }
@@ -531,6 +538,10 @@ class NativeEngine final {
   [[nodiscard]] bool logged() const noexcept { return backend_ == Backend::logged; }
   [[nodiscard]] bool read_only() const noexcept { return backend_ == Backend::recovered_read_only; }
   [[nodiscard]] const RecoveryReport& recovery_report() const noexcept { return recovery_report_; }
+  [[nodiscard]] const std::optional<std::vector<domain::TradeEvent>>& recovered_trades()
+      const noexcept {
+    return recovered_trades_;
+  }
 
   [[nodiscard]] bool poisoned() const {
     std::lock_guard lock{mutex_};
@@ -660,11 +671,13 @@ class NativeEngine final {
 
  private:
   NativeEngine(Backend backend, std::unique_ptr<MultiInstrumentEngine> live,
-               std::unique_ptr<persistence::LoggedEngine> logged, RecoveryReport recovery_report)
+               std::unique_ptr<persistence::LoggedEngine> logged, RecoveryReport recovery_report,
+               std::optional<std::vector<domain::TradeEvent>> recovered_trades = std::nullopt)
       : backend_{backend},
         live_{std::move(live)},
         logged_{std::move(logged)},
-        recovery_report_{std::move(recovery_report)} {
+        recovery_report_{std::move(recovery_report)},
+        recovered_trades_{std::move(recovered_trades)} {
     if ((backend_ == Backend::logged) != (logged_ != nullptr) ||
         (backend_ != Backend::logged) != (live_ != nullptr)) {
       throw std::logic_error{"native engine backend ownership is inconsistent"};
@@ -701,6 +714,7 @@ class NativeEngine final {
   std::unique_ptr<MultiInstrumentEngine> live_;
   std::unique_ptr<persistence::LoggedEngine> logged_;
   RecoveryReport recovery_report_;
+  const std::optional<std::vector<domain::TradeEvent>> recovered_trades_;
   mutable std::mutex mutex_;
 };
 
@@ -1549,7 +1563,17 @@ PYBIND11_MODULE(_native_engine, module) {
           "recover",
           [](py::handle log_path_value, py::object snapshot_path_value,
              py::object snapshot_directory_value, py::handle mode_value,
-             py::handle tail_policy_value, py::handle durability_value) {
+             py::handle tail_policy_value, py::handle durability_value,
+             py::handle collect_trades_value, py::handle max_recovered_trades_value) {
+            if (PyBool_Check(collect_trades_value.ptr()) == 0) {
+              raise_type_error("collect_trades must be a bool");
+            }
+            const bool collect_trades = collect_trades_value.ptr() == Py_True;
+            const auto max_recovered_trades =
+                require_size(max_recovered_trades_value, "max_recovered_trades");
+            if (max_recovered_trades == 0U) {
+              throw py::value_error{"max_recovered_trades must be positive"};
+            }
             const auto log_path = require_path(log_path_value, "log_path");
             std::optional<std::filesystem::path> snapshot_path;
             std::optional<std::filesystem::path> snapshot_directory;
@@ -1568,6 +1592,8 @@ PYBIND11_MODULE(_native_engine, module) {
                 .tail_policy = parse_tail_policy(tail_policy_value),
                 .codec_limits = {},
                 .invariant_interval = 1024U,
+                .collect_trades = collect_trades,
+                .max_recovered_trades = max_recovered_trades,
             };
             const auto logged_options = atlaslob::persistence::LoggedEngineOptions{
                 .durability = parse_durability(durability_value),
@@ -1589,6 +1615,17 @@ PYBIND11_MODULE(_native_engine, module) {
                                    "operational I/O failure while recovering AtlasLOB engine",
                                    std::move(details));
               }
+              const auto* report =
+                  std::get_if<atlaslob::persistence::ReplayReport>(&recovered.failure->report);
+              if (collect_trades && report != nullptr &&
+                  report->error.category ==
+                      atlaslob::persistence::LogErrorCategory::excessive_length &&
+                  report->error.system_error == std::errc::value_too_large) {
+                raise_native_error(native_recovery_error,
+                                   "max_recovered_trades exceeded; no recovered engine or partial "
+                                   "history published",
+                                   std::move(details));
+              }
               raise_native_error(native_recovery_error, "unable to recover AtlasLOB engine",
                                  std::move(details));
             }
@@ -1596,7 +1633,8 @@ PYBIND11_MODULE(_native_engine, module) {
           },
           py::arg("log_path"), py::arg("snapshot_path") = py::none{},
           py::arg("snapshot_dir") = py::none{}, py::arg("mode") = "verify",
-          py::arg("tail_policy") = "strict", py::arg("durability") = "sync_each_record")
+          py::arg("tail_policy") = "strict", py::arg("durability") = "sync_each_record",
+          py::arg("collect_trades") = false, py::arg("max_recovered_trades") = 10'000U)
       .def(
           "submit",
           [](const std::shared_ptr<NativeEngine>& self, py::handle command_value) {
@@ -1717,7 +1755,20 @@ PYBIND11_MODULE(_native_engine, module) {
                                py::gil_scoped_release release;
                                return self->poisoned();
                              })
-      .def_property_readonly("recovery_report", [](const std::shared_ptr<NativeEngine>& self) {
-        return recovery_report_to_python(self->recovery_report());
-      });
+      .def_property_readonly("recovery_report",
+                             [](const std::shared_ptr<NativeEngine>& self) {
+                               return recovery_report_to_python(self->recovery_report());
+                             })
+      .def_property_readonly(
+          "recovered_trades", [](const std::shared_ptr<NativeEngine>& self) -> py::object {
+            const auto& trades = self->recovered_trades();
+            if (!trades.has_value()) {
+              return py::none{};
+            }
+            py::tuple result{trades->size()};
+            for (std::size_t index = 0U; index < trades->size(); ++index) {
+              result[index] = event_to_python(atlaslob::domain::Event{(*trades)[index]});
+            }
+            return result;
+          });
 }

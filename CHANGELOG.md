@@ -6,6 +6,30 @@ The format is based on Keep a Changelog, and public releases will follow semanti
 
 ## [Unreleased]
 
+### Added
+
+- An optional local React/FastAPI dashboard with exact order-book views,
+  independent Buy/Sell forms, saved sessions, playback, themes, Atlas SVG
+  branding and locally bundled Manrope typography.
+- Command-sequence candlestick/volume charts, full-book cumulative depth,
+  instrument statistics and cached chart responses.
+- A deterministic frozen 600-command Market Walk alongside the five short
+  matching demonstrations.
+- Opt-in strict verified log-only history collection through
+  `Engine.recover(..., collect_trades=True, max_recovered_trades=10_000)`.
+  Its immutable `recovered_trades` tuple rebuilds historical charts without
+  restoring the recent activity feed or replaying execution twice.
+
+### Changed
+
+- Advanced native/Python compatibility to binding ABI 3. Install the wrapper,
+  extension and frontend together. Collection defaults to disabled and enforces
+  a positive bound without publishing partial history on failure.
+- Kept matching semantics, native log formats, recovery-report schemas and
+  saved-session formats unchanged. No market integration or hosted access is added.
+- Extended focused UI CI with native history/API tests and complete Chromium
+  coverage, retaining existing native correctness and distribution gates.
+
 ## [0.2.1] - 2026-08-02
 
 ### Fixed

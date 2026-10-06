@@ -36,6 +36,7 @@ def _verify_one(wheel: Path, interpreter: str) -> None:
             "atlaslob/engine.py",
             "atlaslob/_native_engine.pyi",
             "atlaslob/py.typed",
+            "atlaslob/ui/static/index.html",
         }
         missing = sorted(required - names)
         if missing:
@@ -71,6 +72,8 @@ def _verify_one(wheel: Path, interpreter: str) -> None:
             or name.startswith("atlaslob/performance/")
             or "__pycache__" in name
             or name.endswith((".pyc", ".pyo"))
+            or name.endswith(".map")
+            or "node_modules" in name
         )
         if forbidden:
             raise AssertionError(f"{filename}: contains development/build artifacts {forbidden!r}")

@@ -94,9 +94,14 @@ struct ReplayOptions final {
   TailPolicy tail_policy{TailPolicy::strict};
   CodecLimits codec_limits{};
   std::size_t invariant_interval{1024U};
+  // Opt-in, bounded execution evidence. Never serialized into ReplayReport.
+  bool collect_trades{};
+  std::size_t max_recovered_trades{10'000U};
 
   [[nodiscard]] constexpr bool valid() const noexcept {
-    return is_valid(mode) && is_valid(tail_policy) && invariant_interval != 0U;
+    return is_valid(mode) && is_valid(tail_policy) && invariant_interval != 0U &&
+           (!collect_trades || (mode == ReplayMode::verify && tail_policy == TailPolicy::strict &&
+                                max_recovered_trades != 0U));
   }
 };
 
@@ -166,6 +171,8 @@ struct ReplayReport final {
 struct ReplayResult final {
   std::unique_ptr<MultiInstrumentEngine> engine;
   ReplayReport report{};
+  // Absent unless collection was requested and the entire replay succeeded.
+  std::optional<std::vector<domain::TradeEvent>> recovered_trades{};
 
   [[nodiscard]] bool has_value() const noexcept {
     return engine != nullptr && report.error.ok() && !report.divergence.has_value();

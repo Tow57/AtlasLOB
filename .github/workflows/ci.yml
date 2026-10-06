@@ -386,7 +386,7 @@ jobs:
           --parallel 2
 
       - name: Install Python evidence dependencies
-        run: python -m pip install --disable-pip-version-check -e ".[dev]"
+        run: python -m pip install --disable-pip-version-check -e ".[dev,ui,ui-test]"
 
       - name: Check Python formatting
         run: >-
@@ -465,6 +465,7 @@ jobs:
 
   python-native-wheels:
     name: CPython 3.11-3.14 manylinux wheels
+    needs: local-ui
     runs-on: ubuntu-24.04
     timeout-minutes: 90
     steps:
@@ -490,6 +491,12 @@ jobs:
           "auditwheel==6.4.2"
 
       - name: Build and test native wheels
+        uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5
+        with:
+          name: atlaslob-ui-assets
+          path: python/src/atlaslob/ui/static
+
+      - name: Build and test native wheels with UI assets
         run: python -m cibuildwheel --output-dir wheelhouse .
 
       - name: Verify wheel contents and platform dependencies
@@ -574,6 +581,7 @@ jobs:
 
   python-sdist:
     name: Python source distribution
+    needs: local-ui
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
@@ -594,6 +602,12 @@ jobs:
           python -m pip install --disable-pip-version-check "build==1.3.0"
 
       - name: Build and inspect the source distribution
+        uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5
+        with:
+          name: atlaslob-ui-assets
+          path: python/src/atlaslob/ui/static
+
+      - name: Build and inspect the source distribution with UI assets
         run: |
           python -m build --sdist --outdir dist
           python tests/packaging/verify_sdist.py dist
@@ -616,6 +630,65 @@ jobs:
           path: dist/atlaslob-0.2.1.tar.gz
           if-no-files-found: error
           retention-days: 14
+
+  local-ui:
+    name: Local UI, native sessions and installed browser app
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
+        with:
+          python-version: "3.12"
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: "22.23.2"
+          cache: npm
+          cache-dependency-path: ui/package-lock.json
+      - name: Install native toolchain and optional UI dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y g++ ninja-build
+          python -m pip install -e '.[ui,ui-test]'
+          npm ci --prefix ui
+      - name: Contract, type, lint and native UI integration tests
+        run: |
+          python scripts/build_ui.py --check
+          npm test --prefix ui
+          npm run format:check --prefix ui
+          python -m ruff check python/src/atlaslob/ui python/tests/ui scripts/build_ui.py tests/packaging/ui_wheel_smoke.py
+          python -m ruff format --check python/src/atlaslob/ui python/tests/ui scripts/build_ui.py tests/packaging/ui_wheel_smoke.py
+          python -m mypy python/src/atlaslob/ui python/tests/ui tests/packaging/ui_wheel_smoke.py
+          python -m pytest python/tests/ui python/tests/test_engine_recovered_trades.py python/tests/test_engine_api.py -q
+      - name: Chromium walkthrough and accessibility
+        working-directory: ui
+        run: |
+          npx playwright install --with-deps chromium
+          npm run test:e2e
+      - name: Build and install outside checkout
+        run: |
+          python -m build
+          python tests/packaging/verify_sdist.py dist
+          python -m venv "$RUNNER_TEMP/atlas-ui-wheel"
+          "$RUNNER_TEMP/atlas-ui-wheel/bin/pip" install "$(realpath dist/atlaslob-0.2.1-cp312-cp312-linux_x86_64.whl)[ui]"
+          cd "$RUNNER_TEMP"
+          "$RUNNER_TEMP/atlas-ui-wheel/bin/python" "$GITHUB_WORKSPACE/tests/packaging/ui_wheel_smoke.py"
+          "$RUNNER_TEMP/atlas-ui-wheel/bin/python" "$GITHUB_WORKSPACE/tests/packaging/wheel_smoke.py"
+      - name: Supply verified assets to release packaging gates
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: atlaslob-ui-assets
+          path: python/src/atlaslob/ui/static
+          if-no-files-found: error
+      - name: Retain browser evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: atlaslob-ui-browser-evidence
+          path: ui/test-results
+          if-no-files-found: ignore
 
   formatting:
     name: Formatting

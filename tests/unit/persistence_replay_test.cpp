@@ -10,6 +10,7 @@
 #include <limits>
 #include <random>
 #include <span>
+#include <stdexcept>
 #include <string>
 #include <variant>
 #include <vector>
@@ -387,6 +388,138 @@ TEST(CommandLogReplay, VerificationClassifiesOutcomeReasonAndCountInPrecedenceOr
     ASSERT_TRUE(replayed.report.divergence.has_value());
     EXPECT_EQ(replayed.report.divergence->category, ReplayDivergenceCategory::event_count);
   }
+}
+
+TEST(CommandLogReplay, CollectsVerifiedTradesInExecutionOrderAndMovesThemIntoAttachedRecovery) {
+  TemporaryLog file;
+  const auto instruments = catalog();
+  auto opened = LoggedEngine::create_new(file.path(), instruments, fixed_log_id());
+  ASSERT_TRUE(opened);
+  ASSERT_TRUE(opened.engine->submit(order(1U, 7U, 100)));
+  ASSERT_TRUE(opened.engine->submit(order(2U, 7U, 100)));
+  const auto result = opened.engine->submit(crossing_sell(3U, 7U, 100, 8U));
+  ASSERT_TRUE(result);
+  std::vector<domain::TradeEvent> expected;
+  for (const auto& event : result.engine_result->batch()->events()) {
+    if (const auto* trade = std::get_if<domain::TradeEvent>(&event); trade != nullptr) {
+      expected.push_back(*trade);
+    }
+  }
+  ASSERT_EQ(expected.size(), 2U);
+  const auto digest = opened.engine->engine().state_digest();
+  opened.engine.reset();
+  const auto bytes = read_bytes(file.path());
+
+  const auto ordinary = replay_log(file.path());
+  ASSERT_TRUE(ordinary);
+  EXPECT_FALSE(ordinary.recovered_trades.has_value());
+  auto options = replay_options();
+  options.collect_trades = true;
+  options.max_recovered_trades = 2U;
+  const auto replayed = replay_log(file.path(), options);
+  ASSERT_TRUE(replayed);
+  ASSERT_TRUE(replayed.recovered_trades.has_value());
+  EXPECT_EQ(*replayed.recovered_trades, expected);
+  EXPECT_EQ(replayed.engine->state_digest(), digest);
+
+  auto attached = LoggedEngine::recover(file.path(), options);
+  ASSERT_TRUE(attached);
+  ASSERT_TRUE(attached.recovered_trades.has_value());
+  EXPECT_EQ(*attached.recovered_trades, expected);
+  EXPECT_EQ(read_bytes(file.path()), bytes);
+  ASSERT_TRUE(attached.engine->submit(crossing_sell(4U, 7U, 100, 2U)));
+  EXPECT_EQ(*attached.recovered_trades, expected);
+}
+
+TEST(CommandLogReplay, TradeCollectionDistinguishesEmptyHistoryFromDisabledCollection) {
+  TemporaryLog file;
+  const auto instruments = catalog();
+  auto opened = LoggedEngine::create_new(file.path(), instruments, fixed_log_id());
+  ASSERT_TRUE(opened);
+  opened.engine.reset();
+  auto options = replay_options();
+  options.collect_trades = true;
+  const auto recovered = replay_log(file.path(), options);
+  ASSERT_TRUE(recovered);
+  ASSERT_TRUE(recovered.recovered_trades.has_value());
+  EXPECT_TRUE(recovered.recovered_trades->empty());
+}
+
+TEST(CommandLogReplay, CollectionLimitNeverPublishesPartialHistoryOrModifiesLog) {
+  TemporaryLog file;
+  const auto instruments = catalog();
+  auto opened = LoggedEngine::create_new(file.path(), instruments, fixed_log_id());
+  ASSERT_TRUE(opened);
+  ASSERT_TRUE(opened.engine->submit(order(1U, 7U, 100)));
+  ASSERT_TRUE(opened.engine->submit(order(2U, 7U, 100)));
+  ASSERT_TRUE(opened.engine->submit(crossing_sell(3U, 7U, 100, 10U)));
+  opened.engine.reset();
+  const auto bytes = read_bytes(file.path());
+  auto options = replay_options();
+  options.collect_trades = true;
+  options.max_recovered_trades = 1U;
+  const auto recovered = LoggedEngine::recover(file.path(), options);
+  EXPECT_FALSE(recovered);
+  EXPECT_EQ(recovered.report.error.category, LogErrorCategory::excessive_length);
+  EXPECT_FALSE(recovered.recovered_trades.has_value());
+  EXPECT_EQ(read_bytes(file.path()), bytes);
+}
+
+TEST(CommandLogReplay, FailedVerificationNeverPublishesEarlierCollectedTrades) {
+  TemporaryLog file;
+  const auto instruments = catalog();
+  auto opened = LoggedEngine::create_new(file.path(), instruments, fixed_log_id());
+  ASSERT_TRUE(opened);
+  ASSERT_TRUE(opened.engine->submit(order(1U, 7U, 100)));
+  ASSERT_TRUE(opened.engine->submit(crossing_sell(2U, 7U, 100, 5U)));
+  ASSERT_TRUE(opened.engine->submit(order(3U, 7U, 105)));
+  opened.engine.reset();
+  auto bytes = read_bytes(file.path());
+  auto record_begin = static_cast<std::size_t>(
+      decode_u32(std::span<const std::uint8_t, 4U>{bytes.data() + 16U, 4U}));
+  for (std::size_t index = 0U; index < 2U; ++index) {
+    record_begin += decode_u32(std::span<const std::uint8_t, 4U>{bytes.data() + record_begin, 4U});
+  }
+  const auto length =
+      decode_u32(std::span<const std::uint8_t, 4U>{bytes.data() + record_begin, 4U});
+  bytes[record_begin + 30U] ^= 0x01U;
+  refresh_record_checksum(bytes, record_begin, length);
+  write_bytes(file.path(), bytes);
+  auto options = replay_options();
+  options.collect_trades = true;
+  const auto recovered = replay_log(file.path(), options);
+  EXPECT_FALSE(recovered);
+  ASSERT_TRUE(recovered.report.divergence.has_value());
+  EXPECT_EQ(recovered.report.divergence->sequence, domain::Sequence{3U});
+  EXPECT_FALSE(recovered.recovered_trades.has_value());
+  EXPECT_EQ(read_bytes(file.path()), bytes);
+}
+
+TEST(CommandLogReplay, UnsupportedTradeCollectionRejectedBeforeOpeningMissingFiles) {
+  TemporaryLog missing;
+  auto options = replay_options();
+  options.collect_trades = true;
+  options.mode = ReplayMode::fast;
+  EXPECT_FALSE(options.valid());
+  const auto invalid = replay_log(missing.path(), options);
+  EXPECT_EQ(invalid.report.error.category, LogErrorCategory::invalid_length);
+  options.mode = ReplayMode::verify;
+  options.tail_policy = TailPolicy::valid_prefix;
+  EXPECT_FALSE(options.valid());
+  options.tail_policy = TailPolicy::strict;
+  options.max_recovered_trades = 0U;
+  EXPECT_FALSE(options.valid());
+  options.max_recovered_trades = 10U;
+  EXPECT_THROW(LoggedEngine::recover_from_snapshot(missing.path(), missing.path(), options),
+               std::invalid_argument);
+  EXPECT_THROW(
+      LoggedEngine::recover_from_snapshot_directory(missing.path(), missing.path(), options),
+      std::invalid_argument);
+  EXPECT_THROW(recover_log_from_snapshot(missing.path(), missing.path(), options),
+               std::invalid_argument);
+  EXPECT_THROW(recover_log_from_snapshot_directory(missing.path(), missing.path(), options),
+               std::invalid_argument);
+  EXPECT_FALSE(std::filesystem::exists(missing.path()));
 }
 
 }  // namespace

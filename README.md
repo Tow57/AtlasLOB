@@ -344,3 +344,19 @@ consensus, kernel bypass, custom allocators, lock-free queues, or complex exchan
 ## License
 
 AtlasLOB is released under the [MIT License](LICENSE).
+# Optional local browser UI
+
+AtlasLOB includes a React/FastAPI demonstration workspace with an order book,
+independent Buy/Sell forms, candlestick/volume and cumulative-depth charts, six
+guided scenarios (including the 600-command Market Walk), saved sessions, and
+light/dark themes. Charts use real native executions on the global command
+timeline and restore full history on strict reopen; recent activity starts fresh.
+No live trading connection or external market data is involved.
+
+This local dashboard requires matching ABI-3 Python/native and frontend builds.
+Existing saved sessions need no migration; matching semantics and native log
+formats are unchanged.
+
+See [Local UI installation and guide](docs/ui.md) for Ubuntu 24.04 / WSL2 setup,
+asset building, recovery behavior and tests. Launch a built installation with
+`atlaslob-ui` and open `http://localhost:8765` in your Windows browser.

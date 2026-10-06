@@ -308,6 +308,7 @@ class _FakeNativeEngine:
         self.read_only = False
         self.poisoned = False
         self.recovery_report: dict[str, object] | None = None
+        self.recovered_trades: tuple[dict[str, object], ...] | None = None
         self.next_sequence = 1
         self.submit_calls = 0
         self.last_commands: list[dict[str, object]] = []
@@ -341,8 +342,10 @@ class _FakeNativeEngine:
         mode: str,
         tail_policy: str,
         durability: str,
+        collect_trades: bool,
+        max_recovered_trades: int,
     ) -> Self:
-        del snapshot_path, snapshot_dir, mode
+        del snapshot_path, snapshot_dir, mode, max_recovered_trades
         if cls.recover_failure is not None:
             failure = cls.recover_failure
             cls.recover_failure = None
@@ -352,6 +355,7 @@ class _FakeNativeEngine:
         instance.durability = durability
         instance.read_only = tail_policy == "valid-prefix"
         instance.logged = not instance.read_only
+        instance.recovered_trades = () if collect_trades else None
         instance.recovery_report = _replay_report(
             tail_policy=tail_policy, tail="torn" if instance.read_only else "clean"
         )
@@ -490,10 +494,12 @@ def _native_catalog_entry(instrument_id: int) -> dict[str, object]:
 
 
 def _install_fake_module(monkeypatch: pytest.MonkeyPatch) -> ModuleType:
+    import atlaslob
+
     module = ModuleType("atlaslob._native_engine")
     module.__dict__.update(
         {
-            "BINDING_ABI": 2,
+            "BINDING_ABI": 3,
             "SEMANTICS_VERSION": 6,
             "NativePersistenceError": _FakePersistenceError,
             "NativeRecoveryError": _FakeRecoveryError,
@@ -503,6 +509,10 @@ def _install_fake_module(monkeypatch: pytest.MonkeyPatch) -> ModuleType:
         }
     )
     monkeypatch.setitem(sys.modules, "atlaslob._native_engine", module)
+    # "from atlaslob import _native_engine" first sees the package attribute.
+    # Real-extension integration tests may have populated that attribute during
+    # collection, before this fixture gets a chance to replace sys.modules.
+    monkeypatch.setitem(vars(atlaslob), "_native_engine", module)
     return module
 
 
@@ -514,20 +524,41 @@ def engine_api(
 
     old_engine_module = sys.modules.pop("atlaslob.engine", None)
     package_namespace = cast(dict[str, object], vars(atlaslob))
-    for name in _ENGINE_EXPORTS:
+    cached_names = ("engine", *_ENGINE_EXPORTS)
+    previous_exports = {
+        name: package_namespace[name] for name in cached_names if name in package_namespace
+    }
+    for name in cached_names:
         package_namespace.pop(name, None)
     _FakeNativeEngine.instances.clear()
     _FakeNativeEngine.recover_failure = None
     _install_fake_module(monkeypatch)
-    module = importlib.import_module("atlaslob.engine")
     try:
+        module = importlib.import_module("atlaslob.engine")
         yield module, _FakeNativeEngine
     finally:
         sys.modules.pop("atlaslob.engine", None)
-        for name in _ENGINE_EXPORTS:
+        for name in cached_names:
             package_namespace.pop(name, None)
+        package_namespace.update(previous_exports)
         if old_engine_module is not None:
             sys.modules["atlaslob.engine"] = old_engine_module
+
+
+def test_fake_native_installer_overrides_and_restores_both_import_caches(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import atlaslob
+
+    preloaded = ModuleType("atlaslob._native_engine")
+    monkeypatch.setitem(sys.modules, "atlaslob._native_engine", preloaded)
+    monkeypatch.setitem(vars(atlaslob), "_native_engine", preloaded)
+    with pytest.MonkeyPatch.context() as isolated:
+        fake = _install_fake_module(isolated)
+        assert sys.modules["atlaslob._native_engine"] is fake
+        assert vars(atlaslob)["_native_engine"] is fake
+    assert sys.modules["atlaslob._native_engine"] is preloaded
+    assert vars(atlaslob)["_native_engine"] is preloaded
 
 
 def _engine_type(module: ModuleType) -> type[PublicEngine]:

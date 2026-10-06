@@ -19,6 +19,8 @@ class NativeEngine:
     def poisoned(self) -> bool: ...
     @property
     def recovery_report(self) -> dict[str, object] | None: ...
+    @property
+    def recovered_trades(self) -> tuple[dict[str, object], ...] | None: ...
     def __init__(
         self,
         catalog: list[dict[str, object]],
@@ -41,6 +43,8 @@ class NativeEngine:
         mode: str = ...,
         tail_policy: str = ...,
         durability: str = ...,
+        collect_trades: bool = ...,
+        max_recovered_trades: int = ...,
     ) -> NativeEngine: ...
     def submit(self, command: dict[str, object]) -> dict[str, object]: ...
     def submit_batch(

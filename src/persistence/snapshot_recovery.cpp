@@ -427,6 +427,9 @@ enum class SnapshotSelectionMode : std::uint8_t {
 [[nodiscard]] SnapshotRecoveryResult recover_with_selection(
     detail::LogSource& source, const std::filesystem::path& snapshot_location,
     SnapshotSelectionMode selection_mode, ReplayOptions options) {
+  if (options.collect_trades) {
+    throw std::invalid_argument{"trade collection requires log-only recovery"};
+  }
   SnapshotRecoveryReport report;
   report.recovery_source = selection_mode == SnapshotSelectionMode::explicit_path
                                ? RecoverySource::explicit_snapshot
@@ -556,6 +559,9 @@ SnapshotRecoveryResult recover_log_from_snapshot_directory_source(
 SnapshotRecoveryResult recover_log_from_snapshot(const std::filesystem::path& log_path,
                                                  const std::filesystem::path& snapshot_path,
                                                  ReplayOptions options) {
+  if (options.collect_trades) {
+    throw std::invalid_argument{"trade collection requires log-only recovery"};
+  }
   auto source = detail::open_native_log_source(log_path);
   if (!source) {
     SnapshotRecoveryReport report;
@@ -574,6 +580,9 @@ SnapshotRecoveryResult recover_log_from_snapshot(const std::filesystem::path& lo
 SnapshotRecoveryResult recover_log_from_snapshot_directory(
     const std::filesystem::path& log_path, const std::filesystem::path& snapshot_directory,
     ReplayOptions options) {
+  if (options.collect_trades) {
+    throw std::invalid_argument{"trade collection requires log-only recovery"};
+  }
   auto source = detail::open_native_log_source(log_path);
   if (!source) {
     SnapshotRecoveryReport report;

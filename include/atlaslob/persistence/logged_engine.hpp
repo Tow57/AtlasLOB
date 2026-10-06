@@ -4,8 +4,10 @@
 #include <memory>
 #include <optional>
 #include <span>
+#include <vector>
 
 #include "atlaslob/domain/commands.hpp"
+#include "atlaslob/domain/events.hpp"
 #include "atlaslob/matching_engine.hpp"
 #include "atlaslob/multi_instrument_engine.hpp"
 #include "atlaslob/persistence/snapshot_store.hpp"
@@ -44,6 +46,7 @@ struct LoggedSubmissionResult final {
 struct LoggedEngineRecoveryResult final {
   std::unique_ptr<LoggedEngine> engine;
   ReplayReport report{};
+  std::optional<std::vector<domain::TradeEvent>> recovered_trades{};
 
   [[nodiscard]] bool has_value() const noexcept {
     return engine != nullptr && report.tail == ReplayTail::clean && report.error.ok() &&

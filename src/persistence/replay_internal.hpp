@@ -2,6 +2,7 @@
 
 #include <cstdint>
 #include <optional>
+#include <vector>
 
 #include "atlaslob/multi_instrument_engine.hpp"
 #include "atlaslob/persistence/replay.hpp"
@@ -15,6 +16,8 @@ struct ReplayPassResult final {
   std::uint64_t committed{};
   std::uint64_t rejected{};
   std::optional<ReplayDivergence> divergence;
+  LogError collection_error{};
+  std::optional<std::vector<domain::TradeEvent>> recovered_trades{};
 };
 
 [[nodiscard]] ReplayTail public_replay_tail(LogScanTermination termination) noexcept;
