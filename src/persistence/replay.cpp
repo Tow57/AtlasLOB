@@ -95,8 +95,12 @@ namespace {
 class ReplayVisitor final : public detail::LogScanVisitor {
  public:
   ReplayVisitor(MultiInstrumentEngine& engine, ReplayReport& report, ReplayOptions options,
-                std::uint64_t start_offset) noexcept
-      : engine_{engine}, report_{report}, options_{options}, start_offset_{start_offset} {}
+                std::uint64_t start_offset, std::vector<domain::TradeEvent>* trades) noexcept
+      : engine_{engine},
+        report_{report},
+        options_{options},
+        start_offset_{start_offset},
+        trades_{trades} {}
 
   void on_record(const CommandRecord& record, std::span<const std::uint8_t> encoded,
                  std::uint64_t frame_begin, std::uint64_t frame_end) override {
@@ -110,7 +114,7 @@ class ReplayVisitor final : public detail::LogScanVisitor {
     if (frame_begin < start_offset_) {
       return;
     }
-    if (report_.divergence.has_value()) {
+    if (report_.divergence.has_value() || report_.error) {
       return;
     }
 
@@ -150,6 +154,26 @@ class ReplayVisitor final : public detail::LogScanVisitor {
         divergence.actual_events.assign(batch->events().begin(), batch->events().end());
       }
       report_.divergence = std::move(divergence);
+      return;
+    }
+
+    // Evidence belongs to this verified record only after all its checks pass.
+    // It remains local to recovery until the complete source and final
+    // invariants have also been verified.
+    if (trades_ != nullptr) {
+      for (const auto& event : result.batch()->events()) {
+        if (const auto* trade = std::get_if<domain::TradeEvent>(&event); trade != nullptr) {
+          if (trades_->size() >= options_.max_recovered_trades) {
+            report_.error = {
+                .category = LogErrorCategory::excessive_length,
+                .byte_offset = frame_begin,
+                .system_error = std::make_error_code(std::errc::value_too_large),
+            };
+            return;
+          }
+          trades_->push_back(*trade);
+        }
+      }
     }
   }
 
@@ -158,6 +182,7 @@ class ReplayVisitor final : public detail::LogScanVisitor {
   ReplayReport& report_;
   ReplayOptions options_;
   std::uint64_t start_offset_{};
+  std::vector<domain::TradeEvent>* trades_{};
 };
 
 [[nodiscard]] bool same_source(const detail::LogScanResult& first,
@@ -186,7 +211,12 @@ bool same_validated_source(const LogScanResult& first, const LogScanResult& seco
 ReplayPassResult execute_replay_pass(LogSource& source, MultiInstrumentEngine& engine,
                                      ReplayOptions options, std::uint64_t start_offset) {
   ReplayReport evidence;
-  ReplayVisitor visitor{engine, evidence, options, start_offset};
+  std::optional<std::vector<domain::TradeEvent>> trades;
+  if (options.collect_trades) {
+    trades.emplace();
+  }
+  ReplayVisitor visitor{engine, evidence, options, start_offset,
+                        trades.has_value() ? &*trades : nullptr};
   auto scan = scan_command_log(source, {.codec_limits = options.codec_limits}, &visitor);
   return {
       .scan = std::move(scan),
@@ -194,6 +224,8 @@ ReplayPassResult execute_replay_pass(LogSource& source, MultiInstrumentEngine& e
       .committed = evidence.committed,
       .rejected = evidence.rejected,
       .divergence = std::move(evidence.divergence),
+      .collection_error = evidence.error,
+      .recovered_trades = std::move(trades),
   };
 }
 
@@ -264,6 +296,10 @@ ReplayResult replay_validated_log_source(LogSource& source, const LogScanResult&
   report.committed = replay_pass.committed;
   report.rejected = replay_pass.rejected;
   report.divergence = std::move(replay_pass.divergence);
+  report.error = replay_pass.collection_error;
+  if (report.error) {
+    return {.engine = nullptr, .report = std::move(report)};
+  }
   if (!report.divergence.has_value() &&
       !core::MultiInstrumentEngineAccess::validate_invariants(*engine)) {
     report.divergence = ReplayDivergence{
@@ -285,6 +321,7 @@ ReplayResult replay_validated_log_source(LogSource& source, const LogScanResult&
   return {
       .engine = std::move(engine),
       .report = std::move(report),
+      .recovered_trades = std::move(replay_pass.recovered_trades),
   };
 }
 

@@ -22,3 +22,8 @@ __pycache__/
 
 .DS_Store
 Thumbs.db
+# Optional local UI build/test outputs
+ui/node_modules/
+ui/test-results/
+ui/playwright-report/
+python/src/atlaslob/ui/static/

@@ -642,7 +642,7 @@ def _verify_installation() -> None:
         extension_path.suffix in {".pyd", ".so"},
         f"native extension was not loaded: {extension_path}",
     )
-    _require(native_backend.BINDING_ABI == 2, "unexpected private binding ABI")
+    _require(native_backend.BINDING_ABI == 3, "unexpected private binding ABI")
 
 
 def _pip_check() -> None:

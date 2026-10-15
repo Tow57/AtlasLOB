@@ -289,6 +289,10 @@ LoggedEngineRecoveryResult LoggedEngine::recover(const std::filesystem::path& pa
   if (!options.valid()) {
     throw std::invalid_argument{"invalid logged-engine options"};
   }
+  if (replay_options.collect_trades && !replay_options.valid()) {
+    throw std::invalid_argument{
+        "trade collection requires strict verified recovery and a positive collection limit"};
+  }
 
   auto source = detail::open_native_log_source(path);
   if (!source) {
@@ -325,12 +329,16 @@ LoggedEngineRecoveryResult LoggedEngine::recover(const std::filesystem::path& pa
       .engine = std::unique_ptr<LoggedEngine>{new LoggedEngine{std::make_unique<Impl>(
           std::move(recovered.engine), std::move(sink.sink), log_id, options)}},
       .report = std::move(recovered.report),
+      .recovered_trades = std::move(recovered.recovered_trades),
   };
 }
 
 LoggedEngineSnapshotRecoveryResult LoggedEngine::recover_from_snapshot(
     const std::filesystem::path& path, const std::filesystem::path& snapshot_path,
     ReplayOptions replay_options, LoggedEngineOptions options) {
+  if (replay_options.collect_trades) {
+    throw std::invalid_argument{"trade collection requires log-only recovery"};
+  }
   if (!options.valid()) {
     throw std::invalid_argument{"invalid logged-engine options"};
   }
@@ -379,6 +387,9 @@ LoggedEngineSnapshotRecoveryResult LoggedEngine::recover_from_snapshot(
 LoggedEngineSnapshotRecoveryResult LoggedEngine::recover_from_snapshot_directory(
     const std::filesystem::path& path, const std::filesystem::path& snapshot_directory,
     ReplayOptions replay_options, LoggedEngineOptions options) {
+  if (replay_options.collect_trades) {
+    throw std::invalid_argument{"trade collection requires log-only recovery"};
+  }
   if (!options.valid()) {
     throw std::invalid_argument{"invalid logged-engine options"};
   }
