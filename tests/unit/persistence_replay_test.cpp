@@ -510,14 +510,17 @@ TEST(CommandLogReplay, UnsupportedTradeCollectionRejectedBeforeOpeningMissingFil
   options.max_recovered_trades = 0U;
   EXPECT_FALSE(options.valid());
   options.max_recovered_trades = 10U;
-  EXPECT_THROW(LoggedEngine::recover_from_snapshot(missing.path(), missing.path(), options),
+  EXPECT_THROW(static_cast<void>(
+                   LoggedEngine::recover_from_snapshot(missing.path(), missing.path(), options)),
+               std::invalid_argument);
+  EXPECT_THROW(static_cast<void>(LoggedEngine::recover_from_snapshot_directory(
+                   missing.path(), missing.path(), options)),
                std::invalid_argument);
   EXPECT_THROW(
-      LoggedEngine::recover_from_snapshot_directory(missing.path(), missing.path(), options),
+      static_cast<void>(recover_log_from_snapshot(missing.path(), missing.path(), options)),
       std::invalid_argument);
-  EXPECT_THROW(recover_log_from_snapshot(missing.path(), missing.path(), options),
-               std::invalid_argument);
-  EXPECT_THROW(recover_log_from_snapshot_directory(missing.path(), missing.path(), options),
+  EXPECT_THROW(static_cast<void>(
+                   recover_log_from_snapshot_directory(missing.path(), missing.path(), options)),
                std::invalid_argument);
   EXPECT_FALSE(std::filesystem::exists(missing.path()));
 }
